@@ -1,0 +1,11 @@
+# Local aider model settings (git-ignored via .aider*).
+# Cap Ollama's context at 8k so a 14B model fits in RAM on a 16 GB Mac.
+- name: ollama_chat/qwen2.5-coder:14b
+  extra_params:
+    num_ctx: 8192
+- name: ollama_chat/qwen2.5:14b
+  extra_params:
+    num_ctx: 8192
+- name: ollama_chat/qwen2.5-coder:7b
+  extra_params:
+    num_ctx: 8192

@@ -3,7 +3,7 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-10-25, after Milestone 2 and the coder-tooling work.
+Last updated: 2026-10-25, after Milestone 2, the coder tooling, and the GitHub MCP server.
 
 ## Where things are
 
@@ -15,10 +15,16 @@ Last updated: 2026-10-25, after Milestone 2 and the coder-tooling work.
     filters and paging; dedup by source URL or content fingerprint (repeat → 200,
     edited posting at a known URL → updated in place); LIKE wildcards escaped.
   - **Coder tooling** (`b342025`, `aef5fad`, `6e0013e`). See "How work gets done".
+  - **Session handoff** (`0b4d462`, `2f824fd`) and **GitHub MCP server + judge
+    trial** (`9bb00d3`, merged from `try/laya-scout`).
 - Tests: 22 passing (`npm test`), typecheck clean (`npm run typecheck`).
 - Graph: `graphify-out/` updated after the tooling work (2026-10-25).
 
 ## Where to start next
+
+**Paused on 2026-10-25 by the user.** Milestone 3 needs data and some additional
+code/features the user is preparing first. On resume, ask what data and
+features they have before planning anything.
 
 **Milestone 3: candidate profile and matching** (README → Implementation roadmap):
 1. Load an approved resume/profile representation.
@@ -31,8 +37,12 @@ Before writing the Milestone 3 plan, settle these with the user:
   format; add `profile/` to `.gitignore` (README: never commit resumes).
 - Requirement extraction for M3 is deterministic/keyword-based; the local LLM
   arrives in Milestone 4 (README model roles). Confirm that split.
-- An embedding model (e.g. `nomic-embed-text`) and Laya are not installed and
-  are not needed until retrieval/judging work; ask before downloading.
+- An embedding model (e.g. `nomic-embed-text`) is not installed; ask before
+  downloading. Laya is installed (`uv tool`, typed-decisions checkpoint). Zero-shot
+  it judged 7/17 repos correctly vs qwen2.5:7b's 12/17 (`.claude/bin/scout_eval.py`),
+  so it needs labeled data and fine-tuning/calibration before judging resume
+  evidence. Resume labels must come from the user or a local model, never a
+  cloud model (README privacy rules).
 
 ## How work gets done
 
@@ -48,8 +58,11 @@ Before writing the Milestone 3 plan, settle these with the user:
   the user the test cases, and resume only after approval.
 - Coder model: `qwen2.5-coder:14b` (~10 GB, all GPU); `qwen2.5-coder:7b` for
   one-line fixes. Local models only; never a cloud model.
-- MCP server `mini-swe-agent` (tools `run_mini`, `check`) is available in
-  Claude Code via `.mcp.json`.
+- MCP servers in `.mcp.json`: `mini-swe-agent` (`run_mini`, `check`) and `github`
+  (official github-mcp-server, read-only, 7 search/read tools; token taken from
+  `gh` at start-up by `.claude/mcp/github.sh`). github-scout was removed; all
+  GitHub searches use the MCP server (AGENTS.md rule 6). After an MCP call,
+  reply only "passed" or the raw log.
 - Watch coders: `tmux attach -t jobops`. Logs: `.agent-logs/`.
 - Token rules: `.claude/savingTokens.md`. Graph update once per milestone.
 

@@ -1,7 +1,8 @@
 node_modules/
 graphify-out/
 .scout/
-.aider*
+.aider.chat*
+.aider.tags*
 .agent-logs/
 data/
 .claude/specs/

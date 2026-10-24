@@ -2,3 +2,6 @@ node_modules/
 graphify-out/
 .scout/
 .aider*
+.agent-logs/
+.claude/specs
+.claude/bin

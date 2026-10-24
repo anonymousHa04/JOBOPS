@@ -3,7 +3,7 @@
 Every agent working in this repo (Claude Code, Codex, a local Ollama coder, or a
 custom agent defined in this folder) reads this file first. Each custom agent's
 role-specific instructions live in its own file in this folder, for example
-`github-scout.md`. When an agent file and this file disagree, this file wins.
+`coder.md`. When an agent file and this file disagree, this file wins.
 
 ## Source of truth
 
@@ -40,9 +40,10 @@ you treat it as a bug. Keep asking until someone confirms either "intended" or
 
 ### 4. Keep the graph current
 
-After you finish a change that adds, removes, or edits files, run
-`/graphify . --update` (incremental: re-extracts only changed files) so the
-next agent reads an accurate graph.
+Run `/graphify . --update` (incremental: re-extracts only changed files) once at
+the end of each milestone, once its tests pass, so the next agent reads an accurate
+graph. Don't run it after every small edit: code files are graphed for free, but
+each changed Markdown file costs tens of thousands of tokens to re-read.
 
 ### 5. One file per custom agent
 
@@ -61,14 +62,21 @@ A local-model agent replaces `tools` with `model: ollama_chat/<model>` and
 `runner: aider` (see [coder.md](coder.md)). Add a row to the roster below when
 you add an agent.
 
-### 6. GitHub searches go through github-scout
+### 6. GitHub searches go through the GitHub MCP server
 
-When you need an open-source tool, library, or reference implementation for
-development, or want to learn a new technique, hand the request to the local
-`github-scout` agent instead of searching GitHub yourself. It clones the best
-match into `.scout/repos/`, points you to the files to read, and saves a report
-in `.scout/reports/`. You can keep working while it searches. Installing what it
-finds still needs the user's approval (rule 2).
+For any search for an open-source tool, library, or reference implementation,
+quick or deep, use the `github` MCP server's read-only tools directly
+(`search_repositories`, `search_code`, `get_file_contents`, `list_commits`,
+`list_releases`, `get_latest_release`, `list_tags`). A quick search costs about
+8–10k tokens. Judge fit, license, and activity yourself, and read only the
+READMEs of the top candidates.
+
+- Never clone or download a repo until the user has confirmed that specific
+  repo. After confirmation, shallow-clone it read-only into `.scout/repos/`.
+- Installing what you find still needs the user's approval (rule 2).
+- MCP results: reply with just "passed", or the raw log the MCP server
+  returned. Don't explain what went wrong or analyze unless the user
+  explicitly asks.
 
 ### 7. Claude manages, local agents write code
 
@@ -78,38 +86,72 @@ tests, and finds flaws. It does not edit project code itself. Local-model agents
 for flaws the manager finds.
 
 - Use local models only. Never use `kimi-k2.7-code:cloud` or any other cloud model.
-- Run a coder for one task:
-
-  ```bash
-  aider --model ollama_chat/qwen2.5-coder:7b --no-auto-commits --yes-always \
-    --read .claude/agents/AGENTS.md --read .claude/agents/coder.md \
-    --message "<task spec>" <files to edit>
-  ```
-
-- Review loop: spec → coder → `git diff` and tests → if anything fails, a
-  follow-up spec to the coder → repeat until it passes → manager commits →
-  graph update (rule 4).
+- Default workflow: write one plan per milestone to
+  `.claude/specs/plan-<milestone>.md` (format in `.claude/bin/run-plan.sh`), then
+  run `.claude/bin/run-plan.sh .claude/specs/plan-<milestone>.md`. Each task goes
+  through `autofix.sh`: coder → `check.sh` (typecheck + tests, compact report) →
+  automatic fix rounds (up to `MAX_FIXES`, default 2). Each coder run is limited
+  to `CODER_TIMEOUT` seconds (default 1200, i.e. 20 minutes); a timeout stops
+  the coder at once.
+- Runner split by task: if any target file is new or empty, aider writes it
+  (`run-coder.sh`); if all targets exist, mini-swe-agent edits them
+  (`run-mini.sh`). Fix rounds always use mini-swe-agent. mini-swe-agent runs
+  model-chosen shell commands, so it only ever works in a throwaway worktree
+  (`../jobops-mini-<task>`); its diff is applied back only if `check.sh` passes
+  there and it changed only the task's files. Override with `FIRST_RUNNER` /
+  `FIX_RUNNER` (`aider` or `mini`).
+- Claude Code can also call mini-swe-agent directly through the
+  `mini-swe-agent` MCP server (`.mcp.json` → `.claude/mcp/mini_server.py`),
+  tools `run_mini` and `check`.
+- On `ESCALATE` (timeout, or still failing after the fix rounds) the manager
+  takes over: read the last log lines and the check report, then edit the file
+  directly and re-run `check.sh`. This is the one case where the manager writes
+  project code.
+- Tests need the user's approval. Every test-writing task in a plan has
+  `gate: user`, and `run-plan.sh` stops before it. The manager first confirms
+  the implementation tasks passed and work, then shows the user the test cases.
+  Only after the user approves does the manager resume the plan at that task.
+- For a single task: write the task spec to `.claude/specs/<task>.md`, then run the coder in its
+  own window of the `jobops` tmux session:
+  `.claude/bin/run-coder.sh <task> .claude/specs/<task>.md <files to edit>`.
+  Wait with `tmux wait-for <task>`. Output goes to `.agent-logs/<task>.log`; the
+  user watches live with `tmux attach -t jobops`.
+- Specs must not contain triple-backtick code fences (use indented blocks). A
+  fence makes aider expect four-backtick fences, the 7B model answers with three,
+  and the edit is silently dropped. The runner appends `RUN-CODER: NO EDIT
+  APPLIED` to the log when that happens.
+- Review loop: spec → coder → `npm run typecheck`, `npm test`, and a quick
+  behaviour check → if anything fails, read only the failing code, then send a
+  follow-up spec to the coder → repeat until it passes → report to the user
+  that it is ready → graph update at the end of the milestone (rule 4).
+- Never `git commit` (or amend) unless the user explicitly asks. Leave work
+  uncommitted and tell the user what is ready.
+- Review test-first: don't read a coder's whole file when the type-check, tests,
+  and behaviour check pass. Read code only to diagnose a failure, or for
+  security-sensitive logic (input validation, SQL, auth).
+- Keep specs to what and why once a coder has proven reliable; give line-level
+  instructions only for fixes.
 
 ### 8. Parallel work
 
-Ollama runs with `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=3` on a
-16 GB machine.
+Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
+16 GB machine (set at login by `~/Library/LaunchAgents/com.user.ollama-env.plist`).
 
-- At most 2 coders at once, on the same model. Give each its own git worktree
-  (`git worktree add ../jobops-<task> -b <task>`) and a spec that touches
-  different files.
-- Use 7B-class models when running in parallel: `qwen2.5-coder:7b` for code,
-  `qwen2.5:7b` for text and extraction. `qwen2.5:14b` only runs alone.
-- Measured on this machine: two parallel requests take about as long as one
-  (~18 tok/s each vs ~22 tok/s alone). A third model or a 14b alongside will
-  push the machine into swap and slow everything down.
+- Default coder: `qwen2.5-coder:14b`, one task at a time. With
+  `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, parallel 1, and an 8k
+  context cap (`.aider.model.settings.yml`), it uses ~10 GB, 100% on the GPU, at
+  ~11 tok/s. The general `qwen2.5:14b` with parallel 2 grew to 15 GB and swapped.
+- For one-line fixes, `qwen2.5-coder:7b` is much faster (minutes, not tens of
+  minutes) and `check.sh` catches its mistakes.
+- Parallel coders: only two 7B models side by side, each in its own git
+  worktree (`git worktree add ../jobops-<task> -b <task>`) with specs that touch
+  different files. Never run a 14B alongside anything.
 
 ## Roster
 
 | Agent | File | Runs on | Use it for |
 |---|---|---|---|
-| github-scout | [github-scout.md](github-scout.md) | Claude subagent | Find and fetch open-source tools, libraries, and examples for development |
-| coder | [coder.md](coder.md) | `qwen2.5-coder:7b` via aider | Write and fix code from a manager's spec |
+| coder | [coder.md](coder.md) | `qwen2.5-coder:14b` via aider (new files) or mini-swe-agent (edits, fix rounds) | Write and fix code from a manager's spec |
 
 ## Always
 

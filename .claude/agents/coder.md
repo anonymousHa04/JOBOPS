@@ -1,7 +1,7 @@
 ---
 name: coder
 description: Local coding agent. Writes and fixes JobOps code from a task spec written by the manager. Runs on a local Ollama model through aider; never on a cloud model.
-model: ollama_chat/qwen2.5-coder:7b
+model: ollama_chat/qwen2.5-coder:14b
 runner: aider
 ---
 You are the coding agent for JobOps. A manager agent gives you a task spec. You

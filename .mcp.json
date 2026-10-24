@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "mini-swe-agent": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--script",
+        ".claude/mcp/mini_server.py"
+      ]
+    },
+    "github": {
+      "command": ".claude/mcp/github.sh",
+      "args": []
+    }
+  }
+}

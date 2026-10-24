@@ -70,17 +70,17 @@ The architecture below is the **intended logical design**, not a claim about dep
 
 ```mermaid
 flowchart TD
-    UI[React + TypeScript UI] --> BFF[API Gateway / BFF]
+    UI[React + TypeScript UI] --> BFF[API Gateway / BFF - Go]
 
-    BFF --> JOB[Job Service]
-    BFF --> CONTACT[Contact Service]
-    BFF --> APP[Application Service]
+    BFF --> JOB[Job Service - Node.js]
+    BFF --> CONTACT[Contact Service - Node.js]
+    BFF --> APP[Application Service - Node.js]
 
-    JOB --> QUEUE[Queue / Background Work]
+    JOB --> QUEUE[Scheduler / Queue - Go]
     CONTACT --> QUEUE
     APP --> QUEUE
 
-    QUEUE --> WORKERS[Background Workers]
+    QUEUE --> WORKERS[Background Workers - Node.js]
     WORKERS --> AGENTS[Agent Workflows]
 
     AGENTS --> JOBAGENT[Job Analysis Agent]
@@ -100,6 +100,9 @@ flowchart TD
 
 ### Architectural intent
 
+- Business services (jobs, contacts, applications) and workers are written in Node.js + TypeScript.
+- Go is the control layer over them: the API gateway is the single entry point (routing, rate limits, auth), and the scheduler/queue decides what runs when, dispatches work to Node workers, and retries failures.
+- Local Kubernetes supervises every service (start, stop, health checks, restarts), so supervision is not written in Go.
 - Keep the user-facing API separate from long-running AI and ingestion work.
 - Separate job, contact, and application responsibilities where doing so provides a real benefit.
 - Use background processing for slow, retryable tasks.
@@ -112,11 +115,11 @@ flowchart TD
 | Component | Responsibility |
 |---|---|
 | Frontend | Search jobs, inspect match explanations, review contacts, manage applications, and approve outreach |
-| API Gateway / BFF | Expose client-facing endpoints, validate requests, and coordinate service calls |
+| API Gateway / BFF (Go) | Single entry point: route to Node services, rate limits, auth, and coordinate service calls |
 | Job Service | Ingest, normalize, deduplicate, store, and query job postings |
 | Contact Service | Index and search authorized contacts and relevant professional context |
 | Application Service | Track application stages, decisions, activities, and outcomes |
-| Queue and workers | Run background jobs without blocking API requests |
+| Scheduler / queue (Go) and workers (Node.js) | Schedule and dispatch background jobs to Node workers, with retries, without blocking API requests |
 | Job Analysis Agent | Extract and structure role requirements |
 | Resume Matching Agent | Compare requirements against candidate evidence and identify gaps |
 | Outreach Agent | Prepare contextual outreach drafts for human review |
@@ -133,14 +136,14 @@ The original plan explored the following technologies. Exact assignments and ver
 | Area | Planned technologies / concepts |
 |---|---|
 | Frontend | React, TypeScript |
-| API and application services | Node.js, TypeScript, REST |
-| Concurrent or performance-sensitive services | Go |
+| Business services and workers | Node.js, TypeScript, REST (Fastify, Zod, SQLite to start) |
+| Control layer | Go: API gateway and scheduler/queue in front of and over the Node services |
 | AI and agent workflows | Python, local LLMs via Ollama, Laya decision model, tool calling, structured outputs |
 | Retrieval | Embeddings, indexing, semantic search, RAG |
 | Data | Relational storage, appropriate indexes, caching |
 | Asynchronous work | Queues, workers, scheduling, event-driven processing |
 | Packaging | Docker |
-| Orchestration | Kubernetes, when justified by the workload |
+| Orchestration | Local Kubernetes: runs and supervises all services (health checks, restarts) |
 | Cloud and object storage | AWS, S3, RDS as appropriate |
 | Engineering practices | Automated tests, CI/CD, observability, secure configuration |
 
@@ -296,6 +299,7 @@ The original plan emphasized small, testable deliverables. The sequence below re
 
 ### Milestone 5 — Background agent workflow
 
+- Build the Go scheduler/queue; Node workers pull and run its tasks.
 - Queue evaluation tasks.
 - Track task state and failures.
 - Make task submission and retries safe.
@@ -320,7 +324,9 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Containerize the working components.
 - Add repeatable local development instructions.
 - Add CI and automated tests.
-- Introduce Kubernetes and cloud infrastructure only when the basic deployment is stable.
+- Put the Go gateway in front of the Node services.
+- Run everything on local Kubernetes, which handles supervision and restarts.
+- Introduce cloud infrastructure only when the local deployment is stable.
 
 Each milestone should end with a demonstrable, tested increment. Avoid building a large collection of empty services before the main workflow is useful.
 

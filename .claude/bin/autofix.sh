@@ -2,7 +2,7 @@
 # Run one coder task, check it, and feed failures back to the coder until it
 # passes or MAX_FIXES rounds are used. Prints only the final check report.
 # Usage: autofix.sh <task> <spec-file> <file-to-edit>...
-# Each coder run is limited to CODER_TIMEOUT seconds (default 900). A timeout
+# Each coder run is limited to CODER_TIMEOUT seconds (default 1200). A timeout
 # stops the coder and escalates at once; no further fix rounds.
 # Exit 0 = PASS, 1 = ESCALATE (the manager takes over and edits the file).
 set -u
@@ -11,7 +11,7 @@ task=$1; spec=$2; shift 2
 bin=$(cd "$(dirname "$0")" && pwd)
 cd "$(git rev-parse --show-toplevel)"
 max=${MAX_FIXES:-2}
-limit=${CODER_TIMEOUT:-900}
+limit=${CODER_TIMEOUT:-1200}
 
 run() { # <task> <spec> <files...>; returns 1 on timeout
   t=$1; s=$2; shift 2

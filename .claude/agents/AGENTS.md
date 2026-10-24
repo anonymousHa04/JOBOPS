@@ -84,7 +84,8 @@ for flaws the manager finds.
   run `.claude/bin/run-plan.sh .claude/specs/plan-<milestone>.md`. Each task goes
   through `autofix.sh`: coder → `check.sh` (typecheck + tests, compact report) →
   automatic fix rounds (up to `MAX_FIXES`, default 2). Each coder run is limited
-  to `CODER_TIMEOUT` seconds (default 900); a timeout stops the coder at once.
+  to `CODER_TIMEOUT` seconds (default 1200, i.e. 20 minutes); a timeout stops
+  the coder at once.
 - On `ESCALATE` (timeout, or still failing after the fix rounds) the manager
   takes over: read the last log lines and the check report, then edit the file
   directly and re-run `check.sh`. This is the one case where the manager writes
@@ -117,9 +118,10 @@ for flaws the manager finds.
 Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
 16 GB machine (set at login by `~/Library/LaunchAgents/com.user.ollama-env.plist`).
 
-- Default coder: `qwen2.5:14b`, one task at a time. It is accurate but needs
-  most of the RAM; with `NUM_PARALLEL=2` it grew to 15 GB and swapped heavily,
-  which is why parallel is 1.
+- Default coder: `qwen2.5-coder:14b`, one task at a time. With
+  `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, parallel 1, and an 8k
+  context cap (`.aider.model.settings.yml`), it uses ~10 GB, 100% on the GPU, at
+  ~11 tok/s. The general `qwen2.5:14b` with parallel 2 grew to 15 GB and swapped.
 - For one-line fixes, `qwen2.5-coder:7b` is much faster (minutes, not tens of
   minutes) and `check.sh` catches its mistakes.
 - Parallel coders: only two 7B models side by side, each in its own git
@@ -131,7 +133,7 @@ Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
 | Agent | File | Runs on | Use it for |
 |---|---|---|---|
 | github-scout | [github-scout.md](github-scout.md) | Claude subagent | Find and fetch open-source tools, libraries, and examples for development |
-| coder | [coder.md](coder.md) | `qwen2.5-coder:7b` via aider | Write and fix code from a manager's spec |
+| coder | [coder.md](coder.md) | `qwen2.5-coder:14b` via aider | Write and fix code from a manager's spec |
 
 ## Always
 

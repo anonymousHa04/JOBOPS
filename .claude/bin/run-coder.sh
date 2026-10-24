@@ -8,7 +8,7 @@ set -eu
 
 task=$1; spec=$2; shift 2
 root=$(git rev-parse --show-toplevel)
-model=${CODER_MODEL:-ollama_chat/qwen2.5:14b}
+model=${CODER_MODEL:-ollama_chat/qwen2.5-coder:14b}
 # whole = rewrite each file in full (slow on big files); diff = search/replace blocks.
 edit_format=${CODER_EDIT_FORMAT:-whole}
 mkdir -p "$root/.agent-logs"

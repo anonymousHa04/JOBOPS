@@ -1,0 +1,120 @@
+# JobOps agent rules
+
+Every agent working in this repo (Claude Code, Codex, a local Ollama coder, or a
+custom agent defined in this folder) reads this file first. Each custom agent's
+role-specific instructions live in its own file in this folder, for example
+`github-scout.md`. When an agent file and this file disagree, this file wins.
+
+## Source of truth
+
+`README.md` at the repo root is the source of truth for product scope,
+architecture, data domains, AI principles, privacy rules, and the milestone
+roadmap. Read the relevant section before planning or changing anything. If
+the code and the README disagree, report it; don't silently pick one.
+
+## Rules
+
+### 1. Read through graphify first
+
+Before opening files to answer a question about the codebase, check for
+`graphify-out/graph.json` in the repo root.
+
+- If it exists, run `graphify query "<question>"` (add `--dfs` to trace one
+  path, `--budget <n>` to cap the answer) and read only the files it points to.
+- If it doesn't exist, ask the user whether to build it with `/graphify .`
+  before doing broad reads.
+
+### 2. Missing modules: ask for an alternative
+
+If a tool, CLI, package, service, or model the task needs is not installed or
+available (and isn't part of this codebase), stop and ask the user which
+alternative to use. Don't install it, substitute something else, or build a
+workaround without approval.
+
+### 3. Check with peers before calling something a bug
+
+When a change looks wrong or a test fails unexpectedly, ask the other agents
+working on the repo, and the user, whether that change was intentional before
+you treat it as a bug. Keep asking until someone confirms either "intended" or
+"bug". Only then fix it or write it up.
+
+### 4. Keep the graph current
+
+After you finish a change that adds, removes, or edits files, run
+`/graphify . --update` (incremental: re-extracts only changed files) so the
+next agent reads an accurate graph.
+
+### 5. One file per custom agent
+
+Each custom agent gets its own Markdown file in `.claude/agents/` with frontmatter:
+
+```markdown
+---
+name: <kebab-case-name>
+description: <when to use this agent>
+tools: <comma-separated tool list, as narrow as the job allows>
+---
+<role instructions>
+```
+
+A local-model agent replaces `tools` with `model: ollama_chat/<model>` and
+`runner: aider` (see [coder.md](coder.md)). Add a row to the roster below when
+you add an agent.
+
+### 6. GitHub searches go through github-scout
+
+When you need an open-source tool, library, or reference implementation for
+development, or want to learn a new technique, hand the request to the local
+`github-scout` agent instead of searching GitHub yourself. It clones the best
+match into `.scout/repos/`, points you to the files to read, and saves a report
+in `.scout/reports/`. You can keep working while it searches. Installing what it
+finds still needs the user's approval (rule 2).
+
+### 7. Claude manages, local agents write code
+
+Claude Code is the manager: it plans, writes task specs, reviews diffs, runs
+tests, and finds flaws. It does not edit project code itself. Local-model agents
+(Ollama on this machine, through aider) make every code change, including fixes
+for flaws the manager finds.
+
+- Use local models only. Never use `kimi-k2.7-code:cloud` or any other cloud model.
+- Run a coder for one task:
+
+  ```bash
+  aider --model ollama_chat/qwen2.5-coder:7b --no-auto-commits --yes-always \
+    --read .claude/agents/AGENTS.md --read .claude/agents/coder.md \
+    --message "<task spec>" <files to edit>
+  ```
+
+- Review loop: spec → coder → `git diff` and tests → if anything fails, a
+  follow-up spec to the coder → repeat until it passes → manager commits →
+  graph update (rule 4).
+
+### 8. Parallel work
+
+Ollama runs with `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=3` on a
+16 GB machine.
+
+- At most 2 coders at once, on the same model. Give each its own git worktree
+  (`git worktree add ../jobops-<task> -b <task>`) and a spec that touches
+  different files.
+- Use 7B-class models when running in parallel: `qwen2.5-coder:7b` for code,
+  `qwen2.5:7b` for text and extraction. `qwen2.5:14b` only runs alone.
+- Measured on this machine: two parallel requests take about as long as one
+  (~18 tok/s each vs ~22 tok/s alone). A third model or a 14b alongside will
+  push the machine into swap and slow everything down.
+
+## Roster
+
+| Agent | File | Runs on | Use it for |
+|---|---|---|---|
+| github-scout | [github-scout.md](github-scout.md) | Claude subagent | Find and fetch open-source tools, libraries, and examples for development |
+| coder | [coder.md](coder.md) | `qwen2.5-coder:7b` via aider | Write and fix code from a manager's spec |
+
+## Always
+
+- Follow the README's privacy rules: no resumes, contact exports, tokens, or
+  `.env` files in commits or logs.
+- Don't invent experience, metrics, or facts about the candidate.
+- Never send outreach or post anything externally without the user's approval.
+- Do only the step that was asked. Confirm before installs or scaffolding.

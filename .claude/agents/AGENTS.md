@@ -78,14 +78,15 @@ tests, and finds flaws. It does not edit project code itself. Local-model agents
 for flaws the manager finds.
 
 - Use local models only. Never use `kimi-k2.7-code:cloud` or any other cloud model.
-- Run a coder for one task:
-
-  ```bash
-  aider --model ollama_chat/qwen2.5-coder:7b --no-auto-commits --yes-always \
-    --read .claude/agents/AGENTS.md --read .claude/agents/coder.md \
-    --message "<task spec>" <files to edit>
-  ```
-
+- Write the task spec to `.claude/specs/<task>.md`, then run the coder in its
+  own window of the `jobops` tmux session:
+  `.claude/bin/run-coder.sh <task> .claude/specs/<task>.md <files to edit>`.
+  Wait with `tmux wait-for <task>`. Output goes to `.agent-logs/<task>.log`; the
+  user watches live with `tmux attach -t jobops`.
+- Specs must not contain triple-backtick code fences (use indented blocks). A
+  fence makes aider expect four-backtick fences, the 7B model answers with three,
+  and the edit is silently dropped. The runner appends `RUN-CODER: NO EDIT
+  APPLIED` to the log when that happens.
 - Review loop: spec → coder → `git diff` and tests → if anything fails, a
   follow-up spec to the coder → repeat until it passes → manager commits →
   graph update (rule 4).

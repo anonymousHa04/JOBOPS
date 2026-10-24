@@ -3,7 +3,7 @@
 Every agent working in this repo (Claude Code, Codex, a local Ollama coder, or a
 custom agent defined in this folder) reads this file first. Each custom agent's
 role-specific instructions live in its own file in this folder, for example
-`github-scout.md`. When an agent file and this file disagree, this file wins.
+`coder.md`. When an agent file and this file disagree, this file wins.
 
 ## Source of truth
 
@@ -62,14 +62,21 @@ A local-model agent replaces `tools` with `model: ollama_chat/<model>` and
 `runner: aider` (see [coder.md](coder.md)). Add a row to the roster below when
 you add an agent.
 
-### 6. GitHub searches go through github-scout
+### 6. GitHub searches go through the GitHub MCP server
 
-When you need an open-source tool, library, or reference implementation for
-development, or want to learn a new technique, hand the request to the local
-`github-scout` agent instead of searching GitHub yourself. It clones the best
-match into `.scout/repos/`, points you to the files to read, and saves a report
-in `.scout/reports/`. You can keep working while it searches. Installing what it
-finds still needs the user's approval (rule 2).
+For any search for an open-source tool, library, or reference implementation,
+quick or deep, use the `github` MCP server's read-only tools directly
+(`search_repositories`, `search_code`, `get_file_contents`, `list_commits`,
+`list_releases`, `get_latest_release`, `list_tags`). A quick search costs about
+8–10k tokens. Judge fit, license, and activity yourself, and read only the
+READMEs of the top candidates.
+
+- Never clone or download a repo until the user has confirmed that specific
+  repo. After confirmation, shallow-clone it read-only into `.scout/repos/`.
+- Installing what you find still needs the user's approval (rule 2).
+- MCP results: reply with just "passed", or the raw log the MCP server
+  returned. Don't explain what went wrong or analyze unless the user
+  explicitly asks.
 
 ### 7. Claude manages, local agents write code
 
@@ -144,7 +151,6 @@ Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
 
 | Agent | File | Runs on | Use it for |
 |---|---|---|---|
-| github-scout | [github-scout.md](github-scout.md) | Claude subagent | Find and fetch open-source tools, libraries, and examples for development |
 | coder | [coder.md](coder.md) | `qwen2.5-coder:14b` via aider (new files) or mini-swe-agent (edits, fix rounds) | Write and fix code from a manager's spec |
 
 ## Always

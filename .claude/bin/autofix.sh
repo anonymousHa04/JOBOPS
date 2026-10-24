@@ -13,13 +13,27 @@ cd "$(git rev-parse --show-toplevel)"
 max=${MAX_FIXES:-2}
 limit=${CODER_TIMEOUT:-1200}
 
-run() { # <task> <spec> <files...>; returns 1 on timeout
-  t=$1; s=$2; shift 2
-  "$bin/run-coder.sh" "$t" "$s" "$@" > /dev/null
+# Runner per task: aider writes new files (whole-file output costs nothing extra
+# there); mini-swe-agent edits existing files and does every fix round.
+runner_for() { # <files...>
+  for f in "$@"; do [ -s "$f" ] || { echo aider; return; }; done
+  echo mini
+}
+
+run() { # <runner> <task> <spec> <files...>; returns 1 on timeout
+  r=$1; t=$2; s=$3; shift 3
+  if [ "$r" = mini ]; then
+    "$bin/run-mini.sh" "$t" "$s" "$@" > /dev/null
+  else
+    "$bin/run-coder.sh" "$t" "$s" "$@" > /dev/null
+  fi
   waited=0
   while [ ! -f ".agent-logs/$t.done" ]; do
     if [ "$waited" -ge "$limit" ]; then
       pkill -f "message-file $s" 2>/dev/null
+      if [ -f ".agent-logs/$t.pid" ]; then
+        pkill -P "$(cat ".agent-logs/$t.pid")" 2>/dev/null; kill "$(cat ".agent-logs/$t.pid")" 2>/dev/null
+      fi
       tmux kill-window -t "jobops:$t" 2>/dev/null
       echo "RESULT: TIMEOUT ($t): coder stopped after ${limit}s"
       echo "Last log lines (.agent-logs/$t.log):"
@@ -31,7 +45,7 @@ run() { # <task> <spec> <files...>; returns 1 on timeout
   done
 }
 
-run "$task" "$spec" "$@" || exit 1
+run "${FIRST_RUNNER:-$(runner_for "$@")}" "$task" "$spec" "$@" || exit 1
 current=$task
 round=0
 while :; do
@@ -59,5 +73,5 @@ while :; do
     echo "## Original task"
     cat "$spec"
   } > "$fix_spec"
-  run "$current" "$fix_spec" "$@" || exit 1
+  run "${FIX_RUNNER:-mini}" "$current" "$fix_spec" "$@" || exit 1
 done

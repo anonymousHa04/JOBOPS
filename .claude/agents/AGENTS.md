@@ -86,6 +86,16 @@ for flaws the manager finds.
   automatic fix rounds (up to `MAX_FIXES`, default 2). Each coder run is limited
   to `CODER_TIMEOUT` seconds (default 1200, i.e. 20 minutes); a timeout stops
   the coder at once.
+- Runner split by task: if any target file is new or empty, aider writes it
+  (`run-coder.sh`); if all targets exist, mini-swe-agent edits them
+  (`run-mini.sh`). Fix rounds always use mini-swe-agent. mini-swe-agent runs
+  model-chosen shell commands, so it only ever works in a throwaway worktree
+  (`../jobops-mini-<task>`); its diff is applied back only if `check.sh` passes
+  there and it changed only the task's files. Override with `FIRST_RUNNER` /
+  `FIX_RUNNER` (`aider` or `mini`).
+- Claude Code can also call mini-swe-agent directly through the
+  `mini-swe-agent` MCP server (`.mcp.json` → `.claude/mcp/mini_server.py`),
+  tools `run_mini` and `check`.
 - On `ESCALATE` (timeout, or still failing after the fix rounds) the manager
   takes over: read the last log lines and the check report, then edit the file
   directly and re-run `check.sh`. This is the one case where the manager writes
@@ -133,7 +143,7 @@ Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
 | Agent | File | Runs on | Use it for |
 |---|---|---|---|
 | github-scout | [github-scout.md](github-scout.md) | Claude subagent | Find and fetch open-source tools, libraries, and examples for development |
-| coder | [coder.md](coder.md) | `qwen2.5-coder:14b` via aider | Write and fix code from a manager's spec |
+| coder | [coder.md](coder.md) | `qwen2.5-coder:14b` via aider (new files) or mini-swe-agent (edits, fix rounds) | Write and fix code from a manager's spec |
 
 ## Always
 

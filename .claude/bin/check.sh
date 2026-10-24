@@ -10,7 +10,7 @@ mkdir -p .agent-logs
 full=".agent-logs/$task.check.log"
 fail=0
 
-flags=$(grep -h 'RUN-CODER:' ".agent-logs/$task.log" 2>/dev/null || true)
+flags=$(grep -hE 'RUN-(CODER|MINI):' ".agent-logs/$task.log" 2>/dev/null || true)
 [ -n "$flags" ] && fail=1
 
 tsc=$(npx tsc -p . 2>&1)

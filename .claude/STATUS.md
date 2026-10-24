@@ -1,7 +1,7 @@
 # JobOps status
 
 Handoff for the next session. Update this file at the end of every milestone
-(and whenever a decision changes), in the same commit.
+(and whenever a decision changes). Commit only when the user asks.
 
 Last updated: 2026-10-25, after Milestone 2 and the coder-tooling work.
 

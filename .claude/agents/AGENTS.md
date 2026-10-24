@@ -41,7 +41,7 @@ you treat it as a bug. Keep asking until someone confirms either "intended" or
 ### 4. Keep the graph current
 
 Run `/graphify . --update` (incremental: re-extracts only changed files) once at
-the end of each milestone, after its commit, so the next agent reads an accurate
+the end of each milestone, once its tests pass, so the next agent reads an accurate
 graph. Don't run it after every small edit: code files are graphed for free, but
 each changed Markdown file costs tens of thousands of tokens to re-read.
 
@@ -115,8 +115,10 @@ for flaws the manager finds.
   APPLIED` to the log when that happens.
 - Review loop: spec → coder → `npm run typecheck`, `npm test`, and a quick
   behaviour check → if anything fails, read only the failing code, then send a
-  follow-up spec to the coder → repeat until it passes → manager commits →
-  graph update at the end of the milestone (rule 4).
+  follow-up spec to the coder → repeat until it passes → report to the user
+  that it is ready → graph update at the end of the milestone (rule 4).
+- Never `git commit` (or amend) unless the user explicitly asks. Leave work
+  uncommitted and tell the user what is ready.
 - Review test-first: don't read a coder's whole file when the type-check, tests,
   and behaviour check pass. Read code only to diagnose a failure, or for
   security-sensitive logic (input validation, SQL, auth).

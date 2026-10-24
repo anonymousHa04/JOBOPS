@@ -49,5 +49,5 @@ never "clean them up".
 
 Follow AGENTS.md: plan the milestone once in `.claude/specs/plan-<milestone>.md`,
 run it with `.claude/bin/run-plan.sh`, gate test tasks on user approval, update
-the graph once at the end of the milestone, and update `.claude/STATUS.md` in
-the milestone's commit.
+the graph once at the end of the milestone, and update `.claude/STATUS.md`.
+Never commit unless the user explicitly asks.

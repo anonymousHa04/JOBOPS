@@ -42,3 +42,16 @@ export type Job = JobInput & {
   last_seen_at: string;
   content_hash: string;
 };
+
+export const JobListQuerySchema = z.object({
+  company: z.string().trim().min(1).max(200).optional(),
+  q: z.string().trim().min(1).max(200).optional(),
+  location: z.string().trim().max(200).optional(),
+  seniority: JobInputSchema.shape.seniority.unwrap().optional(),
+  employment_type: JobInputSchema.shape.employment_type.unwrap().optional(),
+  source_name: z.string().trim().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0)
+}).strict();
+
+export type JobListQuery = z.infer<typeof JobListQuerySchema>;

@@ -40,9 +40,10 @@ you treat it as a bug. Keep asking until someone confirms either "intended" or
 
 ### 4. Keep the graph current
 
-After you finish a change that adds, removes, or edits files, run
-`/graphify . --update` (incremental: re-extracts only changed files) so the
-next agent reads an accurate graph.
+Run `/graphify . --update` (incremental: re-extracts only changed files) once at
+the end of each milestone, after its commit, so the next agent reads an accurate
+graph. Don't run it after every small edit: code files are graphed for free, but
+each changed Markdown file costs tens of thousands of tokens to re-read.
 
 ### 5. One file per custom agent
 
@@ -78,7 +79,21 @@ tests, and finds flaws. It does not edit project code itself. Local-model agents
 for flaws the manager finds.
 
 - Use local models only. Never use `kimi-k2.7-code:cloud` or any other cloud model.
-- Write the task spec to `.claude/specs/<task>.md`, then run the coder in its
+- Default workflow: write one plan per milestone to
+  `.claude/specs/plan-<milestone>.md` (format in `.claude/bin/run-plan.sh`), then
+  run `.claude/bin/run-plan.sh .claude/specs/plan-<milestone>.md`. Each task goes
+  through `autofix.sh`: coder → `check.sh` (typecheck + tests, compact report) →
+  automatic fix rounds (up to `MAX_FIXES`, default 2). Each coder run is limited
+  to `CODER_TIMEOUT` seconds (default 900); a timeout stops the coder at once.
+- On `ESCALATE` (timeout, or still failing after the fix rounds) the manager
+  takes over: read the last log lines and the check report, then edit the file
+  directly and re-run `check.sh`. This is the one case where the manager writes
+  project code.
+- Tests need the user's approval. Every test-writing task in a plan has
+  `gate: user`, and `run-plan.sh` stops before it. The manager first confirms
+  the implementation tasks passed and work, then shows the user the test cases.
+  Only after the user approves does the manager resume the plan at that task.
+- For a single task: write the task spec to `.claude/specs/<task>.md`, then run the coder in its
   own window of the `jobops` tmux session:
   `.claude/bin/run-coder.sh <task> .claude/specs/<task>.md <files to edit>`.
   Wait with `tmux wait-for <task>`. Output goes to `.agent-logs/<task>.log`; the
@@ -87,23 +102,29 @@ for flaws the manager finds.
   fence makes aider expect four-backtick fences, the 7B model answers with three,
   and the edit is silently dropped. The runner appends `RUN-CODER: NO EDIT
   APPLIED` to the log when that happens.
-- Review loop: spec → coder → `git diff` and tests → if anything fails, a
+- Review loop: spec → coder → `npm run typecheck`, `npm test`, and a quick
+  behaviour check → if anything fails, read only the failing code, then send a
   follow-up spec to the coder → repeat until it passes → manager commits →
-  graph update (rule 4).
+  graph update at the end of the milestone (rule 4).
+- Review test-first: don't read a coder's whole file when the type-check, tests,
+  and behaviour check pass. Read code only to diagnose a failure, or for
+  security-sensitive logic (input validation, SQL, auth).
+- Keep specs to what and why once a coder has proven reliable; give line-level
+  instructions only for fixes.
 
 ### 8. Parallel work
 
-Ollama runs with `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=3` on a
-16 GB machine.
+Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
+16 GB machine (set at login by `~/Library/LaunchAgents/com.user.ollama-env.plist`).
 
-- At most 2 coders at once, on the same model. Give each its own git worktree
-  (`git worktree add ../jobops-<task> -b <task>`) and a spec that touches
-  different files.
-- Use 7B-class models when running in parallel: `qwen2.5-coder:7b` for code,
-  `qwen2.5:7b` for text and extraction. `qwen2.5:14b` only runs alone.
-- Measured on this machine: two parallel requests take about as long as one
-  (~18 tok/s each vs ~22 tok/s alone). A third model or a 14b alongside will
-  push the machine into swap and slow everything down.
+- Default coder: `qwen2.5:14b`, one task at a time. It is accurate but needs
+  most of the RAM; with `NUM_PARALLEL=2` it grew to 15 GB and swapped heavily,
+  which is why parallel is 1.
+- For one-line fixes, `qwen2.5-coder:7b` is much faster (minutes, not tens of
+  minutes) and `check.sh` catches its mistakes.
+- Parallel coders: only two 7B models side by side, each in its own git
+  worktree (`git worktree add ../jobops-<task> -b <task>`) with specs that touch
+  different files. Never run a 14B alongside anything.
 
 ## Roster
 

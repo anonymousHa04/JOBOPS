@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
-import { JobInputSchema } from "./jobs/schema.ts";
+import { JobInputSchema, JobListQuerySchema } from "./jobs/schema.ts";
 import type { Db } from "./db.ts";
 import { createJobRepository } from "./jobs/repository.ts";
 
@@ -18,8 +18,27 @@ export function buildApp(opts: { db: Db; logger?: boolean }): FastifyInstance {
                 issues: result.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
             });
         } else {
-            const job = jobs.insert(result.data);
-            reply.status(201).send(job);
+            const { job, created } = jobs.upsert(result.data);
+            reply.status(created ? 201 : 200).send(job);
+        }
+    });
+
+    app.get<{ Querystring: unknown }>(`/jobs`, async (request, reply) => {
+        const result = JobListQuerySchema.safeParse(request.query);
+
+        if (!result.success) {
+            reply.status(400).send({
+                error: "validation_error",
+                issues: result.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+            });
+        } else {
+            const { items, total } = jobs.list(result.data);
+            reply.status(200).send({
+                items,
+                total,
+                limit: result.data.limit,
+                offset: result.data.offset
+            });
         }
     });
 

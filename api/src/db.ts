@@ -26,6 +26,7 @@ export function openDb(path: string): Db {
       content_hash TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS jobs_content_hash ON jobs (content_hash);
+    CREATE UNIQUE INDEX IF NOT EXISTS jobs_source_url ON jobs (source_url);
   `);
   return db;
 }

@@ -44,7 +44,8 @@ it. Don't work around it.
    A weak match reported as a good one is worse than no result.
 
 # Fetch for the requester
-For the top pick only (or more if the requester asks):
+Never clone or download anything until the user has confirmed that specific
+repo. Report first; the requester asks the user. After the user confirms:
 1. Shallow-clone it read-only: `git clone --depth 1 https://github.com/<owner>/<repo> .scout/repos/<owner>__<repo>`.
    If that folder already exists, `git -C <folder> pull --ff-only` instead of re-cloning.
 2. Point to the files that matter: entry points, the example closest to the need,

@@ -14,3 +14,7 @@ data/
 !.env.example
 __pycache__/
 *.pyc
+
+# Candidate data: resumes, bank, preferences (never commit)
+/profile/
+.aider*

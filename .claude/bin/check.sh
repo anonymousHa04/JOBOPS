@@ -22,7 +22,12 @@ t_pass=$(printf '%s\n' "$tests" | sed -n 's/^ℹ pass //p')
 t_fail=$(printf '%s\n' "$tests" | sed -n 's/^ℹ fail //p')
 [ "${t_fail:-1}" = 0 ] || fail=1
 
-{ echo "== typecheck"; echo "$tsc"; echo "== tests"; echo "$tests"; } > "$full"
+gocheck=""
+if [ -f jd-search/go.mod ]; then
+  gocheck=$(cd jd-search && go vet ./... 2>&1 && go test ./... 2>&1) || fail=1
+fi
+
+{ echo "== typecheck"; echo "$tsc"; echo "== tests"; echo "$tests"; echo "== go"; echo "$gocheck"; } > "$full"
 
 if [ "$fail" = 0 ]; then
   echo "RESULT: PASS ($task): typecheck clean, ${t_pass} tests passed"
@@ -36,6 +41,7 @@ if [ "$tsc_n" -gt 0 ]; then
   printf '%s\n' "$tsc" | grep 'error TS' | head -10
 fi
 echo "tests: ${t_pass:-?} passed, ${t_fail:-?} failed"
+printf '%s\n' "$gocheck" | grep -E 'FAIL|\.go:[0-9]+' | head -10
 printf '%s\n' "$tests" \
   | awk '/^✖ failing tests:/ { on = 1; next } on' \
   | grep -E '^test at|^✖|Error|!==|expected|actual|\.test\.ts:[0-9]+' \

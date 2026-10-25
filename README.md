@@ -102,6 +102,7 @@ flowchart TD
 
 - Business services (jobs, contacts, applications) and workers are written in Node.js + TypeScript.
 - Go is the control layer over them: the API gateway is the single entry point (routing, rate limits, auth), and the scheduler/queue decides what runs when, dispatches work to Node workers, and retries failures.
+- Go also runs the JD fetcher (`jd-search`): many concurrent requests to public job-board APIs, with per-host rate limits and retries. It hands postings to the Node job service through `POST /jobs`.
 - Local Kubernetes supervises every service (start, stop, health checks, restarts), so supervision is not written in Go.
 - Keep the user-facing API separate from long-running AI and ingestion work.
 - Separate job, contact, and application responsibilities where doing so provides a real benefit.
@@ -283,17 +284,20 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Track source and ingestion timestamps.
 - Test duplicate and update behavior.
 
-### Milestone 3 — Candidate profile and matching
+### Milestone 3 — Candidate profile, matching, and resume selection
 
-- Load an approved resume/profile representation.
+- Parse the resume once into a user-approved YAML experience bank; record skills the resume omits as user-confirmed extras.
+- Minimal local model provider (Ollama, schema-validated output, timeouts), pulled forward from Milestone 4.
 - Extract job requirements into a validated structure.
-- Implement an initial deterministic matching baseline.
-- Return strengths, gaps, and evidence rather than only a single score.
+- Search public job-board APIs (Greenhouse, Lever, Ashby) by the user's preferences with a concurrent Go fetcher.
+- Score the bank against each JD deterministically: strengths, gaps, evidence, and questions about skills the bank lacks.
+- Resume selection engine: reuse, adapt, assemble, or flag gaps; one traceable YAML resume record per JD; rewrites may not add unsupported claims.
+- Expose the tools as MCP servers (Node and Go).
 
 ### Milestone 4 — Local LLM integration
 
-- Define a model-provider interface.
-- Connect a local inference runtime.
+- Generalize the model-provider interface from Milestone 3.
+- Move remaining extraction and judgment steps onto it (Laya for evidence checks).
 - Validate structured responses.
 - Handle timeouts, malformed output, and model unavailability.
 

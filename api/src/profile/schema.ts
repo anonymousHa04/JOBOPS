@@ -7,6 +7,7 @@ export const BulletSchema = z.object({
   short: z.string(),
   tags: z.array(z.string().toLowerCase()).min(1).max(12),
   impact: z.enum(['high', 'medium', 'low']),
+  source: z.enum(['resume', 'user']).default('resume'),
 });
 
 // Define Entry schema
@@ -64,6 +65,7 @@ export const SkillsExtraSchema = z.object({
     evidence: z.string().optional(),
     added_at: z.string(),
   })),
+  dismissed: z.array(z.string()).default([]),
 });
 
 // Define PreferencesSchema

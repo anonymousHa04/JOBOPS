@@ -28,7 +28,7 @@ export function saveBank(b: Bank): void {
 }
 
 export function loadSkillsExtra(): SkillsExtra {
-  if (!existsSync(skillsExtraPath())) return { skills: [] };
+  if (!existsSync(skillsExtraPath())) return { skills: [], dismissed: [] };
   return SkillsExtraSchema.parse(parse(readFileSync(skillsExtraPath(), "utf8")));
 }
 
@@ -67,7 +67,8 @@ export function checkBank(b: Bank, resumeText: string): string[] {
       if (seen.has(bullet.id)) issues.push(`${bullet.id}: duplicate id`);
       seen.add(bullet.id);
       if (!bullet.id.startsWith(`${entry.id}-`)) issues.push(`${bullet.id}: id not prefixed by ${entry.id}`);
-      for (const n of bullet.text.match(NUMBER) ?? []) {
+      // User-added bullets are not in the resume text; the user vouches for them.
+      for (const n of bullet.source === "user" ? [] : bullet.text.match(NUMBER) ?? []) {
         if (!resumeText.includes(n)) issues.push(`${bullet.id}: number ${n} not in resume`);
       }
       if (bullet.short.split(/\s+/).filter(Boolean).length > 15) issues.push(`${bullet.id}: short over 15 words`);
@@ -82,6 +83,34 @@ export function addSkill(name: string, status: "have" | "dont_have", evidence: s
   const key = name.trim().toLowerCase();
   extra.skills = extra.skills.filter((s) => s.name !== key);
   extra.skills.push({ name: key, status, evidence, added_at: new Date().toISOString() });
+  saveSkillsExtra(extra);
+}
+
+// Adds a user-written bullet to a role or project; returns its new id.
+export function addBullet(entryId: string, text: string, tags: string[], impact: "high" | "medium" | "low"): string {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const entry = [...bank.roles, ...bank.projects].find((e) => e.id === entryId);
+  if (!entry) throw new Error(`unknown entry ${entryId}`);
+  const used = entry.bullets.map((b) => Number(b.id.slice(entryId.length + 1)) || 0);
+  const id = `${entryId}-${Math.max(0, ...used) + 1}`;
+  const clean = text.trim().replace(/\s+/g, " ");
+  entry.bullets.push({
+    id,
+    text: clean,
+    short: clean.split(" ").slice(0, 15).join(" "),
+    tags: tags.map((t) => t.trim().toLowerCase()).filter(Boolean),
+    impact,
+    source: "user"
+  });
+  saveBank(bank);
+  return id;
+}
+
+// Stops a risk question from being asked again.
+export function dismissRisk(id: string): void {
+  const extra = loadSkillsExtra();
+  if (!extra.dismissed.includes(id)) extra.dismissed.push(id);
   saveSkillsExtra(extra);
 }
 

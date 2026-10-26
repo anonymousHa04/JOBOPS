@@ -1,5 +1,5 @@
 import type { Db } from "../db.ts";
-import { generate } from "../model/ollama.ts";
+import { generate } from "../model/llm.ts";
 import { fill, loadPrompt } from "../model/prompts.ts";
 import { loadBank } from "../profile/bank.ts";
 import { RequirementsSchema, StoredRequirementsSchema } from "./schema.ts";

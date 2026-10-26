@@ -39,7 +39,7 @@ commit_task() {
   t=$1; shift
   git add -- "$@" 2>/dev/null
   git diff --cached --quiet -- "$@" && return 0
-  m=$(echo "${CODER_MODEL:-ollama_chat/qwen2.5-coder:14b}" | sed 's#^ollama_chat/##')
+  m=$(echo "${CODER_MODEL:-openai/qwen2.5-coder-14b}" | sed 's#^openai/##')
   # First line of the task's own text (after the shared rules, when present).
   subj=$(awk 'f && /./ { print; exit } /^## This task/ { f = 1 }' ".claude/specs/$t.md" | cut -c1-60)
   [ -n "$subj" ] || subj=$(sed -n '2,/./{/./p;}' ".claude/specs/$t.md" | head -1 | cut -c1-60)
@@ -48,8 +48,8 @@ commit_task() {
 Written by $m (local, via aider/mini-swe-agent); passed check.sh.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
-Co-Authored-By: $m <$(echo "$m" | tr ':.' '--')@ollama.local>
-Co-Authored-By: Ollama <ollama@ollama.local>" -- "$@" && echo "COMMIT: $t $(git rev-parse --short HEAD)"
+Co-Authored-By: $m <$(echo "$m" | tr ':.' '--')@llama-cpp.local>
+Co-Authored-By: llama.cpp <llama-cpp@llama-cpp.local>" -- "$@" && echo "COMMIT: $t $(git rev-parse --short HEAD)"
 }
 
 started=${start:+0}

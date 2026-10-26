@@ -11,7 +11,7 @@
     "why": "Coder invented b.entries / b.skills[i].name and missed .ts imports",
     "expect_paths": [
       "api/src/profile/schema.ts",
-      "api/src/model/ollama.ts",
+      "api/src/model/llm.ts",
       "api/src/model/prompts.ts"
     ],
     "expect_symbols": [
@@ -41,7 +41,7 @@
     "expect_paths": [
       "api/src/requirements/schema.ts",
       "api/src/db.ts",
-      "api/src/model/ollama.ts",
+      "api/src/model/llm.ts",
       "api/src/profile/bank.ts"
     ],
     "expect_symbols": [

@@ -12,10 +12,3 @@
   extra_params:
     temperature: 0
     max_tokens: 4096
-- name: openai/qwen2.5-coder-7b
-  edit_format: whole
-  use_repo_map: false
-  use_temperature: true
-  extra_params:
-    temperature: 0
-    max_tokens: 4096

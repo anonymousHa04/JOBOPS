@@ -49,11 +49,8 @@ REQUIREMENT_DOCS = ("README.md", "requierements/")
 MAX_FILE_BYTES = 200_000
 
 # Semantic search (Phase 2): local embeddings from llama.cpp (llama-server --embeddings,
-# started by .claude/bin/llm.sh), vectors in Qdrant (Docker). EMBED_BACKEND=ollama
-# switches back to Ollama's /api/embed.
-EMBED_BACKEND = os.environ.get("EMBED_BACKEND", "llama")
+# started by .claude/bin/llm.sh), vectors in Qdrant (Docker).
 EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8082")
-OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 QDRANT = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "mxbai-embed-large")
 COLLECTION = os.environ.get("KNOWLEDGE_COLLECTION", "jobops_knowledge")
@@ -261,8 +258,6 @@ def fit_tokens(text):
 def embed(texts):
     """Embedding vectors for texts, in order. (Queries carry mxbai's search prefix;
     documents don't: see semantic_search.)"""
-    if EMBED_BACKEND == "ollama":
-        return http("POST", OLLAMA + "/api/embed", {"model": EMBED_MODEL, "input": texts, "truncate": True})["embeddings"]
     data = http("POST", EMBED_URL + "/v1/embeddings",
                 {"model": EMBED_MODEL, "input": [fit_tokens(t) for t in texts]})["data"]
     return [d["embedding"] for d in sorted(data, key=lambda d: d["index"])]

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
-import { generate } from "../model/ollama.ts";
+import { generate } from "../model/llm.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
 import { BankSchema, SkillsExtraSchema } from "./schema.ts";
 import type { Bank, SkillsExtra } from "./schema.ts";

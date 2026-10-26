@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-10-26
-branch: feedback
+branch: retire-ollama
 
 environment:
   - id: env-llama-cpp
@@ -22,13 +22,13 @@ environment:
   - id: env-qdrant
     what: Qdrant v1.19.2 in Docker (infra/qdrant/docker-compose.yml), 127.0.0.1:6333, data in data/qdrant, telemetry off
   - id: retire-ollama
-    state: todo
-    next_up: true
-    after: phase-4-measurement (user, 2026-10-26)
-    decision: "drop qwen2.5-coder:7b and the coder7 role (user, 2026-10-26); keep qwen2.5:7b for the product (JD parsing, rewording)"
-    steps: "1) copy the five GGUF files still needed (coder 14B, coder 0.5B draft, qwen2.5 7B, qwen2.5 14B, mxbai) from ~/.ollama/models/blobs into ~/models/jobops as real files; remove qwen2.5-coder:7b and the coder7 role from llm.sh, run-coder.sh, run-mini.sh, and the aider model settings; 2) move api/src/model/ollama.ts (used by requirements/parse.ts and profile/bank.ts) to llama.cpp's OpenAI-compatible API with json_schema, with product servers for qwen2.5 7B/14B that never run alongside the 14B coder; 3) quit/uninstall Ollama; close the stale tmux windows (old m3-05 aider window, status window still showing ollama ps)"
+    state: done
+    done: "2026-10-26: five GGUF files copied out of Ollama's store into ~/models/jobops (byte-verified); qwen2.5-coder:7b and the coder7 role dropped; llm.sh gains product roles general7 (qwen2.5:7b, :8084) and general14 (qwen2.5:14b, :8085), heavy roles mutually exclusive; api/src/model/ollama.ts replaced by api/src/model/llm.ts (llama.cpp, json_schema); Ollama quit and its login agent disabled (com.user.ollama-env.plist.disabled); docs, coder.md, AGENTS.md, README, run-plan co-authors updated"
+    evidence: "JD parse via general7 5.6 s (schema-valid, found the 5+ years must-have); general14 schema-valid in 2.1 s; clear 'unavailable' errors with the start command; check.sh pass (22 tests); self-test 29/29; retrieval eval 44/44"
+    deleted: "2026-10-26 (user confirmed): /Applications/Ollama.app, ~/.ollama (26 GB), its login agent, app support and caches; 44 GB free after. Only left: /usr/local/bin/ollama, a dangling root-owned symlink (harmless; remove with sudo rm /usr/local/bin/ollama)"
+    note: "keep branch retire-ollama (user, 2026-10-26)"
   - id: env-ollama
-    what: Ollama stays installed only because the JobOps product code (api/src/model/ollama.ts) still calls it; see todo product-provider-llama-cpp
+    what: Ollama is removed (app, models, login agent); all local models run on llama.cpp from ~/models/jobops.
   - id: env-memory
     what: 16 GB Mac. Docker Desktop VM capped at 2 GB (MemoryMiB 2048 in ~/Library/Group Containers/group.com.docker/settings-store.json; backup .bak-2026-10-26)
     state: done
@@ -105,7 +105,7 @@ milestone_3:
     state: todo
     what: node api/src/cli.ts bank build on the real resume (local model), user review and approve profile/bank.yaml
   - id: product-provider-llama-cpp
-    state: todo
+    state: done
     what: move api/src/model/ollama.ts (JD parse, bank build, rewording) to the llama.cpp OpenAI-compatible API with json_schema; verified to work (6*7 test returned schema-valid JSON); then Ollama can be retired
   - id: rewording-model
     state: flagged

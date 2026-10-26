@@ -29,7 +29,7 @@ shift; task=$1; spec=$2; shift 2
 bin=$(cd "$(dirname "$0")" && pwd)
 root=$(git rev-parse --show-toplevel)
 model=${MINI_MODEL:-openai/qwen2.5-coder-14b}
-case "$model" in *coder-7b*) server=coder7; port=8083 ;; *) server=coder; port=8081 ;; esac
+server=coder; port=8081
 wt="$root/../jobops-mini-$task"
 branch="mini/$task"
 flag() { echo "RUN-MINI: $*"; }

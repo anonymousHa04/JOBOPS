@@ -7,7 +7,6 @@
 #
 # Model server: llama.cpp via .claude/bin/llm.sh (started here if it is down).
 #   CODER_MODEL  openai/qwen2.5-coder-14b (default, server "coder", :8081)
-#                openai/qwen2.5-coder-7b  (server "coder7", :8083)
 # The window is 16k tokens; a request above it is rejected by the server and
 # flagged here as RUN-CODER: CONTEXT OVERFLOW (never silently truncated).
 #
@@ -26,10 +25,7 @@ bin=$(cd "$(dirname "$0")" && pwd)
 agents=$(cd "$bin/../agents" && pwd)
 knowledge=$(cd "$bin/../knowledge" && pwd)
 model=${CODER_MODEL:-openai/qwen2.5-coder-14b}
-case "$model" in
-  *coder-7b*) server=coder7; port=8083 ;;
-  *)          server=coder;  port=8081 ;;
-esac
+server=coder; port=8081
 # whole = rewrite each file in full (default). diff = search/replace blocks: less output,
 # but in Phase 4 round 1 aider wrote new files to a doubled path and its SEARCH blocks
 # failed to match in repairs; with speculative decoding, whole is ~3.5x faster than before.

@@ -1,6 +1,6 @@
 # JobOps agent rules
 
-Every agent working in this repo (Claude Code, Codex, a local Ollama coder, or a
+Every agent working in this repo (Claude Code, Codex, a local llama.cpp coder, or a
 custom agent defined in this folder) reads this file first. Each custom agent's
 role-specific instructions live in its own file in this folder, for example
 `coder.md`. When an agent file and this file disagree, this file wins.
@@ -58,7 +58,7 @@ tools: <comma-separated tool list, as narrow as the job allows>
 <role instructions>
 ```
 
-A local-model agent replaces `tools` with `model: ollama_chat/<model>` and
+A local-model agent replaces `tools` with `model: openai/<model>` (a llama.cpp server role) and
 `runner: aider` (see [coder.md](coder.md)). Add a row to the roster below when
 you add an agent.
 
@@ -82,7 +82,7 @@ READMEs of the top candidates.
 
 Claude Code is the manager: it plans, writes task specs, reviews diffs, runs
 tests, and finds flaws. It does not edit project code itself. Local-model agents
-(Ollama on this machine, through aider) make every code change, including fixes
+(llama.cpp on this machine, through aider or mini-swe-agent) make every code change, including fixes
 for flaws the manager finds.
 
 - Use local models only. Never use `kimi-k2.7-code:cloud` or any other cloud model.
@@ -134,18 +134,16 @@ for flaws the manager finds.
 
 ### 8. Parallel work
 
-Since 2026-10-26 the coding agents run on llama.cpp (`.claude/bin/llm.sh`; one
-`llama-server` per role, 16k context for the 14B coder). Ollama remains only for
-the product code until it moves over. Earlier setup: Ollama with
-`OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a 16 GB machine
-(`~/Library/LaunchAgents/com.user.ollama-env.plist`).
+All local models run on llama.cpp (`.claude/bin/llm.sh`, one `llama-server` per
+role; Ollama was retired on 2026-10-26). Heavy roles (`coder`, `general7`,
+`general14`) never run together on this 16 GB machine; `llm.sh` refuses it.
 
-- Default coder: `qwen2.5-coder:14b`, one task at a time. With
-  `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, parallel 1, and an 8k
-  context cap (`.aider.model.settings.yml`), it uses ~10 GB, 100% on the GPU, at
-  ~11 tok/s. The general `qwen2.5:14b` with parallel 2 grew to 15 GB and swapped.
-- For one-line fixes, `qwen2.5-coder:7b` is much faster (minutes, not tens of
-  minutes) and `check.sh` catches its mistakes.
+- Default coder: `qwen2.5-coder:14b` with a 16k window, flash attention, q8 KV
+  cache, and speculative decoding (0.5B draft model: ~3.5x faster on edits),
+  one task at a time (~10 GB). Two parallel slots swapped with Chrome and VS Code
+  open, so `LLM_CODER_SLOTS` stays 1.
+- The coder 7B (`qwen2.5-coder:7b`) was dropped on 2026-10-26 (user decision); the
+  14B with speculative decoding is the only coder.
 - Parallel coders: only two 7B models side by side, each in its own git
   worktree (`git worktree add ../jobops-<task> -b <task>`) with specs that touch
   different files. Never run a 14B alongside anything.

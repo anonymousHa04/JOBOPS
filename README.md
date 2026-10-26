@@ -87,7 +87,7 @@ flowchart TD
     AGENTS --> RESUMEAGENT[Resume Matching Agent]
     AGENTS --> OUTREACHAGENT[Outreach Drafting Agent]
 
-    JOBAGENT --> LLM[Local LLM via Ollama + Retrieval / RAG]
+    JOBAGENT --> LLM[Local LLM via llama.cpp + Retrieval / RAG]
     RESUMEAGENT --> LLM
     RESUMEAGENT --> DECIDE[Laya decision model]
     OUTREACHAGENT --> LLM
@@ -139,7 +139,7 @@ The original plan explored the following technologies. Exact assignments and ver
 | Frontend | React, TypeScript |
 | Business services and workers | Node.js, TypeScript, REST (Fastify, Zod, SQLite to start) |
 | Control layer | Go: API gateway and scheduler/queue in front of and over the Node services |
-| AI and agent workflows | Python, local LLMs via Ollama, Laya decision model, tool calling, structured outputs |
+| AI and agent workflows | Python, local LLMs via llama.cpp, Laya decision model, tool calling, structured outputs |
 | Retrieval | Embeddings, indexing, semantic search, RAG |
 | Data | Relational storage, appropriate indexes, caching |
 | Asynchronous work | Queues, workers, scheduling, event-driven processing |
@@ -234,12 +234,12 @@ Generation and judgment are handled by different kinds of models. All of them ru
 
 | Task | Model | Notes |
 |---|---|---|
-| Extract requirements from job posts into JSON | Local LLM (7–8B) via Ollama | Output validated against a schema before saving |
+| Extract requirements from job posts into JSON | Local LLM (`qwen2.5:7b`) via llama.cpp | Output validated against a schema before saving |
 | Judge evidence per requirement (supported / partial / missing / unknown) | [Laya](https://huggingface.co/convaiinnovations/laya) `typed-decisions` checkpoint | One requirement plus its retrieved evidence per question, to fit the 512–1,024 token context |
 | Decide fit (apply now / prepare first / skip) | Laya, with the fit score computed in code from per-requirement answers | `choice` questions are more reliable than Laya's `score` questions |
 | Verify tailored resume bullets are backed by real experience | Laya | Enforces "AI must not invent experience" |
-| Rewrite resume bullets | Local LLM via Ollama (`qwen2.5:7b`). **Flagged:** to be replaced by a better option the user has found | A code check rejects any rewrite that adds a skill, tool, number, or scope; every change needs user approval |
-| Draft outreach | Local LLM via Ollama | Every message needs user approval |
+| Rewrite resume bullets | Local LLM via llama.cpp (`qwen2.5:7b`). **Flagged:** to be replaced by a better option the user has found | A code check rejects any rewrite that adds a skill, tool, number, or scope; every change needs user approval |
+| Draft outreach | Local LLM via llama.cpp | Every message needs user approval |
 
 Laya is served with `laya-serve`, which exposes a Jev-compatible endpoint, so the decision step can move to TypeSafe Jev later behind the same interface.
 
@@ -247,7 +247,7 @@ Laya is served with `laya-serve`, which exposes a Jev-compatible endpoint, so th
 
 ### Development workflow
 
-Claude Code plans each milestone, writes task specs, and reviews and tests the code. A local coding model in Ollama writes well-defined pieces from those specs.
+Claude Code plans each milestone, writes task specs, and reviews and tests the code. A local coding model on llama.cpp writes well-defined pieces from those specs.
 
 This applies from Milestone 1 onward. It is separate from the models JobOps itself uses: the product needs no model until Milestone 3 (matching) and Milestone 4 (local LLM integration), but the coding model helps build every milestone.
 
@@ -288,7 +288,7 @@ The original plan emphasized small, testable deliverables. The sequence below re
 ### Milestone 3 — Candidate profile, matching, and resume selection
 
 - Parse the resume once into a user-approved YAML experience bank; record skills the resume omits as user-confirmed extras.
-- Minimal local model provider (Ollama, schema-validated output, timeouts), pulled forward from Milestone 4.
+- Minimal local model provider (llama.cpp, schema-forced and validated output, timeouts), pulled forward from Milestone 4.
 - Extract job requirements into a validated structure.
 - Search public job-board APIs (Greenhouse, Lever, Ashby) by the user's preferences with a concurrent Go fetcher.
 - Score the bank against each JD deterministically: strengths, gaps, evidence, and questions about skills the bank lacks.

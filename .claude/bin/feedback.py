@@ -11,6 +11,11 @@ Called by autofix.sh. Works only from recorded evidence in .agent-logs/:
   feedback.py repair-spec <task> <attempt> <original-spec> <out> -- <files>...
         Write a fresh repair spec from the evidence (new information, not the
         same prompt again). Records which known fixes were supplied.
+  feedback.py resolve  <escalation.json> --id ID --resolution TEXT [--title T]
+                       [--signature REGEX] [--terms a,b] [--files glob,glob] [--existing]
+        Close an escalation after the manager fixed it: write (or, with --existing,
+        link) a fix record so the next agent gets it in its context package, its
+        repair spec, and aider's lint hints; mark the escalation resolved.
   feedback.py finish   <task> <status> <reason>
         Write <task>.result.json, an escalation record when not passed, append
         to the main repo's .agent-logs/outcomes.jsonl, and update fix records.
@@ -387,6 +392,42 @@ def cmd_finish(task, status, reason):
     print(json.dumps({"status": status, "escalation": result["escalation"], "fixes_updated": promoted}))
 
 
+def cmd_resolve(path, opts):
+    esc = load_json(path)
+    if not esc:
+        raise SystemExit("not an escalation record: %s" % path)
+    fixes = load_fixes()
+    by_id = {fx["id"]: fx for fx in fixes}
+    link = "escalation %s (%s, %s): %s" % (esc["task"], esc.get("created", "")[:10], esc.get("category"), esc.get("reason"))
+    fid = opts["id"]
+    if opts.get("existing"):
+        if fid not in by_id:
+            raise SystemExit("no fix record with id %s" % fid)
+        by_id[fid]["evidence"] = (by_id[fid].get("evidence", "") + " | resolves " + link).strip(" |")
+    else:
+        if fid in by_id:
+            raise SystemExit("fix id %s exists; use --existing to link it" % fid)
+        sig = opts.get("signature")
+        if not sig and esc.get("last_errors"):
+            e = esc["last_errors"][0]
+            sig = re.escape("%s: %s" % (e["code"], normalize(e["message"]).split("'<type>'")[0]))[:160]
+        fixes.append({
+            "id": fid, "status": "observed", "title": opts.get("title") or ("Fix for " + esc["task"]),
+            "signature": sig or "", "terms": [t for t in opts.get("terms", "").split(",") if t],
+            "files": [f for f in opts.get("files", "").split(",") if f],
+            "conditions": esc.get("category_basis") or "", "root_cause": "Manager diagnosis after escalation.",
+            "resolution": opts["resolution"], "evidence": "resolves " + link,
+            "limitations": "Observed; verified when a repair round given this fix passes.", "recorded": now()[:10]})
+    save_fixes(fixes)
+    esc["resolved"] = {"at": now(), "by": "manager", "fix_id": fid}
+    with open(path, "w") as f:
+        json.dump(esc, f, indent=2)
+    os.makedirs(MAIN_LOGS, exist_ok=True)
+    with open(os.path.join(MAIN_LOGS, "escalations.jsonl"), "a") as f:
+        f.write(json.dumps({"task": esc["task"], "resolved": now(), "fix_id": fid, "file": os.path.abspath(path)}) + "\n")
+    print(json.dumps({"resolved": esc["task"], "fix_id": fid, "new_record": not opts.get("existing")}))
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
@@ -401,6 +442,19 @@ def main(argv):
         print(cmd_decide(args[0], int(args[1])))
     elif cmd == "repair-spec":
         cmd_repair_spec(args[0], args[1], args[2], args[3], files)
+    elif cmd == "resolve":
+        opts, rest, i = {}, [], 0
+        while i < len(args):
+            a = args[i]
+            if a == "--existing":
+                opts["existing"] = True; i += 1
+            elif a.startswith("--"):
+                opts[a[2:]] = args[i + 1]; i += 2
+            else:
+                rest.append(a); i += 1
+        if not rest or "id" not in opts or ("resolution" not in opts and not opts.get("existing")):
+            raise SystemExit("usage: feedback.py resolve <escalation.json> --id ID --resolution TEXT [...]")
+        cmd_resolve(rest[0], opts)
     elif cmd == "finish":
         cmd_finish(args[0], args[1], args[2] if len(args) > 2 else "")
     else:

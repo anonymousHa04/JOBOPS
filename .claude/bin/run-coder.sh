@@ -30,8 +30,10 @@ case "$model" in
   *coder-7b*) server=coder7; port=8083 ;;
   *)          server=coder;  port=8081 ;;
 esac
-# whole = rewrite each file in full (slow on big files); diff = search/replace blocks.
-edit_format=${CODER_EDIT_FORMAT:-whole}
+# diff = search/replace blocks (default since 2026-10-26: a lint round outputs only the
+# changed lines; with whole, every round re-generated the full file, ~1.4k tokens at
+# ~9.5 tokens/s); whole = rewrite each file in full.
+edit_format=${CODER_EDIT_FORMAT:-diff}
 logs="$root/.agent-logs"
 mkdir -p "$logs"
 rm -f "$logs/$task.done" "$logs/$task.exit" "$logs/$task.context.md" "$logs/$task.context.json"
@@ -69,7 +71,7 @@ tmux new-window -t jobops -n "$task" -c "$root" \
      aider --model '$model' --edit-format '$edit_format' --no-auto-commits --yes-always --no-suggest-shell-commands \
      --no-check-update --no-analytics --no-show-model-warnings --no-gitignore \
      --model-settings-file '$agents/aider.model.settings.yml' --model-metadata-file '$agents/aider.model.metadata.json' \
-     --map-tokens 0 --max-chat-history-tokens 2048 \
+     --map-tokens 0 --max-chat-history-tokens ${CODER_HISTORY_TOKENS:-6000} \
      --read '$agents/coder.md' --read '$agents/coder-patterns.md' --read '$agents/report-format.md' $context_read \
      --auto-lint --lint-cmd 'typescript: $bin/tsc-lint.sh' \
      --message-file '$spec' $*; echo \$? > '.agent-logs/$task.exit'; } 2>&1 | tee '.agent-logs/$task.log'; \

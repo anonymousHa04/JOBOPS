@@ -8,7 +8,8 @@
 #   llm.sh link                             (re)create readable GGUF links
 #
 # Roles (OpenAI-compatible API at http://127.0.0.1:<port>/v1):
-#   coder   8081  qwen2.5-coder:14b   ctx LLM_CODER_CTX (default 16384)
+#   coder   8081  qwen2.5-coder:14b   ctx LLM_CODER_CTX (default 16384), with
+#                 speculative decoding LLM_SPEC=draft (default) | ngram | both | none
 #   coder7  8083  qwen2.5-coder:7b    ctx 16384 (one-line fixes; never with coder)
 #   embed   8082  mxbai-embed-large   embeddings only, CLS pooling
 # Models are the GGUF files Ollama already downloaded, linked into
@@ -28,7 +29,8 @@ link() {
               "qwen2.5-coder:7b qwen2.5-coder-7b-instruct-q4_k_m.gguf" \
               "qwen2.5:7b qwen2.5-7b-instruct-q4_k_m.gguf" \
               "qwen2.5:14b qwen2.5-14b-instruct-q4_k_m.gguf" \
-              "mxbai-embed-large mxbai-embed-large-v1-f16.gguf"; do
+              "mxbai-embed-large mxbai-embed-large-v1-f16.gguf" \
+              "qwen2.5-coder:0.5b qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"; do
     set -- $pair
     src=$(blob "$1")
     if [ -n "$src" ] && [ -f "$src" ]; then ln -sf "$src" "$models/$2"; echo "linked $2"
@@ -40,7 +42,22 @@ link() {
 # role -> "port model alias extra-args"
 spec() {
   case "$1" in
-    coder)  echo "8081 qwen2.5-coder-14b-instruct-q4_k_m.gguf qwen2.5-coder-14b -c ${LLM_CODER_CTX:-16384} -np 1 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
+    coder)  # Speculative decoding (LLM_SPEC): the 14B verifies drafted tokens, so the output is
+            # the same at temperature 0, only faster.
+            #   draft (default): qwen2.5-coder:0.5b drafts. Measured 2026-10-26 (spec-bench.json):
+            #     3.5x on edits, 2.3x on new code, identical output.
+            #   ngram: drafts from text in the prompt; 3.0x on edits but 0.8x (slower) on new code
+            #   both: 3.1x / 1.9x (ngram's misses get in the way); none: off
+            spec=""
+            dm="$models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
+            ng="--spec-ngram-simple-size-n ${LLM_NGRAM_N:-4} --spec-ngram-simple-size-m ${LLM_NGRAM_M:-32}"
+            dr="-md $dm -ngld 99 -ctkd q8_0 -ctvd q8_0 --spec-draft-n-max ${LLM_DRAFT_MAX:-12} --spec-draft-n-min 1 --spec-draft-p-min ${LLM_DRAFT_PMIN:-0.6}"
+            case "${LLM_SPEC:-draft}" in
+              ngram) spec="--spec-type ngram-simple $ng" ;;
+              draft) [ -e "$dm" ] && spec="--spec-type draft-simple $dr" ;;
+              both)  [ -e "$dm" ] && spec="--spec-type ngram-simple,draft-simple $ng $dr" ;;
+            esac
+            echo "8081 qwen2.5-coder-14b-instruct-q4_k_m.gguf qwen2.5-coder-14b -c ${LLM_CODER_CTX:-16384} -np 1 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics $spec" ;;
     coder7) echo "8083 qwen2.5-coder-7b-instruct-q4_k_m.gguf qwen2.5-coder-7b -c 16384 -np 1 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
     embed)  echo "8082 mxbai-embed-large-v1-f16.gguf mxbai-embed-large --embeddings --pooling cls -c 512 -b 512 -ub 512 -np 1" ;;
     *) return 1 ;;
@@ -58,7 +75,7 @@ start() {
   [ -e "$models/$file" ] || link > /dev/null
   [ -e "$models/$file" ] || { echo "$role: model file missing: $models/$file"; return 1; }
   nohup llama-server -m "$models/$file" --alias "$alias" --host 127.0.0.1 --port "$port" -ngl 99 "$@" \
-    > "$logs/llm-$role.log" 2>&1 &
+    >> "$logs/llm-$role.log" 2>&1 &   # append: a restart must not discard evidence
   echo $! > "$pidf"
   i=0
   while ! healthy "$port"; do

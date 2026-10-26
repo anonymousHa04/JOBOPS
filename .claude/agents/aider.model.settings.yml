@@ -3,15 +3,16 @@
 # older commits use the same settings.
 # The repo map is off: the knowledge layer's context package replaces it, and
 # the map alone used 4,096 tokens and overflowed the window (m3-05-kb).
+# Edit format diff (search/replace): lint and repair rounds output only the change.
 - name: openai/qwen2.5-coder-14b
-  edit_format: whole
+  edit_format: diff
   use_repo_map: false
   use_temperature: true
   extra_params:
     temperature: 0
     max_tokens: 4096
 - name: openai/qwen2.5-coder-7b
-  edit_format: whole
+  edit_format: diff
   use_repo_map: false
   use_temperature: true
   extra_params:

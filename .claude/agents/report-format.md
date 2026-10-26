@@ -1,6 +1,8 @@
 # How to end your reply
 
-After your last edit, end your reply with exactly these two lines (no code fences):
+This applies to every reply, in every edit format (whole file or SEARCH/REPLACE
+blocks). After your last edit block, end your reply with exactly these two
+lines, outside any code block:
 
 STATUS: done
 BLOCKERS: none

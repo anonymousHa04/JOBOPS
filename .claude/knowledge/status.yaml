@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-10-26
-branch: feedback
+branch: prompt-cache
 
 environment:
   - id: env-llama-cpp
@@ -66,8 +66,17 @@ agent_system:
     state: todo
     what: first-attempt acceptance, repair attempts, escalations, context size, runtime; compare with the M3 baseline (0/7 first-try)
   - id: llama-speculative-decoding
-    state: todo
-    what: optional speed-up for the 14B coder with a small draft model; needs a draft GGUF download (ask first)
+    state: done
+    what: "coder server default LLM_SPEC=draft (qwen2.5-coder:0.5b, 397 MB, from Ollama's store); also ngram | both | none"
+    evidence: "spec-bench 2026-10-26 (.agent-logs/runs/spec-bench.json), identical output in every mode: edit 11.2 -> 39.0 tok/s (3.5x), new code 11.3 -> 25.9 tok/s (2.3x); ngram 3.0x on edits but 0.8x on new code; no swapping with the draft model loaded"
+  - id: aider-history-and-diff-format
+    state: done
+    what: "--max-chat-history-tokens 6000 (was 2048: 3 summary calls per run) and edit format diff (was whole: full file re-generated each lint round)"
+    evidence: "m3-05-ab: output per lint round 190-600 tokens (was ~1,450), 0 summary calls (was 3); result failed with a new error (never[]), escalated by the loop; runs vary, so Phase 4 needs several runs per setting"
+  - id: escalation-to-knowledge
+    state: done
+    what: "feedback.py resolve <escalation.json> --id ... writes or links a fix record and marks the escalation resolved; hints.sh also returns matching fixes from fixes.jsonl, so a recorded fix reaches the context package, repair specs, and aider's own lint loop"
+    evidence: "m3-05-ab escalation resolved with untyped-empty-array-never; hints.sh returns its resolution for the real error"
 
 milestone_3:
   # Product work on milestone-3-requirements (paused until the agent system is ready).

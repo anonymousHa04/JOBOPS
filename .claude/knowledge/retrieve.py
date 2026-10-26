@@ -48,12 +48,17 @@ ALLOW_EXT = (".ts", ".go", ".md", ".yaml", ".yml", ".json", ".sh", ".py", ".toml
 REQUIREMENT_DOCS = ("README.md", "requierements/")
 MAX_FILE_BYTES = 200_000
 
-# Semantic search (Phase 2): local embeddings via Ollama, vectors in Qdrant (Docker).
+# Semantic search (Phase 2): local embeddings from llama.cpp (llama-server --embeddings,
+# started by .claude/bin/llm.sh), vectors in Qdrant (Docker). EMBED_BACKEND=ollama
+# switches back to Ollama's /api/embed.
+EMBED_BACKEND = os.environ.get("EMBED_BACKEND", "llama")
+EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8082")
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 QDRANT = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "mxbai-embed-large")
 COLLECTION = os.environ.get("KNOWLEDGE_COLLECTION", "jobops_knowledge")
-EMBED_CHARS = 1800          # mxbai-embed-large reads ~512 tokens
+EMBED_CHARS = 1800          # first cut by characters ...
+EMBED_TOKENS = 500          # ... then by tokens: mxbai-embed-large reads at most 512
 SEMANTIC_MIN_SCORE = 0.55
 POINT_NS = uuid.UUID("6f1c7a52-2c0e-4c1e-9d4e-1b0a7c3e9f10")
 
@@ -103,7 +108,7 @@ def list_files(root):
 def kind_of(path):
     if path.startswith("api/test/") or path.endswith("_test.go") or ".test." in path:
         return "test"
-    if path.endswith(".md"):
+    if path.endswith(".md") or path.endswith("knowledge/status.yaml"):
         return "doc"
     if path.endswith((".ts", ".go")):
         return "source"
@@ -135,6 +140,10 @@ def chunk_file(path, lines):
                     symbols[i] = m.group(3)
     elif path.endswith(".md"):
         starts += [i for i, l in enumerate(lines) if MD_HEAD.match(l)]
+    elif path.endswith((".yaml", ".yml")):
+        # One chunk per top-level key and per list item ("  - id: ..."), so a
+        # status record is retrieved item by item.
+        starts += [i for i, l in enumerate(lines) if re.match(r"^[A-Za-z_]|^  - ", l)]
     else:
         starts += list(range(120, len(lines), 120))
     starts = sorted(set(s for s in starts if s < len(lines)))
@@ -240,9 +249,23 @@ def http(method, url, body=None, timeout=120):
         return json.load(r)
 
 
+def fit_tokens(text):
+    """Trim to EMBED_TOKENS with the server's own tokenizer (llama-server rejects
+    longer input instead of truncating it silently)."""
+    toks = http("POST", EMBED_URL + "/tokenize", {"content": text})["tokens"]
+    if len(toks) <= EMBED_TOKENS:
+        return text
+    return http("POST", EMBED_URL + "/detokenize", {"tokens": toks[:EMBED_TOKENS]})["content"]
+
+
 def embed(texts):
-    """mxbai-embed-large wants this prefix on queries, not on documents."""
-    return http("POST", OLLAMA + "/api/embed", {"model": EMBED_MODEL, "input": texts, "truncate": True})["embeddings"]
+    """Embedding vectors for texts, in order. (Queries carry mxbai's search prefix;
+    documents don't: see semantic_search.)"""
+    if EMBED_BACKEND == "ollama":
+        return http("POST", OLLAMA + "/api/embed", {"model": EMBED_MODEL, "input": texts, "truncate": True})["embeddings"]
+    data = http("POST", EMBED_URL + "/v1/embeddings",
+                {"model": EMBED_MODEL, "input": [fit_tokens(t) for t in texts]})["data"]
+    return [d["embedding"] for d in sorted(data, key=lambda d: d["index"])]
 
 
 def chunk_point_id(c):

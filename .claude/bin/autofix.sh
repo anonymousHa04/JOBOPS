@@ -105,7 +105,9 @@ $(grep -v '^[[:space:]]*$' ".agent-logs/$a.log" 2>/dev/null | tail -8)"
   if [ "$boundary" = failed ]; then
     verdict=failed; why="changed files outside the task: $(echo $outside)"
   elif [ "$touched" -eq 0 ]; then
-    verdict=failed; why="no task file changed"
+    # Prefer the runner's own reason (e.g. mini's worktree check failed).
+    flagged=$(grep -hE 'RUN-(CODER|MINI):' ".agent-logs/$a.log" 2>/dev/null | head -1 | sed 's/^RUN-[A-Z]*: //')
+    verdict=failed; why="no task file changed${flagged:+: $flagged}"
   elif [ "$run_exit" = unknown ]; then
     verdict=unknown; why="coder exit status not recorded"
   elif [ "$run_exit" != 0 ]; then
@@ -124,7 +126,11 @@ attempt "${FIRST_RUNNER:-$(runner_for "$@")}" "$task" "$spec" "$@"
 round=0
 while :; do
   if [ "$verdict" = passed ]; then
-    echo "$report"; finish passed ""; exit $?
+    echo "$report"; finish passed ""
+    # Refresh the vector index only after an accepted change (user, 2026-10-26):
+    # no writes for attempts that are rejected. Not fatal if it fails.
+    python3 "$bin/../knowledge/retrieve.py" embed-index > ".agent-logs/$task.embed.json" 2>&1 || true
+    exit 0
   fi
   if [ "$verdict" = timed_out ] || [ "$round" -ge "$max" ]; then
     echo "$report"

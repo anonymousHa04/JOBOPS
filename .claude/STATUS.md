@@ -5,6 +5,10 @@ Handoff for the next session. Update this file at the end of every milestone
 
 Last updated: 2026-10-25, after Milestone 2, the coder tooling, and the GitHub MCP server.
 
+> **Current state (2026-10-26 on): `.claude/knowledge/status.yaml`.** It is the
+> structured, searchable record of what is done and left (agent system phases,
+> Milestone 3, decisions needed). This file is the older narrative handoff.
+
 ## Where things are
 
 - Branch: `dev` (work happens here; `main` holds only the first commit).

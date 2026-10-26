@@ -1,6 +1,10 @@
 # Local coding agents: orchestration, limits, and rules
 
-How JobOps runs its local coders (aider and mini-swe-agent on Ollama): which
+> **Current state of all work:** `.claude/knowledge/status.yaml` <!-- .claude/knowledge/status.yaml --> (structured,
+> searchable with `retrieve.py`). **Since 2026-10-26 the agents run on llama.cpp, not
+> Ollama:** see the llama.cpp section below; Ollama references further down describe the earlier setup.
+
+How JobOps runs its local coders (aider and mini-swe-agent on llama.cpp): which
 scripts call what, where context limits and coding rules are set, and one known
 gap. Last updated 2026-10-25. Related: `M3-NOTES.md` <!-- M3-NOTES.md --> (what failed
 in Milestone 3 and why).
@@ -126,6 +130,26 @@ independent; path and symbol hits are the fairer signal.
 
 Semantic search (embeddings, vector store) is Phase 2; it plugs in as another
 method and never overrides the task or constraints.
+
+## llama.cpp switch (2026-10-26)
+
+Branch `agents/llama-cpp`. The agents and the knowledge layer run on llama.cpp
+(Homebrew `llama.cpp` 0.7.0, build 11669). Ollama stays installed only for the
+JobOps product code until `api/src/model/ollama.ts` moves over (status.yaml:
+`product-provider-llama-cpp`).
+
+| Part | Where | What |
+|---|---|---|
+| Servers | `.claude/bin/llm.sh start\|stop\|status [coder\|coder7\|embed\|all]` | One `llama-server` per role on 127.0.0.1: `coder` :8081 (qwen2.5-coder-14b, 16k context, q8 KV, flash attention), `coder7` :8083 (7B, never with `coder`), `embed` :8082 (mxbai-embed-large, CLS pooling, 512 tokens). Logs and pids in `.agent-logs/llm-<role>.*`. |
+| Models | `~/models/jobops/*.gguf` | Links to the GGUF files Ollama already downloaded (`llm.sh link`); no second download. |
+| aider | `run-coder.sh`, `.claude/agents/aider.model.settings.yml`, `aider.model.metadata.json` | `openai/qwen2.5-coder-14b` via `OPENAI_API_BASE`; repo map off (`--map-tokens 0`), chat history capped at 2,048 tokens, context package budget 3,500 tokens. Starts the server if it is down. |
+| mini | `run-mini.sh` | Same server via `model.model_kwargs.api_base`; step limit 40; spec may be relative or absolute; a missing spec fails; an exit status is always recorded. |
+| Embeddings | `retrieve.py` | `/v1/embeddings` on :8082; each text trimmed to 500 tokens with the server's tokenizer (llama.cpp rejects longer input instead of truncating). `EMBED_BACKEND=ollama` switches back. Vectors match Ollama's (cosine 1.0000). |
+| Overflow | server + `run-coder.sh` | A request above the window gets HTTP 400; the run log gets `RUN-CODER: CONTEXT OVERFLOW`, so the check fails with that reason. |
+
+Verified 2026-10-26: chat, JSON-schema output, embeddings, overflow rejection;
+smoke-aider passed (4.4k tokens, 55 s); smoke-mini ran and its model mistake was
+caught by the worktree check (nothing merged); Phase 0 self-test 12/12; eval 44/44.
 
 ## Phase 2 (part 1): semantic search (2026-10-26)
 

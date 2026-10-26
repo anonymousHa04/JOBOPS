@@ -134,8 +134,11 @@ for flaws the manager finds.
 
 ### 8. Parallel work
 
-Ollama runs with `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a
-16 GB machine (set at login by `~/Library/LaunchAgents/com.user.ollama-env.plist`).
+Since 2026-10-26 the coding agents run on llama.cpp (`.claude/bin/llm.sh`; one
+`llama-server` per role, 16k context for the 14B coder). Ollama remains only for
+the product code until it moves over. Earlier setup: Ollama with
+`OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=3` on a 16 GB machine
+(`~/Library/LaunchAgents/com.user.ollama-env.plist`).
 
 - Default coder: `qwen2.5-coder:14b`, one task at a time. With
   `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, parallel 1, and an 8k

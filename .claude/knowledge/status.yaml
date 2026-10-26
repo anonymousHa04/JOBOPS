@@ -1,0 +1,93 @@
+# JobOps work status: the single structured record of what is done and what is
+# left. Indexed by the knowledge layer (retrieve.py) item by item, so it can be
+# searched: retrieve.py semantic "what is left for the engine".
+# Update it whenever an item changes state. States: done | in_progress | todo | blocked.
+# Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
+updated: 2026-10-26
+branch: agents/llama-cpp
+
+environment:
+  - id: env-llama-cpp
+    what: Local models run on llama.cpp (Homebrew llama.cpp 0.7.0, build 11669), not Ollama
+    how: .claude/bin/llm.sh start|stop|status [coder|coder7|embed|all]
+    servers:
+      coder: 127.0.0.1:8081, qwen2.5-coder-14b, 16k context, q8 KV cache, flash attention
+      coder7: 127.0.0.1:8083, qwen2.5-coder-7b, 16k context (never together with coder)
+      embed: 127.0.0.1:8082, mxbai-embed-large, CLS pooling, 512-token input
+    models: GGUF files from Ollama's store, linked into ~/models/jobops/ (no second download)
+    note: A request over the window is rejected (HTTP 400) and flagged as RUN-CODER CONTEXT OVERFLOW; never silently truncated.
+  - id: env-index-refresh
+    what: The Qdrant index is written only after an accepted task (autofix.sh on pass), not before runs (user, 2026-10-26)
+  - id: env-qdrant
+    what: Qdrant v1.19.2 in Docker (infra/qdrant/docker-compose.yml), 127.0.0.1:6333, data in data/qdrant, telemetry off
+  - id: env-ollama
+    what: Ollama stays installed only because the JobOps product code (api/src/model/ollama.ts) still calls it; see todo product-provider-llama-cpp
+  - id: env-memory
+    what: 16 GB Mac. Docker Desktop VM capped at 2 GB (MemoryMiB 2048 in ~/Library/Group Containers/group.com.docker/settings-store.json; backup .bak-2026-10-26)
+    state: done
+    evidence: "before: Docker VM 8.3 GB, swapping 10,228 pages per 10 s idle; after: VM 2.06 GB, 0 swapouts, 77% memory free; Qdrant back with 415 points"
+
+agent_system:
+  # agentManagementAndFeedbackSystem.md, implementation order: validation, retrieval, integration, feedback.
+  - id: phase-0-validation
+    state: done
+    evidence: .claude/bin/phase0-selftest.sh, 12/12 scenarios (2026-10-26, re-run after the llama.cpp switch)
+  - id: phase-1-exact-structural-retrieval
+    state: done
+    evidence: retrieve.py eval, 44/44 on 8 real M3 tasks (5 tuning, 3 held out)
+  - id: phase-2-semantic-search
+    state: done
+    evidence: Qdrant + mxbai-embed-large via llama.cpp; 382 chunks indexed; fallback to error status when down
+  - id: phase-2-aider-integration
+    state: done
+    evidence: smoke-aider passed on llama.cpp (4.4k tokens sent, context ok, 55 s)
+  - id: phase-2-mini-integration
+    state: done
+    done: mini runs on llama.cpp (api_base, step limit 40), absolute spec paths, exit status always recorded
+    left: nothing; mini gets the context package since 2026-10-26 (smoke-mini passed with it, 1 sample)
+    evidence: smoke-mini failed on a real model mistake (put sub() inside add()), caught by the worktree check, nothing merged
+  - id: phase-2-acceptance-m3-05
+    state: in_progress
+    what: re-run m3-05 (bank) with the knowledge layer, now that the window is 16k and the repo map is off
+    result: "m3-05-kb2: failed with 5 type errors (was 15, then 7). All requests inside the window; real schemas and .ts imports used; remaining errors are typing slips (Schema.omit mutation, education has no bullets). Evidence: .agent-logs/runs/m3-05-kb2/"
+    next: decide on one aider fix round and agent self-reports (phase-3)
+    baseline: original 15 type errors; first knowledge run 7 errors but the context overflowed (8.7k-16k sent into 8k)
+  - id: phase-3-feedback-loop
+    state: todo
+    first: "capture agent self-reports as agent_claim (mini trajectory via -o and stop reason; aider STATUS/BLOCKERS block), failure category per doc 6.4"
+    what: outcome record per task, failure categories (doc 6.4), retries with new evidence, failure signatures, real escalation handoff, verified-fix promotion
+    exists: per-task result.json, fixes.jsonl with evidence statuses
+  - id: phase-4-measurement
+    state: todo
+    what: first-attempt acceptance, repair attempts, escalations, context size, runtime; compare with the M3 baseline (0/7 first-try)
+  - id: llama-speculative-decoding
+    state: todo
+    what: optional speed-up for the 14B coder with a small draft model; needs a draft GGUF download (ask first)
+
+milestone_3:
+  # Product work on milestone-3-requirements (paused until the agent system is ready).
+  - id: m3-engine
+    state: blocked
+    blocked_on: user go-ahead; content equivalence formula
+    what: selection, content equivalence, rewrite check, resume records, tailoring (requierements/jobops_resume_selection_generation_engine.md)
+  - id: m3-content-equivalence-formula
+    state: todo
+    what: "define during the engine design session (proposal in chat: id+text = 1, reworded = 0.5, over the union, plus summary variant)"
+  - id: m3-tests
+    state: blocked
+    blocked_on: user approval of the 7 minimal test cases (fake resume only)
+  - id: m3-bank-build
+    state: todo
+    what: node api/src/cli.ts bank build on the real resume (local model), user review and approve profile/bank.yaml
+  - id: product-provider-llama-cpp
+    state: todo
+    what: move api/src/model/ollama.ts (JD parse, bank build, rewording) to the llama.cpp OpenAI-compatible API with json_schema; verified to work (6*7 test returned schema-valid JSON); then Ollama can be retired
+  - id: rewording-model
+    state: flagged
+    what: local qwen2.5:7b for now; the user found a better option to switch to later
+
+decisions_needed:
+  - id: engine-go
+    question: Start the resume selection engine (and settle the content equivalence formula)?
+  - id: m3-test-cases
+    question: Approve the 7 minimal M3 test cases?

@@ -66,6 +66,13 @@ export const SkillsExtraSchema = z.object({
     added_at: z.string(),
   })),
   dismissed: z.array(z.string()).default([]),
+  // Learnable-skill answers, kept per JD so earlier answers can be shown again.
+  learnable: z.array(z.object({
+    skill: z.string().toLowerCase(),
+    learnable: z.boolean(),
+    job_id: z.string(),
+    answered_at: z.string(),
+  })).default([]),
 });
 
 // Define PreferencesSchema

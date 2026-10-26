@@ -3,22 +3,31 @@ import { loadBank, loadSkillsExtra, vocabulary } from "../profile/bank.ts";
 import type { Bank, Bullet, SkillsExtra } from "../profile/schema.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import type { Requirements } from "../requirements/schema.ts";
+import { bandOf, TAILORED_BANDS, WEIGHTS } from "./config.ts";
+import type { Band } from "./config.ts";
 import { hasTerm, norm, terms } from "./terms.ts";
 
-export type Label = "supported" | "partial" | "not_demonstrated" | "unknown";
+// "learnable": missing, but the user said it can be learned for this JD (counts half, no gap).
+export type Label = "supported" | "partial" | "learnable" | "not_demonstrated" | "unknown";
 export type Kind = "must" | "nice" | "keyword";
 
 export type ScoreItem = { requirement: string; kind: Kind; label: Label; bullet_ids: string[] };
 
+// A missing skill to ask about, with the user's earlier answers for other JDs.
+export type SkillQuestion = { skill: string; previous: { job_id: string; learnable: boolean }[] };
+
 export type ScoreResult = {
   score: number;
+  band: Band;
+  // Years of experience is the only hard constraint: it can't be tailored around.
+  hard: { years_asked: number; years_have: number; pass: boolean };
+  tailorable: boolean;
   gap: boolean;
   coverage: { must: number; nice: number; keyword: number };
   items: ScoreItem[];
-  ask_user: string[];
+  ask_user: SkillQuestion[];
 };
 
-const WEIGHTS = { must: 60, nice: 20, keyword: 20 };
 // Years asked by a requirement like "6+ years of Go" (0 if none).
 export function yearsAsked(r: string): number {
   return Number(r.match(/(\d+)\s*\+?\s*(?:years|yrs)/i)?.[1] ?? 0);
@@ -65,7 +74,14 @@ function looksLikeSkill(r: string): boolean {
 
 // Deterministic match of requirements against bank evidence. `only` limits the
 // evidence to these bullet ids (a resume record); default is the whole bank.
-export function scoreRequirements(req: Requirements, bank: Bank, extra: SkillsExtra, only?: string[]): ScoreResult {
+// `jobId` applies the user's learnable-skill answers for that JD.
+export function scoreRequirements(
+  req: Requirements,
+  bank: Bank,
+  extra: SkillsExtra,
+  only?: string[],
+  jobId?: string
+): ScoreResult {
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
   const every = allBullets(bank);
   const bullets = only ? every.filter((b) => only.includes(b.id)) : every;
@@ -73,18 +89,22 @@ export function scoreRequirements(req: Requirements, bank: Bank, extra: SkillsEx
   const dontHave = new Set(extra.skills.filter((s) => s.status === "dont_have").map((s) => norm(s.name)));
   const known = new Set([...Object.values(bank.skills).flat(), ...every.flatMap((b) => b.tags)].map(norm));
 
+  const answers = extra.learnable.filter((a) => a.job_id === jobId);
+  const learnable = new Set(answers.filter((a) => a.learnable).map((a) => norm(a.skill)));
   const years = totalYears(bank);
   const label = (r: string): { label: Label; ids: string[] } => {
-    // Years are judged by the role dates; a shortfall is reported by the risk check.
+    // Years are judged by the role dates (the hard constraint below).
     const asked = yearsAsked(r);
-    if (asked > 0) return { label: years >= asked ? "supported" : "unknown", ids: [] };
+    if (asked > 0) return { label: years >= asked ? "supported" : "not_demonstrated", ids: [] };
     const rt = terms(r, vocab);
     const ids = bullets
       .filter((b) => b.tags.some((t) => rt.includes(norm(t))) || hasTerm(b.text, r))
       .map((b) => b.id);
     if (ids.length > 0 || (rt.length > 0 && rt.every((t) => have.has(t)))) return { label: "supported", ids };
     if (rt.some((t) => known.has(t))) return { label: "partial", ids };
-    if (rt.length === 0 && looksLikeSkill(r)) return { label: "not_demonstrated", ids };
+    if (rt.length === 0 && looksLikeSkill(r)) {
+      return { label: learnable.has(norm(r)) ? "learnable" : "not_demonstrated", ids };
+    }
     return { label: "unknown", ids };
   };
 
@@ -100,34 +120,55 @@ export function scoreRequirements(req: Requirements, bank: Bank, extra: SkillsEx
   const cov = (kind: Kind): number => {
     const of = items.filter((i) => i.kind === kind);
     if (of.length === 0) return 1;
-    const got = of.reduce((n, i) => n + (i.label === "supported" ? 1 : i.label === "partial" ? 0.5 : 0), 0);
+    const half = (l: Label) => l === "partial" || l === "learnable";
+    const got = of.reduce((n, i) => n + (i.label === "supported" ? 1 : half(i.label) ? 0.5 : 0), 0);
     return got / of.length;
   };
   const coverage = { must: cov("must"), nice: cov("nice"), keyword: cov("keyword") };
   const score = WEIGHTS.must * coverage.must + WEIGHTS.nice * coverage.nice + WEIGHTS.keyword * coverage.keyword;
 
-  const ask = items
-    .filter((i) => i.label === "not_demonstrated")
+  const yearsAskedMax = Math.max(0, ...req.must_have.map(yearsAsked));
+  const hard = { years_asked: yearsAskedMax, years_have: years, pass: years >= yearsAskedMax };
+  const rounded = Math.round(score * 10) / 10;
+  const band = bandOf(rounded);
+
+  // Ask about each missing skill not answered for this JD; show answers from other JDs.
+  const answered = new Set(answers.map((a) => norm(a.skill)));
+  const skills = items
+    .filter((i) => i.label === "not_demonstrated" && yearsAsked(i.requirement) === 0)
     .map((i) => norm(i.requirement))
-    .filter((r) => !dontHave.has(r));
+    .filter((r) => !dontHave.has(r) && !answered.has(r));
+  const ask_user = [...new Set(skills)].sort().map((skill) => ({
+    skill,
+    previous: extra.learnable
+      .filter((a) => norm(a.skill) === skill && a.job_id !== jobId)
+      .map((a) => ({ job_id: a.job_id, learnable: a.learnable }))
+  }));
 
   return {
-    score: Math.round(score * 10) / 10,
-    gap: items.some((i) => i.kind === "must" && i.label === "not_demonstrated"),
+    score: rounded,
+    band,
+    hard,
+    tailorable: hard.pass && TAILORED_BANDS.includes(band),
+    gap: items.some((i) => i.kind === "must" && i.label === "not_demonstrated" && yearsAsked(i.requirement) === 0),
     coverage,
     items,
-    ask_user: [...new Set(ask)].sort()
+    ask_user
   };
 }
 
 export type ScoreSummary = {
   job_id: string;
   score: number;
+  band: Band;
+  hard: ScoreResult["hard"];
+  tailorable: boolean;
   gap: boolean;
   supported: number;
   partial: number;
+  learnable: number;
   missing: number;
-  ask_user: string[];
+  ask_user: SkillQuestion[];
 };
 
 export function scoreJob(db: Db, jobId: string): ScoreSummary {
@@ -135,14 +176,18 @@ export function scoreJob(db: Db, jobId: string): ScoreSummary {
   if (!req) throw new Error("parse the JD first");
   const bank = loadBank();
   if (!bank) throw new Error("no bank; run bank build first");
-  const r = scoreRequirements(req, bank, loadSkillsExtra());
+  const r = scoreRequirements(req, bank, loadSkillsExtra(), undefined, jobId);
   const count = (l: Label) => r.items.filter((i) => i.label === l).length;
   return {
     job_id: jobId,
     score: r.score,
+    band: r.band,
+    hard: r.hard,
+    tailorable: r.tailorable,
     gap: r.gap,
     supported: count("supported"),
     partial: count("partial"),
+    learnable: count("learnable"),
     missing: count("not_demonstrated"),
     ask_user: r.ask_user
   };

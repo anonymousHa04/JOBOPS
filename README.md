@@ -238,7 +238,8 @@ Generation and judgment are handled by different kinds of models. All of them ru
 | Judge evidence per requirement (supported / partial / missing / unknown) | [Laya](https://huggingface.co/convaiinnovations/laya) `typed-decisions` checkpoint | One requirement plus its retrieved evidence per question, to fit the 512–1,024 token context |
 | Decide fit (apply now / prepare first / skip) | Laya, with the fit score computed in code from per-requirement answers | `choice` questions are more reliable than Laya's `score` questions |
 | Verify tailored resume bullets are backed by real experience | Laya | Enforces "AI must not invent experience" |
-| Rewrite resume bullets and draft outreach | Local LLM via Ollama | Every change and message needs user approval |
+| Rewrite resume bullets | Local LLM via Ollama (`qwen2.5:7b`). **Flagged:** to be replaced by a better option the user has found | A code check rejects any rewrite that adds a skill, tool, number, or scope; every change needs user approval |
+| Draft outreach | Local LLM via Ollama | Every message needs user approval |
 
 Laya is served with `laya-serve`, which exposes a Jev-compatible endpoint, so the decision step can move to TypeSafe Jev later behind the same interface.
 

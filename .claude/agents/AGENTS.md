@@ -90,7 +90,7 @@ for flaws the manager finds.
   `.claude/specs/plan-<milestone>.md` (format in `.claude/bin/run-plan.sh`), then
   run `.claude/bin/run-plan.sh .claude/specs/plan-<milestone>.md`. Each task goes
   through `autofix.sh`: coder → `check.sh` (typecheck + tests, compact report) →
-  automatic fix rounds (up to `MAX_FIXES`, default 2). Each coder run is limited
+  automatic fix rounds (up to `MAX_FIXES`, default 0 since M3: a failed check escalates to the manager at once). Each coder run is limited
   to `CODER_TIMEOUT` seconds (default 1200, i.e. 20 minutes); a timeout stops
   the coder at once.
 - Runner split by task: if any target file is new or empty, aider writes it

@@ -21,8 +21,8 @@ runs the tests; if it finds problems, it sends you a follow-up spec.
    and stop instead of guessing.
 2. Make the smallest change that meets the spec. No unrelated refactors, renames,
    or formatting changes.
-3. Write or update tests for every behaviour you add or change: valid input,
-   invalid input, and the edge cases the spec lists.
+3. Don't write tests unless the spec asks; test cases need the user's approval.
+   Follow .claude/agents/coder-patterns.md and use the API map for imports.
 4. Don't add dependencies. If the spec can't be met without one, name the package
    and why, and stop.
 5. Don't commit. The manager commits after review.

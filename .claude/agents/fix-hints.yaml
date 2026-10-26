@@ -1,0 +1,31 @@
+# Error pattern → fix hint. check.sh and the aider lint hook append the hint
+# for every pattern (extended regex) that matches the error output.
+# Keep each entry to two lines: "- match:" then "  hint:". Add an entry
+# whenever a coder repeats a mistake.
+
+- match: Property '(min|max|length)' does not exist on type 'ZodPipe
+  hint: Zod v4 - put .trim().min().max() before .transform(); prefer z.string().trim().min(1).
+- match: toJSONSchema' does not exist
+  hint: Use z.toJSONSchema(schema) (a function from zod), not schema.toJSONSchema().
+- match: Cannot find module '[^./][^']*'
+  hint: That package is not installed. Use a Node built-in (fetch, AbortSignal.timeout, node:crypto) or zod/yaml/better-sqlite3. Do not add dependencies.
+- match: Cannot find module '\.{1,2}/
+  hint: Wrong relative path or missing .ts extension. Check the API map for the real file path.
+- match: has no exported member
+  hint: The name is not exported. Use the exact name from the API map, or add export to its definition if the spec owns that file.
+- match: TS18046
+  hint: Value is unknown. For errors use err instanceof Error ? err.message : String(err); for JSON or db rows cast to a narrow type.
+- match: TS2339: Property '[^']+' does not exist on type '\{\}'|on type 'unknown'
+  hint: Cast the db row or parsed JSON to a narrow type first, e.g. as { data: string } | undefined.
+- match: TS2835|TS2834|needs an explicit file extension
+  hint: Relative imports must end in .ts, e.g. "../db.ts".
+- match: TS1484|must be imported using a type-only import
+  hint: Use import type { X } for types.
+- match: TS1294|erasableSyntaxOnly
+  hint: No enums, namespaces, or constructor parameter properties; use string unions and plain fields.
+- match: TS7006|implicitly has an 'any' type
+  hint: Add a type to the parameter.
+- match: TS2554: Expected [0-9]+ arguments
+  hint: Wrong argument count. Check the function's signature in the API map.
+- match: TS2322|TS2345
+  hint: Type mismatch. Compare against the schema types (z.infer) in the API map; don't widen to any.

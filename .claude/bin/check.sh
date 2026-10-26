@@ -41,6 +41,7 @@ if [ "$tsc_n" -gt 0 ]; then
   printf '%s\n' "$tsc" | grep 'error TS' | head -10
 fi
 echo "tests: ${t_pass:-?} passed, ${t_fail:-?} failed"
+printf '%s\n%s\n' "$tsc" "$tests" | .claude/bin/hints.sh | head -5
 printf '%s\n' "$gocheck" | grep -E 'FAIL|\.go:[0-9]+' | head -10
 printf '%s\n' "$tests" \
   | awk '/^✖ failing tests:/ { on = 1; next } on' \

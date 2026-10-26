@@ -10,7 +10,7 @@ set -u
 task=$1; spec=$2; shift 2
 bin=$(cd "$(dirname "$0")" && pwd)
 cd "$(git rev-parse --show-toplevel)"
-max=${MAX_FIXES:-2}
+max=${MAX_FIXES:-0}
 limit=${CODER_TIMEOUT:-1200}
 
 # Runner per task: aider writes new files (whole-file output costs nothing extra

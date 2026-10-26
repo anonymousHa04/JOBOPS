@@ -54,7 +54,7 @@ git -C "$wt" -c user.email=mini@local -c user.name=mini commit -q --allow-empty 
 echo "== mini-swe-agent ($model) in $wt"
 (cd "$wt" && MSWEA_COST_TRACKING=ignore_errors MSWEA_CONFIGURED=true \
   mini -c mini_textbased.yaml -c model.model_class=litellm_textbased \
-       -m "$model" -y --exit-immediately -l 0 -t "$(cat "$root/$spec")" < /dev/null) &
+       -m "$model" -y --exit-immediately -l 0 -t "$(cat "$root/$spec"; echo; cat "$root/.claude/agents/coder-patterns.md"; echo; "$bin/api-map.sh" >/dev/null; cat "$root/.agent-logs/api-map.md")" < /dev/null) &
 echo $! > "$root/.agent-logs/$task.pid"
 wait $! || true
 

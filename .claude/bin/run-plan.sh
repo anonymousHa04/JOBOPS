@@ -28,6 +28,23 @@ tasks=$(awk '
   END { flush() }
 ' "$plan")
 
+# Commit a passing task's files only (user's standing request for M3; COMMIT=0
+# turns it off). Subject = task id + first line of its spec.
+commit_task() {
+  t=$1; shift
+  git add -- "$@" 2>/dev/null
+  git diff --cached --quiet -- "$@" && return 0
+  m=$(echo "${CODER_MODEL:-ollama_chat/qwen2.5-coder:14b}" | sed 's#^ollama_chat/##')
+  subj=$(sed -n '2,/./{/./p;}' ".claude/specs/$t.md" | head -1 | cut -c1-60)
+  git commit -q -m "$t: $subj
+
+Written by $m (local, via aider/mini-swe-agent); passed check.sh.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Co-Authored-By: $m <$(echo "$m" | tr ':.' '--')@ollama.local>
+Co-Authored-By: Ollama <ollama@ollama.local>" -- "$@" && echo "COMMIT: $t $(git rev-parse --short HEAD)"
+}
+
 started=${start:+0}
 echo "$tasks" | while IFS='|' read -r id files gate; do
   [ -z "$id" ] && continue
@@ -41,6 +58,7 @@ echo "$tasks" | while IFS='|' read -r id files gate; do
   # shellcheck disable=SC2086
   if out=$("$bin/autofix.sh" "$id" ".claude/specs/$id.md" $files); then
     echo "$out" | head -1
+    [ "${COMMIT:-1}" = 1 ] && commit_task "$id" $files
   else
     echo "$out"
     echo "PLAN STOPPED at $id. Resume with: run-plan.sh $plan $id"

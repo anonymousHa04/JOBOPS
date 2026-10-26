@@ -13,18 +13,30 @@ const has = (s: string, words: string[]) => words.some((w) => new RegExp(`\\b${w
 
 // Why a resume that scores well might still be rejected. Each risk is a
 // question for the user. Never includes bullet text: ids and JD words only.
-export function riskCheck(req: Requirements, bank: Bank, extra: SkillsExtra, selected: string[]): Risk[] {
+export function riskCheck(
+  req: Requirements,
+  bank: Bank,
+  extra: SkillsExtra,
+  selected: string[],
+  jobId?: string
+): Risk[] {
   const risks: Risk[] = [];
-  const score = scoreRequirements(req, bank, extra, selected);
+  const score = scoreRequirements(req, bank, extra, selected, jobId);
   const chosen = allBullets(bank).filter((b) => selected.includes(b.id));
 
   for (const item of score.items) {
     if (item.kind === "must" && item.label === "not_demonstrated" && yearsAsked(item.requirement) === 0) {
+      const skill = norm(item.requirement);
+      const before = extra.learnable
+        .filter((a) => a.skill === skill && a.job_id !== jobId)
+        .map((a) => `${a.learnable ? "learnable" : "not learnable"} for job ${a.job_id}`);
       risks.push({
-        id: `must:${norm(item.requirement)}`,
+        id: `must:${skill}`,
         kind: "must_have",
         detail: `no evidence for must-have "${item.requirement}"`,
-        question: `The JD needs ${item.requirement}. Have you used it? Where?`
+        question:
+          `The JD needs ${item.requirement}. Have you used it (where?), or is it a skill you can learn for this role?` +
+          (before.length ? ` Earlier answers: ${before.join("; ")}.` : "")
       });
     }
   }
@@ -35,7 +47,7 @@ export function riskCheck(req: Requirements, bank: Bank, extra: SkillsExtra, sel
     risks.push({
       id: "years",
       kind: "years",
-      detail: `JD asks ${asked}+ years; roles add up to ${total}`,
+      detail: `hard constraint: JD asks ${asked}+ years; roles add up to ${total}; not tailorable`,
       question: `The JD asks for ${asked}+ years; your listed roles add up to ${total}. Any earlier experience that counts?`
     });
   }
@@ -63,7 +75,9 @@ export function riskCheck(req: Requirements, bank: Bank, extra: SkillsExtra, sel
   }
 
   if (score.coverage.keyword < 0.6) {
-    const missing = score.items.filter((i) => i.kind === "keyword" && i.label !== "supported").map((i) => i.requirement);
+    const missing = score.items
+      .filter((i) => i.kind === "keyword" && i.label !== "supported" && yearsAsked(i.requirement) === 0)
+      .map((i) => i.requirement);
     risks.push({
       id: "keywords",
       kind: "keywords",

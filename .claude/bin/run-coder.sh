@@ -13,6 +13,7 @@ model=${CODER_MODEL:-ollama_chat/qwen2.5-coder:14b}
 edit_format=${CODER_EDIT_FORMAT:-whole}
 mkdir -p "$root/.agent-logs"
 rm -f "$root/.agent-logs/$task.done"
+"$root/.claude/bin/api-map.sh" >/dev/null
 
 if ! tmux has-session -t jobops 2>/dev/null; then
   tmux new-session -d -s jobops -n status -c "$root" \
@@ -22,7 +23,8 @@ fi
 tmux new-window -t jobops -n "$task" -c "$root" \
   "aider --model '$model' --edit-format '$edit_format' --no-auto-commits --yes-always --no-suggest-shell-commands \
      --no-check-update --no-analytics --no-show-model-warnings \
-     --read .claude/agents/coder.md \
+     --read .claude/agents/coder.md --read .claude/agents/coder-patterns.md --read .agent-logs/api-map.md \
+     --auto-lint --lint-cmd 'typescript: .claude/bin/tsc-lint.sh' \
      --message-file '$spec' $* 2>&1 | tee '.agent-logs/$task.log'; \
    grep -q 'Applied edit' '.agent-logs/$task.log' || echo 'RUN-CODER: NO EDIT APPLIED' | tee -a '.agent-logs/$task.log'; \
    for f in $*; do [ -s \"\$f\" ] || echo \"RUN-CODER: TARGET MISSING OR EMPTY: \$f\" | tee -a '.agent-logs/$task.log'; done; \

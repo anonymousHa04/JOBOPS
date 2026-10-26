@@ -11,6 +11,19 @@
     "github": {
       "command": ".claude/mcp/github.sh",
       "args": []
+    },
+    "jobops-tools": {
+      "command": "node",
+      "args": [
+        "api/src/mcp/server.ts"
+      ]
+    },
+    "jd-search": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "cd jd-search && exec go run ./cmd/jd-search mcp"
+      ]
     }
   }
 }

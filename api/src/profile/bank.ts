@@ -28,7 +28,7 @@ export function saveBank(b: Bank): void {
 }
 
 export function loadSkillsExtra(): SkillsExtra {
-  if (!existsSync(skillsExtraPath())) return { skills: [], dismissed: [] };
+  if (!existsSync(skillsExtraPath())) return { skills: [], dismissed: [], learnable: [] };
   return SkillsExtraSchema.parse(parse(readFileSync(skillsExtraPath(), "utf8")));
 }
 
@@ -111,6 +111,16 @@ export function addBullet(entryId: string, text: string, tags: string[], impact:
 export function dismissRisk(id: string): void {
   const extra = loadSkillsExtra();
   if (!extra.dismissed.includes(id)) extra.dismissed.push(id);
+  saveSkillsExtra(extra);
+}
+
+// Records the user's answer to "is <skill> learnable for this JD?". Answers are
+// per JD: the same skill is asked again for another JD, with earlier answers shown.
+export function recordLearnable(skill: string, learnable: boolean, jobId: string): void {
+  const extra = loadSkillsExtra();
+  const key = skill.trim().toLowerCase();
+  extra.learnable = extra.learnable.filter((a) => !(a.skill === key && a.job_id === jobId));
+  extra.learnable.push({ skill: key, learnable, job_id: jobId, answered_at: new Date().toISOString() });
   saveSkillsExtra(extra);
 }
 

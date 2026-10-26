@@ -70,7 +70,7 @@ tmux new-window -t jobops -n "$task" -c "$root" \
      --no-check-update --no-analytics --no-show-model-warnings --no-gitignore \
      --model-settings-file '$agents/aider.model.settings.yml' --model-metadata-file '$agents/aider.model.metadata.json' \
      --map-tokens 0 --max-chat-history-tokens 2048 \
-     --read '$agents/coder.md' --read '$agents/coder-patterns.md' $context_read \
+     --read '$agents/coder.md' --read '$agents/coder-patterns.md' --read '$agents/report-format.md' $context_read \
      --auto-lint --lint-cmd 'typescript: $bin/tsc-lint.sh' \
      --message-file '$spec' $*; echo \$? > '.agent-logs/$task.exit'; } 2>&1 | tee '.agent-logs/$task.log'; \
    grep -q 'Applied edit' '.agent-logs/$task.log' || echo 'RUN-CODER: NO EDIT APPLIED' | tee -a '.agent-logs/$task.log'; \

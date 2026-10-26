@@ -131,6 +131,23 @@ independent; path and symbol hits are the fairer signal.
 Semantic search (embeddings, vector store) is Phase 2; it plugs in as another
 method and never overrides the task or constraints.
 
+## Phase 3: feedback loop (2026-10-26)
+
+Branch `feedback`. From `agentManagementAndFeedbackSystem.md` <!-- agentManagementAndFeedbackSystem.md --> §6.
+
+| Part | Where | What |
+|---|---|---|
+| Outcome record | `feedback.py attempt`, `<task>.attempts.jsonl`, `<task>.result.json` | Per attempt: runner, strategy, exit, timeout, check, context status and tokens, errors, failing tests, **failure signature** (normalized file + error code + message), **category** (the 9 of §6.4, from evidence rules; `unknown` allowed), fixes supplied, and the **agent_claim**. |
+| Agent claims | `.claude/agents/report-format.md` (aider), `mini -o <task>.traj.json` | aider ends with `STATUS: done\|blocked` and `BLOCKERS:`; mini's trajectory gives its stop reason and last message. Stored as claims, never as evidence of success. |
+| Repair | `feedback.py repair-spec`, `FIX_RUNNER=aider` | A fresh session per round with only the errors, hints, matching known fixes (by signature), the previous claim, and the original task. |
+| Stop rules | `feedback.py decide` | Escalate on a timeout; on environment, unreliable validation, or missing context (a retry cannot fix those); on the same failure signature twice; at `MAX_FIXES` (default 1). |
+| Escalation | `<task>.escalation.json`, main `.agent-logs/escalations.jsonl` | Category and basis, what was tried per attempt, last errors and flags, agent claim, next owner (manager), suggested next step, evidence files. |
+| Fix promotion | `feedback.py finish` → `.claude/knowledge/fixes.jsonl` | A fix supplied in a repair round that then passed, with a signature matching the errors it was given for, moves `observed`/`hypothesis` → `verified` with evidence; a fix that did not help gets a "did not resolve" note (rejection stays a manager decision). |
+| Metrics feed | main `.agent-logs/outcomes.jsonl` | One line per task: status, attempts, repair rounds, first-attempt pass, category, context tokens, errors per attempt (Phase 4). |
+
+Self-test: `phase0-selftest.sh` now runs 25 checks (Phase 0 + feedback loop) with
+`FEEDBACK_FIXES` and `FEEDBACK_MAIN_LOGS` pointed at throwaway copies.
+
 ## llama.cpp switch (2026-10-26)
 
 Branch `agents/llama-cpp`. The agents and the knowledge layer run on llama.cpp

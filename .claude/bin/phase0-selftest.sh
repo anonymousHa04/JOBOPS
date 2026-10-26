@@ -18,7 +18,9 @@ trap cleanup EXIT
 ln -s "$root/node_modules" "$wt/node_modules"
 cd "$wt"
 
-mkdir -p .agent-logs
+mkdir -p .agent-logs/main
+# A throwaway fix record for the promotion check (the real fixes.jsonl is never touched).
+printf '%s\n' '{"id":"st-string-to-number","status":"observed","title":"Self-test: string assigned to number","signature":"TS2322: Type .string. is not assignable to type .number.","terms":[],"files":[],"resolution":"Use a number literal.","evidence":"self-test seed"}' > .agent-logs/fixes.jsonl
 ok=0; bad=0
 reset() { git checkout -q -- . && git clean -fdq -e node_modules -e .agent-logs; }
 
@@ -26,7 +28,8 @@ reset() { git checkout -q -- . && git clean -fdq -e node_modules -e .agent-logs;
 scenario() {
   name=$1; want=$2; file=$3; shift 3
   reset
-  env CODER_TIMEOUT=60 FIRST_RUNNER=fake COMMIT=0 "$@" \
+  env CODER_TIMEOUT=60 FIRST_RUNNER=fake FIX_RUNNER=fake MAX_FIXES=0 COMMIT=0 \
+    FEEDBACK_MAIN_LOGS="$wt/.agent-logs/main" FEEDBACK_FIXES="$wt/.agent-logs/fixes.jsonl" "$@" \
     "$bin/autofix.sh" "st-$name" /dev/null "$file" > ".agent-logs/st-$name.out" 2>&1
   rc=$?
   got=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' \
@@ -56,6 +59,49 @@ scenario outside-boundary failed    "$F" FAKE_ACTION="printf 'export const x = 1
 scenario tsc-silent-crash failed    "$F" TSC_CMD="exit 2" FAKE_ACTION="printf 'export const x = 1;\n' > $F"
 scenario no-test-summary  failed    "$F" TEST_CMD="echo nothing" FAKE_ACTION="printf 'export const x = 1;\n' > $F"
 
+# Phase 3: feedback loop.
+BAD="printf 'export const x: number = \"a\";\n' > $F"
+GOOD="printf 'export const x = 1;\n' > $F"
+OTHER="printf 'export const x: boolean = 3;\n' > $F"
+scenario repair-succeeds  passed    "$F" MAX_FIXES=1 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$GOOD"
+scenario repeated-failure failed    "$F" MAX_FIXES=3 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$BAD"
+scenario retry-limit      failed    "$F" MAX_FIXES=1 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$OTHER"
+
+# Evidence checks over the recorded results (categories, stop reasons,
+# escalation records, fix promotion, outcome log).
+checks=$(python3 - <<'PY'
+import json, os
+L = ".agent-logs"
+def res(n): return json.load(open(os.path.join(L, "st-%s.result.json" % n)))
+def check(name, cond, detail=""):
+    print(("OK    " if cond else "WRONG ") + name + (": " + detail if detail else ""))
+r = res("repair-succeeds")
+check("repair: 2 attempts, first failed, second passed", r["attempts_count"] == 2 and not r["first_attempt_passed"])
+check("repair: round 2 was a fresh repair with the matching fix", r["attempts"][1]["strategy"].startswith("repair") and "st-string-to-number" in r["attempts"][1]["fixes_supplied"])
+spec = open(os.path.join(L, "st-repair-succeeds-fix1.spec.md")).read()
+check("repair spec carries errors + known fix, not the old prompt", "Errors to fix" in spec and "Self-test: string assigned" in spec)
+fx = [json.loads(l) for l in open(os.path.join(L, "fixes.jsonl"))][0]
+check("fix promoted observed -> verified with evidence", fx["status"] == "verified" and "st-repair-succeeds" in fx["evidence"], fx["status"])
+check("no escalation record for a passed task", r["escalation"] is None and not os.path.exists(os.path.join(L, "st-repair-succeeds.escalation.json")))
+r = res("repeated-failure")
+check("repeated signature stops early (2 of 4 allowed attempts)", r["attempts_count"] == 2 and "repeated failure signature" in (r["reason"] or ""), r["reason"])
+e = json.load(open(os.path.join(L, "st-repeated-failure.escalation.json")))
+check("escalation record: category, what was tried, next owner", e["category"] == "incorrect_implementation" and len(e["what_was_tried"]) == 2 and e["next_owner"])
+r = res("retry-limit")
+check("different failure stops at the retry limit", r["attempts_count"] == 2 and "retry limit" in (r["reason"] or ""), r["reason"])
+cat = {n: res(n)["category"] for n in ("type-error", "outside-boundary", "timeout", "no-change", "tsc-silent-crash", "no-test-summary", "exit-unknown", "failing-test")}
+want = {"type-error": "incorrect_implementation", "outside-boundary": "instruction_violation", "timeout": "model_limitation",
+        "no-change": "model_limitation", "tsc-silent-crash": "unreliable_validation", "no-test-summary": "unreliable_validation",
+        "exit-unknown": "unreliable_validation", "failing-test": "incorrect_implementation"}
+check("failure categories (8 scenarios)", cat == want, ", ".join("%s=%s" % kv for kv in cat.items() if want[kv[0]] != kv[1]))
+out = [json.loads(l) for l in open(os.path.join(L, "main", "outcomes.jsonl"))]
+check("outcome log has one line per task", len(out) == 13, "%d lines" % len(out))
+PY
+)
+printf '%s\n' "$checks"
+ok=$((ok + $(printf '%s\n' "$checks" | grep -c '^OK')))
+bad=$((bad + $(printf '%s\n' "$checks" | grep -c '^WRONG')))
+
 # Invalid patch: must be rejected and leave the tree unchanged; a valid one
 # must apply and verify.
 reset
@@ -76,5 +122,5 @@ else
   bad=$((bad + 1)); echo "WRONG valid-patch: not applied"
 fi
 
-echo "phase0-selftest: $ok ok, $bad wrong"
+echo "selftest (phase 0 + 3): $ok ok, $bad wrong"
 [ "$bad" = 0 ]

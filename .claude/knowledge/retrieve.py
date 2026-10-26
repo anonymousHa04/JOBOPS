@@ -275,7 +275,12 @@ def chunk_point_id(c):
 
 def embed_index(ix, batch=16):
     """Sync the Qdrant collection with the current corpus: embed new or changed
-    chunks, delete points for chunks that no longer exist. Idempotent."""
+    chunks, delete points for chunks that no longer exist. Idempotent.
+    Only the main checkout writes: the index describes the main tree, and a
+    worktree (an agent sandbox, often at an older commit) would add stale
+    versions of files. Worktrees still search the index read-only."""
+    if not is_main_checkout(ix.root):
+        return {"skipped": "not the main checkout; the shared index is written only from the main tree"}
     coll = QDRANT + "/collections/" + COLLECTION
     try:
         http("GET", coll)
@@ -310,11 +315,10 @@ def embed_index(ix, batch=16):
     # The collection is shared by every checkout of this repo. Only the main
     # checkout prunes; a linked worktree (e.g. an agent's sandbox at an older
     # commit) only adds, so it can never delete the main tree's vectors.
-    stale = [pid for pid in existing if pid not in want] if is_main_checkout(ix.root) else []
+    stale = [pid for pid in existing if pid not in want]
     if stale:
         http("POST", coll + "/points/delete?wait=true", {"points": stale})
-    return {"chunks": len(want), "embedded": len(todo), "deleted": len(stale), "kept": len(want) - len(todo),
-            "pruning": is_main_checkout(ix.root)}
+    return {"chunks": len(want), "embedded": len(todo), "deleted": len(stale), "kept": len(want) - len(todo)}
 
 
 def is_main_checkout(root):

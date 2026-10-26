@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-10-26
-branch: agents/llama-cpp
+branch: feedback
 
 environment:
   - id: env-llama-cpp
@@ -17,7 +17,8 @@ environment:
     models: GGUF files from Ollama's store, linked into ~/models/jobops/ (no second download)
     note: A request over the window is rejected (HTTP 400) and flagged as RUN-CODER CONTEXT OVERFLOW; never silently truncated.
   - id: env-index-refresh
-    what: The Qdrant index is written only after an accepted task (autofix.sh on pass), not before runs (user, 2026-10-26)
+    what: The Qdrant index is written only after an accepted task (autofix.sh on pass), not before runs (user, 2026-10-26), and only from the main checkout; worktrees search it read-only
+    note: "One point per chunk (per heading, declaration, or YAML item), so a file appears many times with different line ranges; that is intended. Stale points from old versions are pruned on the next write (123 removed 2026-10-26; now 423 points = 423 chunks)."
   - id: env-qdrant
     what: Qdrant v1.19.2 in Docker (infra/qdrant/docker-compose.yml), 127.0.0.1:6333, data in data/qdrant, telemetry off
   - id: env-ollama
@@ -47,13 +48,17 @@ agent_system:
     left: nothing; mini gets the context package since 2026-10-26 (smoke-mini passed with it, 1 sample)
     evidence: smoke-mini failed on a real model mistake (put sub() inside add()), caught by the worktree check, nothing merged
   - id: phase-2-acceptance-m3-05
-    state: in_progress
+    state: done
     what: re-run m3-05 (bank) with the knowledge layer, now that the window is 16k and the repo map is off
     result: "m3-05-kb2: failed with 5 type errors (was 15, then 7). All requests inside the window; real schemas and .ts imports used; remaining errors are typing slips (Schema.omit mutation, education has no bullets). Evidence: .agent-logs/runs/m3-05-kb2/"
     next: decide on one aider fix round and agent self-reports (phase-3)
     baseline: original 15 type errors; first knowledge run 7 errors but the context overflowed (8.7k-16k sent into 8k)
   - id: phase-3-feedback-loop
-    state: todo
+    state: in_progress
+    built: ".claude/bin/feedback.py + autofix.sh: per-attempt record (agent_claim, failure category from doc 6.4, failure signature, fixes supplied), fresh repair round with new evidence (FIX_RUNNER aider, MAX_FIXES 1), stop on repeated signature / environment / validation / context / timeout / retry limit, escalation record (.agent-logs/<task>.escalation.json + main .agent-logs/escalations.jsonl), fix promotion with evidence, outcomes.jsonl for Phase 4"
+    evidence: "selftest 25/25 (12 phase-0 + 13 feedback-loop checks) on 2026-10-26"
+    acceptance: "m3-05-fb PASSED on the first attempt (aider's lint loop fixed its own errors; 4 requests, 6.5k-13k tokens; claim STATUS done). Behavior check on a fake profile: all 11 exports, YAML round trip, checkBank flags exactly the planted issues, addSkill and vocabulary correct. One gap: hard-coded ./profile, because run-plan.sh dropped the plan's shared rules (fixed, verified by a split test). Evidence: .agent-logs/runs/m3-05-fb/"
+    left: "not yet exercised for real: a repair round that passes and promotes a fix (self-test covers it with a fake agent)"
     first: "capture agent self-reports as agent_claim (mini trajectory via -o and stop reason; aider STATUS/BLOCKERS block), failure category per doc 6.4"
     what: outcome record per task, failure categories (doc 6.4), retries with new evidence, failure signatures, real escalation handoff, verified-fix promotion
     exists: per-task result.json, fixes.jsonl with evidence statuses

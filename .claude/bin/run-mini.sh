@@ -12,7 +12,7 @@ if [ "${1:-}" != --inner ]; then
   task=$1; spec=$2; shift 2
   root=$(git rev-parse --show-toplevel)
   mkdir -p "$root/.agent-logs"
-  rm -f "$root/.agent-logs/$task.done" "$root/.agent-logs/$task.pid" "$root/.agent-logs/$task.exit"
+  rm -f "$root/.agent-logs/$task.done" "$root/.agent-logs/$task.pid" "$root/.agent-logs/$task.exit" "$root/.agent-logs/$task.traj.json"
   if ! tmux has-session -t jobops 2>/dev/null; then
     tmux new-session -d -s jobops -n status -c "$root" \
       "while true; do clear; date; echo; '$(cd "$(dirname "$0")" && pwd)/llm.sh' status; echo; git -C '$root' status --short; sleep 5; done"
@@ -92,7 +92,7 @@ echo "== mini-swe-agent ($model) in $wt"
   mini -c mini_textbased.yaml -c model.model_class=litellm_textbased \
        -c agent.step_limit=${MINI_STEP_LIMIT:-40} \
        -c model.model_kwargs.api_base=http://127.0.0.1:$port/v1 -c model.model_kwargs.api_key=local \
-       -m "$model" -y --exit-immediately -l 0 -t "$(printf '%s\n\n' "$task_text"; cat "$bin/../agents/coder-patterns.md")" < /dev/null) &
+       -m "$model" -y --exit-immediately -l 0 -o "$root/.agent-logs/$task.traj.json" -t "$(printf '%s\n\n' "$task_text"; cat "$bin/../agents/coder-patterns.md")" < /dev/null) &
 echo $! > "$root/.agent-logs/$task.pid"
 # Keep mini's real exit status (R0.1); set -e must not end the script here.
 mini_rc=0; wait $! || mini_rc=$?

@@ -19,9 +19,14 @@ cd "$(git rev-parse --show-toplevel)"
 mkdir -p .claude/specs
 
 # Split the plan into one spec file per task; list "id|files|gate" lines.
+# The plan's preamble (everything before the first "## task:") holds rules for
+# every task, so it is copied to the top of each spec: before 2026-10-26 it was
+# dropped, and coders never saw shared rules such as JOBOPS_PROFILE_DIR (m3-05-fb).
 tasks=$(awk '
   function flush() { if (id != "") print id "|" files "|" gate }
-  /^## task: / { flush(); id = $3; files = ""; gate = ""; out = ".claude/specs/" id ".md"; print "# Task " id > out; next }
+  /^## task: / { flush(); id = $3; files = ""; gate = ""; out = ".claude/specs/" id ".md"; print "# Task " id > out
+                 if (shared != "") print "\n## Shared rules (apply to every task)\n" shared "\n## This task" >> out; next }
+  id == "" { shared = shared $0 "\n"; next }
   /^files: / && id != "" && files == "" { files = substr($0, 8); next }
   /^gate: / && id != "" { gate = $2; next }
   id != "" { print >> out }
@@ -35,7 +40,9 @@ commit_task() {
   git add -- "$@" 2>/dev/null
   git diff --cached --quiet -- "$@" && return 0
   m=$(echo "${CODER_MODEL:-ollama_chat/qwen2.5-coder:14b}" | sed 's#^ollama_chat/##')
-  subj=$(sed -n '2,/./{/./p;}' ".claude/specs/$t.md" | head -1 | cut -c1-60)
+  # First line of the task's own text (after the shared rules, when present).
+  subj=$(awk 'f && /./ { print; exit } /^## This task/ { f = 1 }' ".claude/specs/$t.md" | cut -c1-60)
+  [ -n "$subj" ] || subj=$(sed -n '2,/./{/./p;}' ".claude/specs/$t.md" | head -1 | cut -c1-60)
   git commit -q -m "$t: $subj
 
 Written by $m (local, via aider/mini-swe-agent); passed check.sh.

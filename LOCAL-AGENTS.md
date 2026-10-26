@@ -78,7 +78,69 @@ Model override: `MINI_MODEL`. Env: `MSWEA_COST_TRACKING=ignore_errors`,
 | `CODER_MODEL` / `MINI_MODEL` | `ollama_chat/qwen2.5-coder:14b` | Model per runner |
 | `COMMIT` | 1 | Auto-commit each passing task |
 
-## Known gap: mini-swe-agent has no context setting
+## Phase 0: validation (2026-10-26)
+
+From `agentManagementAndFeedbackSystem.md` <!-- agentManagementAndFeedbackSystem.md --> §3. Every attempt is judged
+on evidence, never on log text.
+
+| Requirement | Where | What it does |
+|---|---|---|
+| R0.1 exit codes | `check.sh`, `run-coder.sh`, `run-mini.sh`, `run-fake.sh` | Typecheck, tests, and Go judged by exit status; missing test summary = failed. aider and mini write their exit status to `.agent-logs/<task>.exit`; missing = `unknown`. |
+| R0.2 explicit results | `check.sh`, `autofix.sh` | `.agent-logs/<task>.check.json` per check; `.agent-logs/<task>.result.json` per task: `passed`, `failed`, `timed_out`, or `unknown`, a reason, and every attempt (runner, exit, boundary, check). |
+| R0.3 final patch | `apply-patch.sh` | mini's patch must apply cleanly, then its reverse must apply (the tree holds exactly the validated patch). autofix then checks the main tree again. |
+| R0.4 boundaries | `tree-snapshot.sh`, `autofix.sh` | Snapshot (path + hash) before and after every runner. A changed file outside the task's files, or no task file changed, fails the attempt. Applies to aider, mini, and fake. |
+| R0.5 observability | all | No swallowed exit codes; the failure reason is kept in the result file. |
+| Config findings | `run-mini.sh` | mini runs with `agent.step_limit=40` (`MINI_STEP_LIMIT`) and `model.model_kwargs.num_ctx=8192` (`MINI_NUM_CTX`); the API map is built from the main tree before launch. |
+
+**Acceptance test:** `.claude/bin/phase0-selftest.sh` runs 12 scenarios with a
+fake coder in a throwaway worktree (`../jobops-phase0-selftest`, removed after):
+pass, coder exit 3, lost exit status, type error, failing test, timeout, no
+change, file outside the boundary, tsc crash with no output, no test summary,
+invalid patch, valid patch. All 12 report correctly (2026-10-26).
+
+Not yet verified against a real run: that mini honors `num_ctx=8192` (check the
+CONTEXT column of `ollama ps` during the next mini run).
+
+## Phase 1: Agent Knowledge Layer, exact + structural (2026-10-26)
+
+From `agentManagementAndFeedbackSystem.md` <!-- agentManagementAndFeedbackSystem.md --> §4. Not yet wired into
+aider or mini (that is Phase 2).
+
+| Part | Where | What |
+|---|---|---|
+| Interface | `.claude/knowledge/retrieve.py context --spec F --files ... [--new ...] [--budget 3000] [--format json\|md]` | `retrieve_context(task, repo, limits)`. JSON for logs; Markdown for agents (indented blocks, no code fences). `status: ok` or `status: error` with the reason (exit 1); an empty section is reported as `empty`, never as an error. |
+| Exact search | SQLite FTS5 (BM25) in memory | Chunks: one per top-level declaration in code, one per heading in Markdown. Plus an exact table of exported symbols. `retrieve.py search "<words>"`. |
+| Structure | own import parser (TS `import`/`export from`, Go `jobops/jd-search/...`) | `deps` / `rdeps`; definitions of imported names with same-file helpers (3 levels); each touched module's export list; consumers' usage lines; tests that import a module. `retrieve.py deps\|rdeps <file>`. TypeScript 7 ships no JS compiler API, hence the parser. |
+| Known fixes | `.claude/knowledge/fixes.jsonl` | Failure signature, terms, file globs, root cause, resolution, evidence, limitations, status (`observed`, `hypothesis`, `verified`, `regression-tested`, `rejected`). Seeded with 9 M3 records: 6 verified, 3 hypotheses. Rejected/outdated records are never retrieved. |
+| Corpus | git-tracked + untracked-not-ignored files | Denylist: `profile/`, `data/`, `node_modules/`, `graphify-out/`, `.scout/`, `.agent-logs/`, `.claude/specs/`, `.env*`, keys, secrets, lock files. Rebuilt on every call (~63 files, ~370 chunks), so never stale. |
+| Evidence classes | every item | `requirement` (task, README, requierements/), `source_fact` (repo), `verified_fix`, `hypothesis` (observed or unproven fixes), `outdated`. |
+| Priority | package order | task → constraints (edit boundary, installed packages) → targets and named symbols → dependencies → consumers → tests + validation → known fixes → related source (BM25) → docs (BM25). Budget in tokens (chars/4); the task and constraints are always kept; anything else past the budget is listed under `dropped`. |
+
+**Evaluation** (`retrieve.py eval`, `.claude/knowledge/eval.json`): 8 real M3
+tasks with the original specs, targets treated as not yet written. 5 cases were
+used while tuning, 3 are held out (expectations written before running). Result
+2026-10-26: 44/44 expected paths, symbols, and fixes retrieved; every package
+within budget; no private file leaked. Caveat: the fix records were written
+after seeing these failures, so fix matches on the held-out cases are not fully
+independent; path and symbol hits are the fairer signal.
+
+Semantic search (embeddings, vector store) is Phase 2; it plugs in as another
+method and never overrides the task or constraints.
+
+## Phase 2 (part 1): semantic search (2026-10-26)
+
+| Part | What |
+|---|---|
+| Vector store | Qdrant `v1.19.2` in Docker: `infra/qdrant/docker-compose.yml`. Ports bound to `127.0.0.1` (6333 HTTP, 6334 gRPC), data in `data/qdrant/` (git-ignored), telemetry off, 1 GB memory cap (~270 MB in use). Start: `docker compose -f infra/qdrant/docker-compose.yml up -d`. |
+| Embeddings | `mxbai-embed-large` (Ollama, 1024 dimensions, ~670 MB). Queries get mxbai's search prefix; documents don't. Chunks are cut to ~1,800 characters (the model reads ~512 tokens). |
+| Index | `retrieve.py embed-index` syncs collection `jobops_knowledge` with the corpus: point id = hash of path + start line + content, so only new or changed chunks are embedded and removed chunks are deleted. First build: 378 chunks in ~20 s. |
+| Retrieval | `retrieve.py semantic "<query>"`; in context packages a `semantic` section (up to 3 items, cosine ≥ 0.55) comes after exact and structural evidence and never above the task or constraints. Vectors whose chunk no longer matches the current files are ignored. `--no-semantic` turns it off. |
+| Failure | If Ollama or Qdrant is down, the `semantic` section reports `error` with the reason and the rest of the package is built as usual. |
+
+Eval with semantic on: 44/44 still retrieved; semantic adds 1–3 items per task within budget.
+Not done yet: wiring the context package into aider and mini (next), re-running `embed-index` automatically.
+
+## Known gap (addressed in Phase 0): mini-swe-agent had no context setting
 
 The 8k context in `.aider.model.settings.yml` applies only to aider.
 mini-swe-agent calls Ollama through LiteLLM with no `num_ctx`, and the Ollama

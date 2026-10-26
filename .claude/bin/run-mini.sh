@@ -12,7 +12,7 @@ if [ "${1:-}" != --inner ]; then
   task=$1; spec=$2; shift 2
   root=$(git rev-parse --show-toplevel)
   mkdir -p "$root/.agent-logs"
-  rm -f "$root/.agent-logs/$task.done" "$root/.agent-logs/$task.pid"
+  rm -f "$root/.agent-logs/$task.done" "$root/.agent-logs/$task.pid" "$root/.agent-logs/$task.exit"
   if ! tmux has-session -t jobops 2>/dev/null; then
     tmux new-session -d -s jobops -n status -c "$root" \
       "while true; do clear; date; echo; ollama ps; echo; git -C '$root' status --short; sleep 5; done"
@@ -51,33 +51,41 @@ ln -s "$root/node_modules" "$wt/node_modules"
 git -C "$wt" add -A -- . ':!node_modules'
 git -C "$wt" -c user.email=mini@local -c user.name=mini commit -q --allow-empty -m "base for $task"
 
+# API map of the main tree (same sources as the worktree base).
+(cd "$root" && "$bin/api-map.sh" > /dev/null)
+
 echo "== mini-swe-agent ($model) in $wt"
 (cd "$wt" && MSWEA_COST_TRACKING=ignore_errors MSWEA_CONFIGURED=true \
   mini -c mini_textbased.yaml -c model.model_class=litellm_textbased \
-       -m "$model" -y --exit-immediately -l 0 -t "$(cat "$root/$spec"; echo; cat "$root/.claude/agents/coder-patterns.md"; echo; "$bin/api-map.sh" >/dev/null; cat "$root/.agent-logs/api-map.md")" < /dev/null) &
+       -c agent.step_limit=${MINI_STEP_LIMIT:-40} -c model.model_kwargs.num_ctx=${MINI_NUM_CTX:-8192} \
+       -m "$model" -y --exit-immediately -l 0 -t "$(cat "$root/$spec"; echo; cat "$root/.claude/agents/coder-patterns.md"; echo; cat "$root/.agent-logs/api-map.md")" < /dev/null) &
 echo $! > "$root/.agent-logs/$task.pid"
-wait $! || true
+# Keep mini's real exit status (R0.1); set -e must not end the script here.
+mini_rc=0; wait $! || mini_rc=$?
+echo "== mini exit status: $mini_rc"
 
 git -C "$wt" add -A -- . ':!node_modules'
 changed=$(git -C "$wt" diff --cached --name-only HEAD)
-if [ -z "$changed" ]; then flag "NO CHANGES"; exit 0; fi
+if [ -z "$changed" ]; then flag "NO CHANGES"; echo "$mini_rc" > "$root/.agent-logs/$task.exit"; exit 0; fi
 echo "== changed: $(echo $changed)"
 
 if [ $# -gt 0 ]; then
   for f in $changed; do
     ok=0; for a in "$@"; do [ "$f" = "$a" ] && ok=1; done
-    [ $ok = 1 ] || { flag "TOUCHED FILE OUTSIDE TASK: $f (nothing merged)"; exit 0; }
+    [ $ok = 1 ] || { flag "TOUCHED FILE OUTSIDE TASK: $f (nothing merged)"; echo "$mini_rc" > "$root/.agent-logs/$task.exit"; exit 0; }
   done
 fi
 
 echo "== check in worktree"
 if ! (cd "$wt" && "$bin/check.sh" "$task-wt"); then
-  flag "CHECK FAILED IN WORKTREE (nothing merged)"; exit 0
+  flag "CHECK FAILED IN WORKTREE (nothing merged)"; echo "$mini_rc" > "$root/.agent-logs/$task.exit"; exit 0
 fi
 
 git -C "$wt" diff --cached --binary HEAD > "$root/.agent-logs/$task.patch"
-if git -C "$root" apply "$root/.agent-logs/$task.patch"; then
+# Apply and prove the main tree now holds exactly the validated patch (R0.3).
+if "$bin/apply-patch.sh" "$root" "$root/.agent-logs/$task.patch"; then
   echo "Applied edit (mini-swe-agent) to: $(echo $changed)"
 else
-  flag "APPLY TO MAIN TREE FAILED; patch at .agent-logs/$task.patch"
+  flag "APPLY TO MAIN TREE FAILED OR DIFFERS; patch at .agent-logs/$task.patch"
 fi
+echo "$mini_rc" > "$root/.agent-logs/$task.exit"

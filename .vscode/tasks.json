@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Claude live log",
+      "detail": "Follow the commands Claude Code runs (written by .claude/bin/log-command.sh)",
+      "type": "shell",
+      "command": "mkdir -p .agent-logs && touch .agent-logs/claude-commands.log && tail -n 40 -f .agent-logs/claude-commands.log",
+      "isBackground": true,
+      "problemMatcher": [],
+      "runOptions": { "runOn": "folderOpen" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": false,
+        "clear": true
+      }
+    },
+    {
+      "label": "Local coders (tmux)",
+      "detail": "Attach to the jobops tmux session where aider and mini-swe-agent run",
+      "type": "shell",
+      "command": "tmux attach -t jobops || echo 'No jobops tmux session is running.'",
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}

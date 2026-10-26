@@ -92,6 +92,24 @@ def load_fixes():
     return load_jsonl(FIXES)
 
 
+class FixesLock:
+    """Two runs in parallel may update fixes.jsonl: serialize read-modify-write."""
+    def __enter__(self):
+        import time
+        self.path = FIXES + ".lock"
+        for _ in range(200):
+            try:
+                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL)); return self
+            except FileExistsError:
+                time.sleep(0.1)
+        return self  # stale lock after 20 s: proceed rather than hang
+    def __exit__(self, *a):
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+
 def save_fixes(fixes):
     tmp = FIXES + ".tmp"
     with open(tmp, "w") as f:
@@ -187,6 +205,9 @@ def categorize(verdict, reason, timed_out, files, errs, tests, flags, context_st
             k in f for f in flags for k in ("MODEL SERVER", "SPEC MISSING", "APPLY TO MAIN TREE FAILED")):
         return "environment", "runner could not start or apply"
     if "outside the task" in reason or any("TOUCHED FILE OUTSIDE" in f for f in flags):
+        stray = reason.split("outside the task:", 1)[-1].split()
+        if any(f.endswith(t) and f != t for f in stray for t in targets):
+            return "environment", "the tool wrote the target to a wrong path (e.g. a doubled directory)"
         return "instruction_violation", "changed files outside the task"
     if verdict == "unknown":
         return "unreliable_validation", "coder exit status not recorded"
@@ -314,6 +335,11 @@ def cmd_repair_spec(task, attempt, orig_spec, out, files):
 
 
 def promote(task, atts, status):
+    with FixesLock():
+        return _promote(task, atts, status)
+
+
+def _promote(task, atts, status):
     """§6.6: a fix supplied in a repair round that then passed, and whose signature
     matched the errors it was given for, becomes verified. A fix that did not help
     gets evidence noted; rejecting it is left to the manager."""
@@ -393,6 +419,11 @@ def cmd_finish(task, status, reason):
 
 
 def cmd_resolve(path, opts):
+    with FixesLock():
+        _resolve(path, opts)
+
+
+def _resolve(path, opts):
     esc = load_json(path)
     if not esc:
         raise SystemExit("not an escalation record: %s" % path)

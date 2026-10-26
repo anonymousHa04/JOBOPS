@@ -1,0 +1,104 @@
+# Phase 4: measurement (agentManagementAndFeedbackSystem.md §7).
+# Written BEFORE the runs, as the doc requires: metrics, baseline, and pass
+# criteria are fixed here first; results are compared against them afterwards.
+# Criteria are the manager's proposal (2026-10-26); the user may change them.
+created: 2026-10-26
+branch: feedback
+
+question: >
+  Does the current agent system (llama.cpp 16k + speculative decoding, knowledge
+  layer, reliable validation, feedback loop) get Milestone 3 tasks right more
+  often, with fewer escalations, than the workflow used in Milestone 3?
+
+protocol:
+  tasks:
+    # Real M3 tasks that failed or escalated, each run at the commit just before
+    # it was originally written, with the original plan spec plus shared rules.
+    - { id: m3-02, base: 82ca80a, target: api/src/requirements/schema.ts, kind: new file }
+    - { id: m3-03, base: 9a1ff38, target: api/src/model/ollama.ts, kind: new file }
+    - { id: m3-05, base: d12c3f2, target: api/src/profile/bank.ts, kind: new file }
+    - { id: m3-07, base: 0655814, target: api/src/db.ts, kind: edit existing file }
+    - { id: m3-08, base: f1917f8, target: api/src/requirements/parse.ts, kind: new file }
+  repetitions: 2 per task first (results vary between runs of the same task); a 3rd if the picture is unclear
+  settings: "defaults of autofix.sh: first runner by file state (aider new, mini edit), MAX_FIXES 1 with aider repair, CODER_TIMEOUT 1200, knowledge on, LLM_SPEC draft"
+  isolation: each run in a throwaway worktree; the shared vector index is read-only there; fixes.jsonl is the live one (learning between runs is part of what is measured)
+  evidence: .agent-logs/runs/phase4/<run-id>/ and the p4-* lines of .agent-logs/outcomes.jsonl
+  limitation: "acceptance = the independent check passes (typecheck, tests, Go, boundary). Passing is not proof of correct behavior (m3-01, m3-04); behavior is spot-checked by the manager on passed runs and reported separately."
+
+baseline:
+  # Milestone 3 workflow (Ollama 8k, no knowledge layer, mini fix rounds), 7 tasks, from M3-NOTES.md.
+  tasks: 7
+  first_attempt_check_pass: 2/7      # m3-01, m3-04 (both later found wrong)
+  first_attempt_correct: 0/7
+  escalations: 4/7                   # m3-02, m3-03, m3-05, m3-07; m3-08 stopped by the user
+  fix_rounds_converged: 0/3          # every mini fix round hit the 20-minute limit
+  silent_overflow: unmeasured        # requests went past the 8k window without any signal
+
+metrics:
+  - id: first_attempt_acceptance
+    definition: runs whose first attempt passes / runs
+    criterion: ">= 0.40 (baseline 2/7 check-pass, 0/7 correct)"
+  - id: final_acceptance
+    definition: runs that pass after at most MAX_FIXES repair rounds / runs
+    criterion: ">= 0.60"
+  - id: escalation_rate
+    definition: runs that end in an escalation record / runs
+    criterion: "<= 0.40 (baseline 4/7 = 0.57)"
+  - id: repair_success
+    definition: repair rounds that pass / repair rounds
+    criterion: "> 0 (baseline 0/3); reported, not gating"
+  - id: repeated_failure_stop
+    definition: runs where the same failure signature appeared twice and the loop stopped / such runs
+    criterion: "1.00 (by design)"
+  - id: regression_rate
+    definition: attempts categorized regression / attempts
+    criterion: "0"
+  - id: validation_reliability
+    definition: self-test result before the runs (false passes)
+    criterion: "25/25, 0 false passes"
+  - id: context_overflow
+    definition: attempts flagged CONTEXT OVERFLOW / attempts
+    criterion: "0"
+  - id: context_size
+    definition: median context-package tokens per attempt
+    criterion: "<= 3500 (the budget)"
+  - id: runtime
+    definition: median wall time per run (all attempts)
+    criterion: "<= 15 min (baseline escalations ran 20+ min per fix round)"
+  - id: fixes_helped
+    definition: fix records promoted to verified during the runs
+    criterion: "reported, not gating"
+
+attribution_note: >
+  Many things changed at once since M3 (runtime, window, repo map, knowledge
+  layer, validation, feedback loop, spec shared rules, speculative decoding), so
+  an improvement cannot be attributed to any one of them from this comparison
+  (doc §7). Earlier single-variable evidence: m3-05 runs kb (overflow) -> kb2
+  (16k, no repo map) -> fb (report format, shared fixes) are recorded in status.yaml.
+
+results:
+  round_1:
+    date: 2026-10-26
+    runs: 10 (5 tasks x 2), sequential, report .agent-logs/phase4/report.json
+    first_attempt_acceptance: "0.3 (criterion 0.4: not met)"
+    final_acceptance: "0.7 (met)"
+    escalation_rate: "0.3 (met; baseline 0.57)"
+    repair_success: "4/7 (baseline 0/3)"
+    repeated_failure_stop: "2/2 (met)"
+    regression_rate: "0.06 (not met; artifact of a stray file from a rejected attempt, now reverted)"
+    context: "0 overflows; median 3,410 tokens (met)"
+    runtime: "median 7.9 min (met; baseline 20+ min per failed round)"
+    per_task: "m3-02 2/2 first try; m3-07 2/2 (one after a repair); m3-08 2/2 after a repair; m3-03 1/2; m3-05 0/2"
+    causes_of_failure: "diff edit format (doubled new-file path x2, SEARCH blocks not matching in repairs x2), stray out-of-boundary file, mini temp file, model importing uninstalled packages"
+  round_2:
+    decision: "no second full benchmark (user, 2026-10-26: not another 75 minutes); the fixes are verified directly instead"
+    fixes: "whole edit format by default; out-of-boundary files reverted before a repair; mini temp files dropped; wrong target path diagnosed as environment; fixes.jsonl writes locked; two fix records from the escalations (entry-union-bullets new, no-uninstalled-packages made explicit)"
+    verification: "self-test 29/29 (adds: revert, wrong-path category, temp-file filter)"
+    parallel_runs: "tried 2 coder slots x 16k: continuous swapping (6k-20k pages / 10 s, 7% free) with Chrome and VS Code open; back to 1 slot (0 swapping). Parallel runs need ~3 GB more free memory."
+  conclusion: >
+    Against M3: escalations 0.57 -> 0.3, repairs 0/3 -> 4/7, no silent overflows,
+    runtime per run 7.9 min median. First-attempt acceptance (0.3) is below the 0.4
+    criterion; most first-attempt failures traced to the diff format and two tooling
+    bugs, now fixed and verified by the self-test but not re-measured on real runs.
+    The next real tasks (Ollama retirement, Milestone 3) will show whether
+    first-attempt acceptance improves; outcomes.jsonl keeps recording them.

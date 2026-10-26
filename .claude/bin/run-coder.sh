@@ -30,10 +30,10 @@ case "$model" in
   *coder-7b*) server=coder7; port=8083 ;;
   *)          server=coder;  port=8081 ;;
 esac
-# diff = search/replace blocks (default since 2026-10-26: a lint round outputs only the
-# changed lines; with whole, every round re-generated the full file, ~1.4k tokens at
-# ~9.5 tokens/s); whole = rewrite each file in full.
-edit_format=${CODER_EDIT_FORMAT:-diff}
+# whole = rewrite each file in full (default). diff = search/replace blocks: less output,
+# but in Phase 4 round 1 aider wrote new files to a doubled path and its SEARCH blocks
+# failed to match in repairs; with speculative decoding, whole is ~3.5x faster than before.
+edit_format=${CODER_EDIT_FORMAT:-whole}
 logs="$root/.agent-logs"
 mkdir -p "$logs"
 rm -f "$logs/$task.done" "$logs/$task.exit" "$logs/$task.context.md" "$logs/$task.context.json"
@@ -79,5 +79,5 @@ tmux new-window -t jobops -n "$task" -c "$root" \
    grep -qiE 'exceeds the available context size|ContextWindowExceeded' '.agent-logs/$task.log' && echo 'RUN-CODER: CONTEXT OVERFLOW (a request exceeded the model window)' | tee -a '.agent-logs/$task.log'; \
    for f in $*; do [ -s \"\$f\" ] || echo \"RUN-CODER: TARGET MISSING OR EMPTY: \$f\" | tee -a '.agent-logs/$task.log'; done; \
    [ -d path/to ] && echo 'RUN-CODER: STRAY path/to/ CREATED' | tee -a '.agent-logs/$task.log'; \
-   touch '.agent-logs/$task.done'; tmux wait-for -S '$task'; echo; echo '[finished - press Enter to close]'; read _"
+   touch '.agent-logs/$task.done'; tmux wait-for -S '$task'"
 echo "started $task (tmux window jobops:$task)"

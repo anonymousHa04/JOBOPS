@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-10-26
-branch: prompt-cache
+branch: feedback
 
 environment:
   - id: env-llama-cpp
@@ -21,6 +21,12 @@ environment:
     note: "One point per chunk (per heading, declaration, or YAML item), so a file appears many times with different line ranges; that is intended. Stale points from old versions are pruned on the next write (123 removed 2026-10-26; now 423 points = 423 chunks)."
   - id: env-qdrant
     what: Qdrant v1.19.2 in Docker (infra/qdrant/docker-compose.yml), 127.0.0.1:6333, data in data/qdrant, telemetry off
+  - id: retire-ollama
+    state: todo
+    next_up: true
+    after: phase-4-measurement (user, 2026-10-26)
+    decision: "drop qwen2.5-coder:7b and the coder7 role (user, 2026-10-26); keep qwen2.5:7b for the product (JD parsing, rewording)"
+    steps: "1) copy the five GGUF files still needed (coder 14B, coder 0.5B draft, qwen2.5 7B, qwen2.5 14B, mxbai) from ~/.ollama/models/blobs into ~/models/jobops as real files; remove qwen2.5-coder:7b and the coder7 role from llm.sh, run-coder.sh, run-mini.sh, and the aider model settings; 2) move api/src/model/ollama.ts (used by requirements/parse.ts and profile/bank.ts) to llama.cpp's OpenAI-compatible API with json_schema, with product servers for qwen2.5 7B/14B that never run alongside the 14B coder; 3) quit/uninstall Ollama; close the stale tmux windows (old m3-05 aider window, status window still showing ollama ps)"
   - id: env-ollama
     what: Ollama stays installed only because the JobOps product code (api/src/model/ollama.ts) still calls it; see todo product-provider-llama-cpp
   - id: env-memory
@@ -63,7 +69,12 @@ agent_system:
     what: outcome record per task, failure categories (doc 6.4), retries with new evidence, failure signatures, real escalation handoff, verified-fix promotion
     exists: per-task result.json, fixes.jsonl with evidence statuses
   - id: phase-4-measurement
-    state: todo
+    state: done
+    closed: "2026-10-26; round 2 replaced by direct verification of the fixes (self-test 29/29), see phase4.yaml results"
+    plan: ".claude/knowledge/phase4.yaml (metrics, baseline, criteria written before the runs); harness .claude/bin/phase4-bench.sh; scoring .claude/bin/metrics.py"
+    round_1: "10 runs 2026-10-26 (report .agent-logs/phase4/report.json): first-attempt 0.3 (criterion 0.4: NO), final 0.7 (yes), escalations 0.3 (yes), repair 4/7, repeated-failure stop 2/2, regression 0.06 (NO, artifact), overflow 0, median context 3410, median runtime 7.9 min, self-test 25/25. Baseline M3: first-attempt 2/7 check-pass (0/7 correct), escalations 4/7."
+    findings: "1) diff edit format: aider wrote new files to a doubled path (api/src/model/api/src/model/ollama.ts, m3-03 x2) and repair SEARCH blocks failed to match (NO EDIT APPLIED, m3-05 x2). 2) a rejected attempt's out-of-boundary file stayed in the tree for the repair round (the 'regression' is that stale file). 3) mini left api/src/db.ts.tmp, so a good edit was rejected (m3-07 r2). 4) metrics counted 'did not resolve' notes as promotions (fixed). 5) model still imports node-fetch / abort-controller (m3-03 r2) despite the verified fix in context."
+    next: "done: whole format default, revert out-of-boundary files, drop mini temp files, wrong-path -> environment, fixes lock, two fixes recorded; verified by self-test 29/29"
     what: first-attempt acceptance, repair attempts, escalations, context size, runtime; compare with the M3 baseline (0/7 first-try)
   - id: llama-speculative-decoding
     state: done

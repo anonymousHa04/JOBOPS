@@ -56,6 +56,7 @@ scenario failing-test     failed    "$T" FAKE_ACTION="printf 'import { test } fr
 scenario timeout          timed_out "$F" CODER_TIMEOUT=3 FAKE_ACTION="sleep 30"
 scenario no-change        failed    "$F" FAKE_ACTION="true"
 scenario outside-boundary failed    "$F" FAKE_ACTION="printf 'export const x = 1;\n' > $F; printf 'export const y = 2;\n' > api/src/other.ts"
+scenario wrong-path       failed    "$F" FAKE_ACTION="mkdir -p api/src/api/src && printf 'export const x = 1;\n' > api/src/api/src/selftest.ts"
 scenario tsc-silent-crash failed    "$F" TSC_CMD="exit 2" FAKE_ACTION="printf 'export const x = 1;\n' > $F"
 scenario no-test-summary  failed    "$F" TEST_CMD="echo nothing" FAKE_ACTION="printf 'export const x = 1;\n' > $F"
 
@@ -93,14 +94,27 @@ cat = {n: res(n)["category"] for n in ("type-error", "outside-boundary", "timeou
 want = {"type-error": "incorrect_implementation", "outside-boundary": "instruction_violation", "timeout": "model_limitation",
         "no-change": "model_limitation", "tsc-silent-crash": "unreliable_validation", "no-test-summary": "unreliable_validation",
         "exit-unknown": "unreliable_validation", "failing-test": "incorrect_implementation"}
+check("out-of-boundary file reverted before the next attempt", "DELETED api/src/other.ts" in open(os.path.join(L, "st-outside-boundary.reverted.txt")).read())
+check("target written to a wrong path -> environment (tool), not the agent", res("wrong-path")["category"] == "environment", str(res("wrong-path")["category"]))
 check("failure categories (8 scenarios)", cat == want, ", ".join("%s=%s" % kv for kv in cat.items() if want[kv[0]] != kv[1]))
 out = [json.loads(l) for l in open(os.path.join(L, "main", "outcomes.jsonl"))]
-check("outcome log has one line per task", len(out) == 13, "%d lines" % len(out))
+check("outcome log has one line per task", len(out) == 14, "%d lines" % len(out))
 PY
 )
 printf '%s\n' "$checks"
 ok=$((ok + $(printf '%s\n' "$checks" | grep -c '^OK')))
 bad=$((bad + $(printf '%s\n' "$checks" | grep -c '^WRONG')))
+
+# mini sandbox temp-file filter (run-mini.sh): drops *.tmp/*.bak/*.orig/*~, keeps real files.
+reset
+printf 'x\n' > api/src/db.ts.tmp; printf 'x\n' > api/src/keep.ts; printf 'x\n' > api/src/a.bak
+temps=$(git ls-files --others --exclude-standard -- '*.tmp' '*.bak' '*.orig' '*~' '*.swp' ':!node_modules')
+printf '%s\n' "$temps" | xargs rm -f
+if [ ! -e api/src/db.ts.tmp ] && [ ! -e api/src/a.bak ] && [ -e api/src/keep.ts ]; then
+  ok=$((ok + 1)); echo "OK    mini temp files dropped, real files kept"
+else
+  bad=$((bad + 1)); echo "WRONG mini temp-file filter"
+fi
 
 # Invalid patch: must be rejected and leave the tree unchanged; a valid one
 # must apply and verify.

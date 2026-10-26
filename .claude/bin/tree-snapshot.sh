@@ -6,6 +6,10 @@
 #   tree-snapshot.sh diff <before.json> <after.json> [allowed-file]...
 #       Print each file that changed between the snapshots, then "OUTSIDE: <f>"
 #       for each changed file not in the allowed list. Exit 1 if any is outside.
+#   tree-snapshot.sh revert <before.json> <after.json> [allowed-file]...
+#       Undo changes outside the allowed list so they cannot leak into the next
+#       attempt: a file that did not exist before is deleted; a tracked file that
+#       was clean before is restored from git; anything else is only reported.
 set -u
 cd "$(git rev-parse --show-toplevel)"
 mode=$1; shift
@@ -45,5 +49,24 @@ for p in outside:
 sys.exit(1 if outside else 0)
 ' "$before" "$after" "$@"
   ;;
-*) echo "usage: tree-snapshot.sh snap <out> | diff <before> <after> [allowed]..." >&2; exit 2 ;;
+revert)
+  before=$1; after=$2; shift 2
+  python3 -c '
+import json, os, subprocess, sys
+a, b = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
+allowed = set(sys.argv[3:])
+for p in sorted(x for x in set(a) | set(b) if a.get(x) != b.get(x) and x not in allowed):
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", p], capture_output=True).returncode == 0
+    if p not in a and tracked:
+        subprocess.run(["git", "checkout", "--", p], check=False); print("RESTORED " + p)
+    elif p not in a and os.path.isfile(p):
+        os.remove(p); print("DELETED " + p)
+        d = os.path.dirname(p)
+        while d and not os.listdir(d):
+            os.rmdir(d); d = os.path.dirname(d)
+    else:
+        print("KEPT " + p + " (changed before the attempt; not restored)")
+' "$before" "$after" "$@"
+  ;;
+*) echo "usage: tree-snapshot.sh snap <out> | diff|revert <before> <after> [allowed]..." >&2; exit 2 ;;
 esac

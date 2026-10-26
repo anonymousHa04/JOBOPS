@@ -74,6 +74,8 @@ attempt() {
   outside=$(printf '%s\n' "$changes" | sed -n 's/^OUTSIDE: //p')
   touched=$(printf '%s\n' "$changes" | grep -v '^OUTSIDE: ' | grep -c .)
   boundary=passed; [ -n "$outside" ] && boundary=failed
+  # Undo out-of-boundary changes now, so a repair round starts from a clean tree.
+  [ "$boundary" = failed ] && "$bin/tree-snapshot.sh" revert ".agent-logs/$a.before.json" ".agent-logs/$a.after.json" "$@" > ".agent-logs/$a.reverted.txt" 2>&1
 
   if [ "$run_timed_out" = 1 ]; then
     verdict=timed_out; why="coder stopped after ${limit}s"

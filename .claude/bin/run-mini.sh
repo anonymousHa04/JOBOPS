@@ -19,8 +19,7 @@ if [ "${1:-}" != --inner ]; then
   fi
   tmux new-window -t jobops -n "$task" -c "$root" \
     "'$0' --inner '$task' '$spec' $* 2>&1 | tee '.agent-logs/$task.log'; \
-     touch '.agent-logs/$task.done'; tmux wait-for -S '$task'; \
-     echo; echo '[finished - press Enter to close]'; read _"
+     touch '.agent-logs/$task.done'; tmux wait-for -S '$task'"
   echo "started $task (tmux window jobops:$task, mini-swe-agent)"
   exit 0
 fi

@@ -8,7 +8,8 @@
 #   llm.sh link                             (re)create readable GGUF links
 #
 # Roles (OpenAI-compatible API at http://127.0.0.1:<port>/v1):
-#   coder   8081  qwen2.5-coder:14b   ctx LLM_CODER_CTX (default 16384), with
+#   coder   8081  qwen2.5-coder:14b   ctx LLM_CODER_CTX per slot (default 16384), slots
+#                 LLM_CODER_SLOTS (default 1), with
 #                 speculative decoding LLM_SPEC=draft (default) | ngram | both | none
 #   coder7  8083  qwen2.5-coder:7b    ctx 16384 (one-line fixes; never with coder)
 #   embed   8082  mxbai-embed-large   embeddings only, CLS pooling
@@ -57,7 +58,11 @@ spec() {
               draft) [ -e "$dm" ] && spec="--spec-type draft-simple $dr" ;;
               both)  [ -e "$dm" ] && spec="--spec-type ngram-simple,draft-simple $ng $dr" ;;
             esac
-            echo "8081 qwen2.5-coder-14b-instruct-q4_k_m.gguf qwen2.5-coder-14b -c ${LLM_CODER_CTX:-16384} -np 1 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics $spec" ;;
+            # LLM_CODER_SLOTS parallel requests (one per concurrent agent run); the context is
+            # 16k per slot, so every run keeps its full window. --cache-reuse lets a new prompt
+            # reuse the cached shared prefix (aider's prompt + rules) of the previous one.
+            slots=${LLM_CODER_SLOTS:-1}
+            echo "8081 qwen2.5-coder-14b-instruct-q4_k_m.gguf qwen2.5-coder-14b -c $(( ${LLM_CODER_CTX:-16384} * slots )) -np $slots --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics $spec" ;;
     coder7) echo "8083 qwen2.5-coder-7b-instruct-q4_k_m.gguf qwen2.5-coder-7b -c 16384 -np 1 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
     embed)  echo "8082 mxbai-embed-large-v1-f16.gguf mxbai-embed-large --embeddings --pooling cls -c 512 -b 512 -ub 512 -np 1" ;;
     *) return 1 ;;

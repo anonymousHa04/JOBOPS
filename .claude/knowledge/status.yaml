@@ -126,7 +126,10 @@ milestone_3:
     state: done
     what: "api/src/tailor/guard.ts: checkRewrite (number_added, term_added except the bullet's reword keywords, scope_raised on the verb ladder, scope_phrase_added, too_long, number_led), checkFixedFields (title/company/dates byte-match the bank), guardedReword (one attempt, one retry with codes, then bank text; codes only)"
     tests: "3 guard tests in api/test/m3-engine.test.ts; total 35 tests pass"
-    next: "step 5 rewording: prompt 3 on general7 through guardedReword (local coders: prompt-3 wiring)"
+  - id: m3-engine-step-5-reword
+    state: done
+    what: "api/src/tailor/reword.ts: prompt 3 (requierements/select-and-tailor.md) filled with a shortlist of one marked bullet, plus the spec's extra rules (allowed JD terms, keep numbers, never lead with a number, same verb level) and on retry the failure codes; qwen2.5:7b (general7); every answer checked by guardedReword against the bank text; changes recorded; model server down -> bullets unchanged, error reported"
+    tests: "3 reword tests against a scripted fake model server; total 38 tests pass; not yet run against the real 7B model"
   - id: m3-bank-schema-per-skill
     state: todo
     what: "skill bank entries: ids like <roleprefix>-<topic> and an evidence field for source: user (number check against the user's answer); current BulletSchema requires ids ending in a number and has no evidence"

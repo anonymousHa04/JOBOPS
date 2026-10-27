@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/db.ts";
@@ -14,6 +16,7 @@ import type { ResumeContent } from "../src/tailor/ideal.ts";
 import { contentHash, loadRecords, originalContent, writeRecord } from "../src/tailor/records.ts";
 import type { NewRecord } from "../src/tailor/records.ts";
 import { checkFixedFields, checkRewrite, guardedReword } from "../src/tailor/guard.ts";
+import { rewordContent } from "../src/tailor/reword.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 
@@ -215,4 +218,64 @@ test("guard: titles, employers, and dates must byte-match the bank", () => {
   shown[0].title = "Staff Engineer";
   shown[1].dates = "2014 – 2017";
   assert.deepEqual(checkFixedFields(bank, shown).map((f) => `${f.entry_id}.${f.field}`), ["cur.title", "old.dates"]);
+});
+
+// Rewording (engine-algorithm.md §6) against a fake model server: answers are scripted,
+// so the test checks the wiring and the guard, not the model.
+async function fakeModel(answers: string[]): Promise<{ url: string; prompts: string[]; close: () => void }> {
+  const prompts: string[] = [];
+  const server = createServer((rq, rs) => {
+    let body = "";
+    rq.on("data", (c) => (body += c));
+    rq.on("end", () => {
+      prompts.push((JSON.parse(body) as { messages: { content: string }[] }).messages[0].content);
+      const text = answers[Math.min(prompts.length - 1, answers.length - 1)];
+      const out = { summary_variant: "backend", include: [{ id: "cur-1", text }], uncovered_requirements: [], notes: "" };
+      rs.setHeader("content-type", "application/json");
+      rs.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(out) } }] }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, prompts, close: () => server.close() };
+}
+
+// One bullet marked for rewording: it supports Kubernetes but says "k8s".
+const k8sBank = structuredClone(bank);
+k8sBank.roles[0].bullets[0].text = "Cut deploy time 40% by moving services to k8s";
+const marked = (): ResumeContent => {
+  const c = idealContent(req, k8sBank, extra, budget);
+  assert.ok(c.bullets.find((b) => b.id === "cur-1")?.reword, "cur-1 is marked");
+  return c;
+};
+process.env.JOBOPS_PROMPTS_DIR ??= join(import.meta.dirname, "..", "..", "requierements");
+
+test("reword: only marked bullets go to the model; an accepted rewrite is a change", async () => {
+  const m = await fakeModel(["Cut deploy time 40% by moving services to Kubernetes"]);
+  try {
+    const r = await rewordContent(marked(), req, k8sBank, extra, budget, { baseUrl: m.url });
+    assert.equal(m.prompts.length, 1);
+    assert.match(m.prompts[0], /cur-1 \| Cut deploy time 40% by moving services to k8s/);
+    assert.equal(r.content.bullets.find((b) => b.id === "cur-1")?.text, "Cut deploy time 40% by moving services to Kubernetes");
+    assert.deepEqual(r.changes.map((c) => c.bullet_id), ["cur-1"]);
+    assert.ok(r.content.bullets.every((b) => b.reword === null));
+    assert.deepEqual(r.log, [{ bullet_id: "cur-1", outcome: "accepted", codes: [[]] }]);
+  } finally { m.close(); }
+});
+
+test("reword: a rejected rewrite is retried with its codes, then the bank text stays", async () => {
+  const m = await fakeModel(["Led the move to Kubernetes, cutting deploy time 60%"]);
+  try {
+    const r = await rewordContent(marked(), req, k8sBank, extra, budget, { baseUrl: m.url });
+    assert.equal(m.prompts.length, 2);
+    assert.match(m.prompts[1], /rejected for: number_added, scope_raised/);
+    assert.equal(r.content.bullets.find((b) => b.id === "cur-1")?.text, k8sBank.roles[0].bullets[0].text);
+    assert.equal(r.log[0].outcome, "fallback");
+  } finally { m.close(); }
+});
+
+test("reword: with the model server down, nothing changes and the error is reported", async () => {
+  const r = await rewordContent(marked(), req, k8sBank, extra, budget, { baseUrl: "http://127.0.0.1:9/v1" });
+  assert.deepEqual(r.changes, []);
+  assert.match(r.error ?? "", /unavailable/);
+  assert.equal(r.log[0].outcome, "skipped");
 });

@@ -22,7 +22,7 @@
       "command": "sh",
       "args": [
         "-c",
-        "cd jd-search && exec go run ./cmd/jd-search mcp"
+        "set -a; [ -f .env ] && . ./.env; set +a; cd jd-search && exec go run ./cmd/jd-search mcp"
       ]
     }
   }

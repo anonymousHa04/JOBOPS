@@ -50,6 +50,14 @@ REQUIREMENT_DOCS = ("README.md", "requierements/", ".agents/skills/")
 DECISIONS = ".agents/skills/m3-notes/references/decisions.md"
 MAX_FILE_BYTES = 200_000
 
+# Settings from the repo .env (see .env.example); variables already set win.
+_ENV = os.path.join(HERE, "..", "..", ".env")
+if os.path.exists(_ENV):
+    for _line in open(_ENV, encoding="utf-8"):
+        _k, _sep, _v = _line.strip().partition("=")
+        if _sep and not _k.startswith("#"):
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 # Semantic search (Phase 2): local embeddings from llama.cpp (llama-server --embeddings,
 # started by .claude/bin/llm.sh), vectors in Qdrant (Docker).
 EMBED_URL = os.environ.get("EMBED_URL", "http://127.0.0.1:8082")

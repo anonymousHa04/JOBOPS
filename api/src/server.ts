@@ -1,3 +1,4 @@
+import "./env.ts";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { openDb } from "./db.ts";

@@ -3,13 +3,14 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { generate } from "../model/llm.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
-import { BankSchema, SkillsExtraSchema } from "./schema.ts";
-import type { Bank, SkillsExtra } from "./schema.ts";
+import { BankSchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
+import type { Bank, Preferences, SkillsExtra } from "./schema.ts";
 
 const profileDir = () => process.env.JOBOPS_PROFILE_DIR ?? "profile";
 export const bankPath = () => join(profileDir(), "bank.yaml");
 export const skillsExtraPath = () => join(profileDir(), "skills-extra.yaml");
 export const resumeTextPath = () => join(profileDir(), "original", "resume.txt");
+export const preferencesPath = () => join(profileDir(), "preferences.yaml");
 
 const NUMBER = /\d+(?:[.,]\d+)?%?/g;
 
@@ -30,6 +31,11 @@ export function saveBank(b: Bank): void {
 export function loadSkillsExtra(): SkillsExtra {
   if (!existsSync(skillsExtraPath())) return { skills: [], dismissed: [], learnable: [] };
   return SkillsExtraSchema.parse(parse(readFileSync(skillsExtraPath(), "utf8")));
+}
+
+export function loadPreferences(): Preferences {
+  if (!existsSync(preferencesPath())) throw new Error(`no preferences: ${preferencesPath()}`);
+  return PreferencesSchema.parse(parse(readFileSync(preferencesPath(), "utf8")));
 }
 
 export function saveSkillsExtra(s: SkillsExtra): void {

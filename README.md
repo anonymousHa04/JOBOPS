@@ -343,6 +343,7 @@ JobOps may handle resumes, contact information, and private job-search activity.
 - Import only information the user is authorized to use.
 - Do not commit resumes, contact exports, tokens, credentials, or `.env` files.
 - Include safe example configuration such as `.env.example`, without real secrets.
+- Settings: `.env.example` lists every setting with its default; copy it to `.env` (git-ignored) and change what you need.
 - Require explicit user approval for external outreach.
 - Avoid logging full resume content, private messages, or unnecessary personal data.
 - Respect the terms and access restrictions of job boards and external platforms.

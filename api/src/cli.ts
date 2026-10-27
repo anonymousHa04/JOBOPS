@@ -1,4 +1,5 @@
 // JobOps command line: node api/src/cli.ts <command>. Prints JSON.
+import "./env.ts";
 import * as t from "./tools.ts";
 
 const USAGE = `usage: node api/src/cli.ts <command>
@@ -13,7 +14,8 @@ const USAGE = `usage: node api/src/cli.ts <command>
   jd parse-all [--limit N]
   score <job_id> [--no-judge]
   risk <job_id>
-  tailor <job_id>        (engine not built yet)`;
+  tailor <job_id> [--dry-run] [--force]
+  tailor --all --dry-run`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
@@ -67,7 +69,11 @@ async function main(argv: string[]): Promise<unknown> {
     case "score":
       return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
     case "tailor":
-      throw new Error("tailor: the resume selection engine is not built yet");
+      if (sub === "--all") {
+        if (!args.includes("--dry-run")) throw new Error("tailor --all only as a dry run; tailor one job at a time");
+        return t.tailorAll(t.db());
+      }
+      return t.tailor(t.db(), need(sub, "job id"), { force: args.includes("--force"), dryRun: args.includes("--dry-run") });
   }
   throw new Error(USAGE);
 }

@@ -11,6 +11,7 @@ import {
   checkBank,
   dismissRisk,
   loadBank,
+  loadPreferences,
   loadSkillsExtra,
   recordLearnable,
   resumeTextPath,
@@ -20,6 +21,8 @@ import { loadRequirements, parseJob } from "./requirements/parse.ts";
 import { riskCheck } from "./scoring/risk.ts";
 import { judgeRequirements, loadVerdicts } from "./scoring/judge.ts";
 import { allBullets, scoreJob } from "./scoring/score.ts";
+import { loadRecords } from "./tailor/records.ts";
+import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 
 export function db(): Db {
   const path = process.env.DB_PATH ?? "data/jobops.db";
@@ -142,4 +145,45 @@ export function risk(d: Db, jobId: string) {
   const ids = allBullets(bank).map((b) => b.id);
   const extra = loadSkillsExtra();
   return { job_id: jobId, risks: riskCheck(req, bank, extra, ids, jobId, loadVerdicts(d, req, bank, extra)) };
+}
+
+// Tailor one JD (engine-algorithm.md §4): judge first (cached verdicts reused), then
+// decide, ask, reword, and write the record. Needs an approved bank. With dryRun, the
+// decision only: cached verdicts, no model calls, no files.
+export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryRun?: boolean } = {}) {
+  if (opts.dryRun) return tailorAll(d, { jobId });
+  const req = loadRequirements(d, jobId);
+  if (!req) throw new Error("parse the JD first: jd parse <job_id>");
+  const bank = requireBank();
+  if (!bank.approved) throw new Error("approve the bank first: bank approve (after reviewing it)");
+  const extra = loadSkillsExtra();
+  const { records, checks } = loadRecords(d, bank);
+  const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
+  const result = await tailorJob(d, req, jobId, records, bank, extra, loadPreferences().tailoring, verdicts, { force: opts.force });
+  return { ...result, judge: stats, edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id) };
+}
+
+// `tailor --all --dry-run`: the decision table for every parsed JD (or one) and all
+// open risk questions. Requirements still waiting for the judge are counted per row.
+export function tailorAll(d: Db, opts: { jobId?: string } = {}) {
+  const bank = requireBank();
+  const extra = loadSkillsExtra();
+  const { records, checks } = loadRecords(d, bank);
+  const rows = d.prepare(
+    `SELECT DISTINCT j.id, j.company, j.title FROM jobs j JOIN job_requirements r ON r.job_id = j.id
+     ${opts.jobId ? "WHERE j.id = ?" : ""} ORDER BY j.id`
+  ).all(...(opts.jobId ? [opts.jobId] : [])) as { id: string; company: string; title: string }[];
+  if (opts.jobId && rows.length === 0) throw new Error("parse the JD first: jd parse <job_id>");
+  const jobs = rows.flatMap((j) => {
+    const req = loadRequirements(d, j.id);
+    return req ? [{ job_id: j.id, company: j.company, title: j.title, req, verdicts: loadVerdicts(d, req, bank, extra) }] : [];
+  });
+  return {
+    dry_run: true,
+    bank_approved: bank.approved,
+    records: records.length,
+    edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id),
+    stale_records: checks.filter((c) => !c.edited && (c.stale_bank || c.stale_engine)).map((c) => c.resume_id),
+    ...dryRunAll(jobs, records, bank, extra, loadPreferences().tailoring)
+  };
 }

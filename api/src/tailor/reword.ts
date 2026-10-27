@@ -11,11 +11,11 @@ import type { GuardCode } from "./guard.ts";
 import type { Budget, ResumeContent } from "./ideal.ts";
 
 // Rewording (engine-algorithm.md §6): the user's prompt 3 (select-and-tailor) on the
-// local 7B model, one marked bullet per call. Selection already happened in code
+// local 14B model, one marked bullet per call. Selection already happened in code
 // (ideal.ts), so the prompt gets a shortlist of one. Every answer goes through the
 // guard, which checks it against the bank's text. Logs carry ids and codes only.
 
-const REWORD_MODEL = process.env.JOBOPS_REWORD_MODEL ?? "qwen2.5:7b";
+export const REWORD_MODEL = process.env.JOBOPS_REWORD_MODEL ?? "qwen2.5:14b";
 
 const OutSchema = z.object({
   summary_variant: z.string(),

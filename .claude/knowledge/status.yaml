@@ -130,6 +130,19 @@ milestone_3:
     state: done
     what: "api/src/tailor/reword.ts: prompt 3 (requierements/select-and-tailor.md) filled with a shortlist of one marked bullet, plus the spec's extra rules (allowed JD terms, keep numbers, never lead with a number, same verb level) and on retry the failure codes; qwen2.5:7b (general7); every answer checked by guardedReword against the bank text; changes recorded; model server down -> bullets unchanged, error reported"
     tests: "3 reword tests against a scripted fake model server; total 38 tests pass; not yet run against the real 7B model"
+  - id: settings-env-file
+    state: review
+    what: ".env.example (committed) lists every setting with its default; .env (git-ignored) is a copy to edit. Loaded by api/src/env.ts (server, CLI, MCP server; shell variables win; tests never load it), .mcp.json jd-search launcher, llm.sh, retrieve.py; infra/qdrant compose reads QDRANT_DATA_DIR (docker compose --env-file .env). Rewording default switched to qwen2.5:14b (code, skill docs, llm.sh roles)"
+  - id: m3-engine-step-6-tailor
+    state: review
+    what: "api/src/tailor/tailor.ts: planJob (start record incl. the original resume before it is written, ideal, risks, decision, unjudged count), tailorJob (blocked adapt writes nothing; original record written first; reuse writes the start's content as this JD's record; adapt rewords; not_tailored records the reason; evidence_refs), dryRunAll (decision table sorted by score + open risk questions with job ids; cached verdicts only, no files). tools.ts tailor/tailorAll (bank must be approved, judge first); CLI: tailor <job_id> [--dry-run] [--force], tailor --all --dry-run. loadPreferences added (budgets)"
+    tests: "4 tailor tests (dry run, blocked, adapt then reuse, not_tailored); total 42 tests pass"
+    open: "review_findings stays [] until m3-review-findings (below); same-company warning and lint are later steps; MCP tool is the last step"
+  - id: m3-review-findings
+    state: todo
+    when: "later, after the template step (user 2026-10-27: leave it, keep a note)"
+    why: "profile/reviews is free text and private (Claude never reads it), so the engine cannot map findings to actions yet; engine-algorithm 4 step 9 is not implemented"
+    what: "review extract: local qwen2.5:14b turns profile/reviews/* once into profile/reviews/findings.yaml (id, kind from a fixed list: skills/ordering/summary/spelling/length/needs_facts, engine action); the user reviews and approves it like the bank; tailor loads approved findings, applies engine-fixable ones in code, stores review_findings [{id, status: addressed|open|needs_facts}] (ids only) and reports open ones; needs_facts findings become bullet-writing.md questions. Not chosen: a model call on every tailor (varies per run, unreviewed)"
   - id: m3-bank-schema-per-skill
     state: todo
     what: "skill bank entries: ids like <roleprefix>-<topic> and an evidence field for source: user (number check against the user's answer); current BulletSchema requires ids ending in a number and has no evidence"

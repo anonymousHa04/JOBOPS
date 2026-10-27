@@ -42,7 +42,7 @@ History and reasons: `M3-NOTES.md`.
 - Sections: education always included; projects count toward the bullet budget;
   skills ordered JD-first, nothing added beyond the bank and user-confirmed skills.
 - Never change section titles. Titles, employers, and dates are fixed fields.
-- Rewording: the user's prompt 3 on local `qwen2.5:7b`, one bullet per call; the guard
+- Rewording: the user's prompt 3 on local `qwen2.5:14b` (switched from 7B 2026-10-27), one bullet per call; the guard
   (engine-algorithm §6) rejects added numbers, terms, raised scope, scope phrases,
   over-length text, and changed fixed fields. **Flagged:** this model is temporary.
 - Bullet writing rules: `bullet-writing.md` and SKILL.md (verb ladder, metric
@@ -56,6 +56,12 @@ History and reasons: `M3-NOTES.md`.
 - When tailoring or reviewing a record: load every file in `profile/reviews/` first,
   treat its findings as known weaknesses to address (or at least not repeat), and
   report which findings each tailored record still leaves open.
+- Not built yet (deferred by the user 2026-10-27, after the template step): the
+  review is free text, so `review extract` will have local `qwen2.5:14b` turn it once
+  into `profile/reviews/findings.yaml` (id, kind, engine action); the user approves
+  that file like the bank, and `tailor` applies it. Until then records store
+  `review_findings: []`. Tracked in `.claude/knowledge/status.yaml`
+  (`m3-review-findings`).
 - Engine-fixable findings (skills trimming, ordering, summary variant, spelling,
   length) are applied by the engine; findings that need new facts become questions
   for the user (`bullet-writing.md` question bank), never invented content.
@@ -74,8 +80,8 @@ History and reasons: `M3-NOTES.md`.
 ## Runtime and data
 
 - All models run on llama.cpp (`.claude/bin/llm.sh`): `coder` (qwen2.5-coder 14B with
-  a 0.5B draft model), `embed` (mxbai), `general7` (qwen2.5 7B: JD parsing, rewording),
-  `general14` (qwen2.5 14B: bank build). Only one heavy model runs at a time (16 GB).
+  a 0.5B draft model), `embed` (mxbai), `general7` (qwen2.5 7B: JD parsing, judge),
+  `general14` (qwen2.5 14B: bank build, rewording). Only one heavy model runs at a time (16 GB).
 - Product code calls models through `api/src/model/llm.ts` (`generate()`), never directly.
 - Vector search: Qdrant in Docker on 127.0.0.1; the index is written only after an
   accepted task, and only from the main checkout.

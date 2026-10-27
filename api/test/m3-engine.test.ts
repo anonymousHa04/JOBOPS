@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,10 +13,11 @@ import type { StoredRecord } from "../src/tailor/decide.ts";
 import { equivalence } from "../src/tailor/equivalence.ts";
 import { idealContent, metricLed } from "../src/tailor/ideal.ts";
 import type { ResumeContent } from "../src/tailor/ideal.ts";
-import { contentHash, loadRecords, originalContent, writeRecord } from "../src/tailor/records.ts";
+import { contentHash, loadRecords, originalContent, recordsDir, writeRecord } from "../src/tailor/records.ts";
 import type { NewRecord } from "../src/tailor/records.ts";
 import { checkFixedFields, checkRewrite, guardedReword } from "../src/tailor/guard.ts";
 import { rewordContent } from "../src/tailor/reword.ts";
+import { dryRunAll, tailorJob } from "../src/tailor/tailor.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 
@@ -278,4 +279,58 @@ test("reword: with the model server down, nothing changes and the error is repor
   assert.deepEqual(r.changes, []);
   assert.match(r.error ?? "", /unavailable/);
   assert.equal(r.log[0].outcome, "skipped");
+});
+
+// tailor (engine-algorithm.md §4): one JD end to end, and the dry run.
+const ready = { ...extra, dismissed: ["impact:old-1"] }; // risks the user already answered
+
+test("tailor --all --dry-run: decisions and questions, no model calls, no files", () => {
+  tempProfile();
+  const out = dryRunAll([{ job_id: "job-1", company: "Acme", title: "SBE", req, verdicts: new Map() }], [], k8sBank, extra, budget);
+  assert.equal(out.rows[0].decision, "adapt");
+  assert.equal(out.rows[0].start, "original");
+  assert.equal(out.rows[0].to_reword, 1);
+  assert.ok(out.rows[0].blocked);
+  assert.deepEqual(out.questions.map((q) => q.id), ["impact:old-1"]);
+  assert.equal(existsSync(recordsDir()), false);
+});
+
+test("tailor: open risks block an adapt; nothing is written", async () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const r = await tailorJob(db, req, "job-1", [], k8sBank, extra, budget, new Map(), { baseUrl: "http://127.0.0.1:9/v1" });
+  assert.equal(r.decision, "blocked");
+  assert.deepEqual(r.questions.map((q) => q.id), ["impact:old-1"]);
+  assert.equal(existsSync(recordsDir()), false);
+});
+
+test("tailor: adapt rewords and writes the record; the same JD again is a reuse", async () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const m = await fakeModel(["Cut deploy time 40% by moving services to Kubernetes"]);
+  try {
+    const first = await tailorJob(db, req, "job-1", [], k8sBank, ready, budget, new Map(), { baseUrl: m.url });
+    assert.equal(first.decision, "adapt");
+    assert.ok(first.created);
+    assert.deepEqual(readdirSync(recordsDir()).sort(), ["original.yaml", `${first.resume_id}.yaml`].sort());
+    const rec = loadRecords(db, k8sBank).records.find((x) => x.resume_id === first.resume_id);
+    assert.deepEqual(rec?.changes.map((c) => c.bullet_id), ["cur-1"]);
+    assert.ok(rec?.evidence_refs.some((e) => e.requirement === "Kubernetes"));
+
+    const again = await tailorJob(db, req, "job-1", loadRecords(db, k8sBank).records, k8sBank, ready, budget, new Map(), { baseUrl: m.url });
+    assert.equal(again.decision, "reuse");
+    assert.equal(again.start, first.resume_id);
+    assert.equal(again.created, false);
+    assert.equal(m.prompts.length, 1); // reuse calls no model
+  } finally { m.close(); }
+});
+
+test("tailor: a failed years gate writes a not_tailored record, with no model calls", async () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const strict = { ...req, must_have: ["Kubernetes", "TypeScript", "12+ years of experience"] };
+  const r = await tailorJob(db, strict, "job-2", [], k8sBank, ready, budget, new Map(), { baseUrl: "http://127.0.0.1:9/v1" });
+  assert.equal(r.decision, "not_tailored");
+  assert.deepEqual(r.reworded, []);
+  assert.equal(loadRecords(db, k8sBank).records.find((x) => x.jd_id === "job-2")?.decision, "not_tailored");
 });

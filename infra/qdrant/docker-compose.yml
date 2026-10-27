@@ -2,7 +2,8 @@
 # resume and JD embeddings. Local only: ports bind to 127.0.0.1, data lives in
 # data/qdrant (git-ignored), telemetry is off.
 #
-#   docker compose -f infra/qdrant/docker-compose.yml up -d
+#   docker compose --env-file .env -f infra/qdrant/docker-compose.yml up -d
+#   (QDRANT_DATA_DIR in .env moves the data; relative to this file's folder)
 #   curl -s localhost:6333/readyz
 #   docker compose -f infra/qdrant/docker-compose.yml down     (data is kept)
 services:
@@ -17,5 +18,5 @@ services:
       QDRANT__TELEMETRY_DISABLED: "true"
       QDRANT__LOG_LEVEL: "INFO"
     volumes:
-      - ../../data/qdrant:/qdrant/storage
+      - ${QDRANT_DATA_DIR:-../../data/qdrant}:/qdrant/storage
     mem_limit: 1g

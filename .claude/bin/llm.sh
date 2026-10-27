@@ -12,8 +12,8 @@
 #                    16384), slots LLM_CODER_SLOTS (default 1), speculative decoding
 #                    LLM_SPEC=draft (default) | ngram | both | none
 #   embed      8082  mxbai-embed-large   embeddings only, CLS pooling (knowledge layer)
-#   general7   8084  qwen2.5:7b          product: JD parsing, rewording
-#   general14  8085  qwen2.5:14b         product: one-time bank build
+#   general7   8084  qwen2.5:7b          product: JD parsing, requirement judge
+#   general14  8085  qwen2.5:14b         product: one-time bank build, rewording
 # Heavy roles (coder, general7, general14) are exclusive: on a 16 GB Mac two of
 # them swap, so starting one while another runs is refused (LLM_ALLOW_BOTH=1 overrides).
 # Models: real GGUF files in ~/models/jobops/ (copied out of Ollama's store
@@ -21,6 +21,8 @@
 set -u
 
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# Settings from the repo .env (see .env.example), if there is one.
+if [ -f "$root/.env" ]; then set -a; . "$root/.env"; set +a; fi
 logs="$root/.agent-logs"
 models="${LLM_MODELS_DIR:-$HOME/models/jobops}"
 mkdir -p "$logs" "$models"

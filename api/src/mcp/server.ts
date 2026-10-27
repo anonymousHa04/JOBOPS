@@ -1,5 +1,6 @@
 // MCP stdio server "jobops-tools": the same operations as the CLI.
 // Tool results are ids, counts, scores, and questions; never resume text.
+import "../env.ts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";

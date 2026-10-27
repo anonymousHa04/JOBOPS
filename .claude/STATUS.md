@@ -30,6 +30,12 @@ Last updated: 2026-10-25, after Milestone 2, the coder tooling, and the GitHub M
 code/features the user is preparing first. On resume, ask what data and
 features they have before planning anything.
 
+**Deferred by the user (2026-10-27), do later:** resume-review-aware tailoring.
+`tailor` does not use `profile/reviews/` yet (records store `review_findings: []`).
+Plan: `review extract` on local qwen2.5:14b → `profile/reviews/findings.yaml`,
+user-approved, applied by `tailor`. Details: `.claude/knowledge/status.yaml`
+(`m3-review-findings`) and the m3-notes skill (`references/decisions.md`).
+
 **Milestone 3: candidate profile and matching** (README → Implementation roadmap):
 1. Load an approved resume/profile representation.
 2. Extract job requirements into a validated structure.

@@ -5,7 +5,7 @@ decision · 5. Content equivalence · 6. Rewrite guard · 7. Records · 8. Tests
 9. Calibration · 10. Work split and build order
 
 Stack context: TypeScript API (`api/src/`), Zod schemas, SQLite, local llama.cpp models
-(7B for JD parsing and rewording, 14B for bank build), Go job search.
+(7B for JD parsing, 14B for bank build and rewording), Go job search.
 
 ---
 
@@ -129,7 +129,7 @@ rewording and no swaps.
 
 ## 6. Rewrite guard
 
-Prompt 3 on the 7B model, one bullet per call, low temperature, allowed terms passed in.
+Prompt 3 on the 14B model, one bullet per call, low temperature, allowed terms passed in.
 Prompt also says: keep numbers only where the source has them; never lead with a number.
 
 | Code | Rule |

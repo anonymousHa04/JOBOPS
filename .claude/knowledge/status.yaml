@@ -148,6 +148,10 @@ milestone_3:
     what: "api/src/tailor/lint.ts: lintRecord (gaps-and-rejection-risks 3: top_third_weak, inverted_evidence, no_scope_or_outcome, planned_work, skill_not_evidenced, soft_skill_listed, too_long (pages, <= 8 years), possible_typo (one letter from a known term; plurals and hyphen variants ignored), same_opening_verb (> 40%), metric_led_over_2, link_not_url, check_linkedin (manual)); each finding says who can fix it (engine/user/manual); reports only. tenure: short_tenure (< 12 months), gap (> 6 months; a year-only end counts as December), mixed_date_formats, date_unparsed. sameCompany: start from that company's record while its band is tailorable (one version across roles), warn at the 4th application and when versions differ. Wired into tailor (lint on the written record), tailor --all --dry-run (same_company codes per row), CLI lint <resume_id>. span() exported from score.ts"
     tests: "lint checks fire and never change the record; tenure (short, gap, mixed formats, year-only end); same company (start + reuse across roles, warning at the 4th application, other companies unaffected); 47 tests total"
     note: "fixed-field check is the renderer's job (bank values used as written) plus guard.checkFixedFields; spelling is a typo heuristic, not a dictionary"
+  - id: m3-engine-step-9-mcp
+    state: done
+    what: "api/src/mcp/server.ts: tools tailor (job_id, force, dry_run), tailor_all_dry_run, render (resume_id), lint (resume_id); results are codes, ids, scores, questions, never resume text. The engine build order (engine-algorithm 10) is complete with this step."
+    tests: "api/test/mcp-tools.test.ts starts the stdio server like Claude Code does, checks the tools are listed and answer errors cleanly; 48 tests total"
   - id: m3-review-findings
     state: todo
     when: "later, after the template step (user 2026-10-27: leave it, keep a note)"

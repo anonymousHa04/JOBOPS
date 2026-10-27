@@ -93,4 +93,47 @@ server.registerTool(
   ({ job_id }) => reply(() => t.risk(t.db(), job_id))
 );
 
+const record = { resume_id: z.string().describe("Record id from tailor or tailor_all_dry_run") };
+
+server.registerTool(
+  "tailor",
+  {
+    description: "Tailor the resume for one parsed JD: judge, decide (reuse/adapt/not_tailored), ask open risk " +
+      "questions, reword marked bullets on the local model, and write the record in profile/records. " +
+      "Blocked by open risks unless force=true. dry_run=true decides only (cached verdicts, no model calls, no files). " +
+      "Needs an approved bank.",
+    inputSchema: { ...job, force: z.boolean().default(false), dry_run: z.boolean().default(false) }
+  },
+  ({ job_id, force, dry_run }) => reply(() => t.tailor(t.db(), job_id, { force, dryRun: dry_run }))
+);
+
+server.registerTool(
+  "tailor_all_dry_run",
+  {
+    description: "Decision table for every parsed JD (reuse/adapt/not_tailored, band, score, equivalence, " +
+      "same-company warnings) and every open risk question with its jobs. Cached verdicts only; no model calls, no files."
+  },
+  () => reply(() => t.tailorAll(t.db()))
+);
+
+server.registerTool(
+  "render",
+  {
+    description: "Render a record to an ATS-safe PDF in profile/pdf. The PDF is kept only if the parse-back test " +
+      "(pdftotext and pdf.js) reads every bullet, field, and link back exactly; otherwise the issues are returned.",
+    inputSchema: record
+  },
+  ({ resume_id }) => reply(() => t.render(t.db(), resume_id))
+);
+
+server.registerTool(
+  "lint",
+  {
+    description: "Resume lint, tenure/gap checks for a record: findings as codes and ids, each marked " +
+      "engine, user, or manual. Reports only; never changes the record.",
+    inputSchema: record
+  },
+  ({ resume_id }) => reply(() => t.lint(t.db(), resume_id))
+);
+
 await server.connect(new StdioServerTransport());

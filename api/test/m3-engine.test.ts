@@ -18,6 +18,9 @@ import type { NewRecord } from "../src/tailor/records.ts";
 import { checkFixedFields, checkRewrite, guardedReword } from "../src/tailor/guard.ts";
 import { rewordContent } from "../src/tailor/reword.ts";
 import { dryRunAll, tailorJob } from "../src/tailor/tailor.ts";
+import { spawnSync } from "node:child_process";
+import { checkText, pdftotext } from "../src/render/parseback.ts";
+import { renderRecord, resumeData } from "../src/render/render.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 
@@ -333,4 +336,41 @@ test("tailor: a failed years gate writes a not_tailored record, with no model ca
   assert.equal(r.decision, "not_tailored");
   assert.deepEqual(r.reworded, []);
   assert.equal(loadRecords(db, k8sBank).records.find((x) => x.jd_id === "job-2")?.decision, "not_tailored");
+});
+
+// Template + parse-back (engine-algorithm.md §7): every generated PDF is read back by two
+// extractors and must hold the record exactly. Needs typst and poppler (pdftotext).
+const hasTools = ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
+const fullBank = structuredClone(bank);
+fullBank.basics = { name: "Test Person", email: "test.person@example.com", phone: "+91 90000 00000", location: "Bangalore, India",
+  links: ["https://github.com/testperson", "linkedin.com/in/test-person-with-a-long-profile-name"] };
+fullBank.education = [{ id: "edu-1", degree: "B.Tech, Computer Science", school: "Example Institute of Technology", dates: "2010 - 2014", details: [] }];
+const sampleRecord = () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  return writeRecord(db, fullBank, newRecord(idealContent(req, fullBank, extra, budget))).record;
+};
+
+test("render: a record becomes a PDF that both extractors read back exactly", { skip: !hasTools && "typst or pdftotext missing" }, async () => {
+  const record = sampleRecord();
+  const r = await renderRecord(record, fullBank);
+  assert.deepEqual(r.issues, []);
+  assert.ok(r.ok && r.path && existsSync(r.path));
+  const text = pdftotext(r.path);
+  assert.match(text, /linkedin\.com\/in\/test-person-with-a-long-profile-name/); // whole, one line
+  assert.match(text, /\+91 90000 00000/);
+});
+
+test("parse-back: broken bullets, wrapped links, missing fields, and icon glyphs are caught", () => {
+  const data = resumeData(sampleRecord(), fullBank);
+  const good = [data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "Summary", data.summary, "Experience",
+    ...data.experience.flatMap((e) => [e.title, e.dates, e.company, e.location, ...e.bullets]),
+    "Education", ...data.education.flatMap((e) => [e.school, e.dates, e.degree]), "Skills", data.skills.join(", ")].join("\n");
+  assert.deepEqual(checkText(good, data, "t"), []);
+  const first = data.experience[0].bullets[0];
+  const codes = (text: string) => checkText(text, data, "t").map((i) => i.code);
+  assert.ok(codes(good.replace(first, first.slice(0, 20) + "\n\n\nzzz " + first.slice(20))).includes("bullet_broken"));
+  assert.ok(codes(good.replace("linkedin.com/in/", "linkedin.com/in/\n")).includes("link_wrapped"));
+  assert.ok(codes(good.replace(data.experience[0].dates, "")).includes("field_missing"));
+  assert.ok(codes(good + "\uf0e0").includes("icon_glyphs"));
 });

@@ -23,6 +23,7 @@ import { judgeRequirements, loadVerdicts } from "./scoring/judge.ts";
 import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
+import { renderRecord } from "./render/render.ts";
 
 export function db(): Db {
   const path = process.env.DB_PATH ?? "data/jobops.db";
@@ -186,4 +187,14 @@ export function tailorAll(d: Db, opts: { jobId?: string } = {}) {
     stale_records: checks.filter((c) => !c.edited && (c.stale_bank || c.stale_engine)).map((c) => c.resume_id),
     ...dryRunAll(jobs, records, bank, extra, loadPreferences().tailoring)
   };
+}
+
+// Record -> PDF in profile/pdf/, kept only if the parse-back test passes (decisions.md:
+// PDF only when applying directly). Issues are codes and ids, never text.
+export async function render(d: Db, resumeId: string) {
+  const bank = requireBank();
+  const record = loadRecords(d, bank).records.find((r) => r.resume_id === resumeId);
+  if (!record) throw new Error(`no record ${resumeId} (hand-edited records are skipped; see tailor --all --dry-run)`);
+  if (record.decision === "not_tailored") throw new Error(`record ${resumeId} is not_tailored: ${record.reason}`);
+  return { resume_id: resumeId, ...(await renderRecord(record, bank)) };
 }

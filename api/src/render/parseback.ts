@@ -1,0 +1,97 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import type { ResumeData } from "./render.ts";
+
+// Parse-back test (engine-algorithm.md §7, gaps-and-rejection-risks.md "ATS parsing"):
+// read the PDF's text the way an ATS does, with two independent extractors (poppler's
+// pdftotext and Mozilla's pdf.js), and check it against the data the PDF was made from.
+// Issues are codes with ids, never resume text.
+
+export type Issue = { code: string; extractor: string; detail: string };
+
+const norm = (s: string) =>
+  s.normalize("NFKC").replace(/­/g, "").replace(/[‐-―−]/g, "-").replace(/\s+/g, " ").trim().toLowerCase();
+
+export function pdftotext(pdf: string): string {
+  const r = spawnSync("pdftotext", [pdf, "-"], { encoding: "utf8" });
+  if (r.error || r.status !== 0) throw new Error("pdftotext failed (brew install poppler)");
+  return r.stdout;
+}
+
+export async function pdfjsText(pdf: string): Promise<string> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const task = pdfjs.getDocument({ data: new Uint8Array(readFileSync(pdf)), verbosity: 0 });
+  const doc = await task.promise;
+  let out = "";
+  for (let i = 1; i <= doc.numPages; i++) {
+    const content = await (await doc.getPage(i)).getTextContent();
+    for (const item of content.items) if ("str" in item) out += item.str + (item.hasEOL ? "\n" : "");
+    out += "\n";
+  }
+  await task.destroy();
+  return out;
+}
+
+export function pdfInfo(pdf: string): { pages: number; fontsEmbedded: boolean } {
+  const info = spawnSync("pdfinfo", [pdf], { encoding: "utf8" }).stdout;
+  const fonts = spawnSync("pdffonts", [pdf], { encoding: "utf8" }).stdout.split("\n").slice(2).filter((l) => l.trim());
+  // pdffonts columns: name type encoding emb sub uni object-id; "emb" is 5th from the end.
+  const fontsEmbedded = fonts.every((l) => l.trim().split(/\s+/).at(-5) === "yes");
+  return { pages: Number(/Pages:\s+(\d+)/.exec(info)?.[1] ?? 0), fontsEmbedded };
+}
+
+// Everything the extracted text must hold, in reading order where order matters.
+export function checkText(text: string, data: ResumeData, extractor: string): Issue[] {
+  const issues: Issue[] = [];
+  const t = norm(text);
+  const flat = t.replace(/ /g, ""); // a URL split across lines still reads whole here
+  const add = (code: string, detail: string) => issues.push({ code, extractor, detail });
+
+  // Bullets: each one whole, all of them in resume order.
+  const entries = [...data.experience, ...data.projects];
+  let last = -1;
+  for (const e of entries) {
+    for (const [i, b] of e.bullets.entries()) {
+      const at = t.indexOf(norm(b), last + 1);
+      if (at < 0) add(t.includes(norm(b)) ? "bullet_order" : "bullet_broken", `${e.id}#${i + 1}`);
+      else last = at;
+    }
+  }
+  // Fixed fields byte-for-byte (after whitespace and dash normalization).
+  for (const e of entries) {
+    for (const field of ["title", "company", "dates", "location"] as const) {
+      if (e[field] && !t.includes(norm(e[field]))) add("field_missing", `${e.id}.${field}`);
+    }
+  }
+  for (const e of data.education) {
+    for (const field of ["school", "degree", "dates"] as const) {
+      if (!t.includes(norm(e[field]))) add("field_missing", `${e.id}.${field}`);
+    }
+  }
+  // Contact: name, email, phone as written, every link as its full URL.
+  for (const [k, v] of [["name", data.name], ["email", data.email], ["phone", data.phone]] as const) {
+    if (v && !t.includes(norm(v))) add("contact_missing", k);
+  }
+  for (const [i, l] of data.links.entries()) if (!flat.includes(norm(l.text).replace(/ /g, ""))) add("contact_missing", `link#${i + 1}`);
+  if (data.links.some((l) => !t.includes(norm(l.text)))) add("link_wrapped", "a link is split across lines");
+  // Sections in order, skills listed.
+  const titles = ["summary", "experience", "projects", "education", "skills"].filter((s) =>
+    s === "summary" ? data.summary : s === "skills" ? data.skills.length : (data as unknown as Record<string, unknown[]>)[s].length);
+  const pos = titles.map((s) => t.indexOf(s));
+  if (pos.some((p) => p < 0) || pos.some((p, i) => i > 0 && p < pos[i - 1])) add("section_order", titles.join(","));
+  for (const [i, s] of data.skills.entries()) if (!t.includes(norm(s))) add("skill_missing", `skill#${i + 1}`);
+  // Icon fonts show up as private-use characters: noise for an ATS.
+  const icons = [...text].filter((c) => c.codePointAt(0)! >= 0xe000 && c.codePointAt(0)! <= 0xf8ff).length;
+  if (icons) add("icon_glyphs", String(icons));
+  return issues;
+}
+
+export async function parseBack(pdf: string, data: ResumeData, maxPages: number): Promise<{ ok: boolean; issues: Issue[] }> {
+  const issues: Issue[] = [];
+  const info = pdfInfo(pdf);
+  if (info.pages > maxPages) issues.push({ code: "too_many_pages", extractor: "pdfinfo", detail: `${info.pages} > ${maxPages}` });
+  if (!info.fontsEmbedded) issues.push({ code: "fonts_not_embedded", extractor: "pdffonts", detail: "" });
+  issues.push(...checkText(pdftotext(pdf), data, "pdftotext"));
+  issues.push(...checkText(await pdfjsText(pdf), data, "pdfjs"));
+  return { ok: issues.length === 0, issues };
+}

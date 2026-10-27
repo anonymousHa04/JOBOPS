@@ -15,7 +15,8 @@ const USAGE = `usage: node api/src/cli.ts <command>
   score <job_id> [--no-judge]
   risk <job_id>
   tailor <job_id> [--dry-run] [--force]
-  tailor --all --dry-run`;
+  tailor --all --dry-run
+  render <resume_id>     (PDF, kept only if the parse-back test passes)`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
@@ -68,6 +69,8 @@ async function main(argv: string[]): Promise<unknown> {
       break;
     case "score":
       return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
+    case "render":
+      return t.render(t.db(), need(sub, "resume id"));
     case "tailor":
       if (sub === "--all") {
         if (!args.includes("--dry-run")) throw new Error("tailor --all only as a dry run; tailor one job at a time");

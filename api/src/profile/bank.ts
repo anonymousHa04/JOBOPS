@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { generate } from "../model/llm.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
-import { BankSchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
+import { z } from "zod";
+import { BankSchema, BulletSchema, EntrySchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
 import type { Bank, Preferences, SkillsExtra } from "./schema.ts";
 
 const profileDir = () => process.env.JOBOPS_PROFILE_DIR ?? "profile";
@@ -42,6 +43,23 @@ export function saveSkillsExtra(s: SkillsExtra): void {
   writeYaml(skillsExtraPath(), SkillsExtraSchema.parse(s));
 }
 
+// What the model may produce in a bank build: the bank shape with every list capped.
+// The caps are generous for any real resume; the server enforces them while generating,
+// so the model cannot loop on a list. They apply to the build only, not to later edits.
+const capped = <T extends z.ZodTypeAny>(item: T, max: number) => z.array(item).max(max);
+const BuildEntrySchema = EntrySchema.extend({ bullets: capped(BulletSchema, 15) });
+const BuildSchema = BankSchema.omit({ approved: true, meta: true }).extend({
+  basics: BankSchema.shape.basics.extend({ links: capped(z.string(), 8) }),
+  summaries: capped(BankSchema.shape.summaries.element, 6),
+  roles: capped(BuildEntrySchema, 15),
+  projects: capped(BuildEntrySchema, 15),
+  education: capped(BankSchema.shape.education.element.extend({ details: capped(z.string(), 8) }), 6),
+  skills: z.object({
+    languages: capped(z.string(), 40), frameworks: capped(z.string(), 40),
+    tools: capped(z.string(), 40), domains: capped(z.string(), 40)
+  })
+});
+
 // One-time parse of the resume text into a bank (local model). Never logs content.
 export async function buildBank(): Promise<{ ok: boolean; issues: string[] }> {
   if (loadBank()?.approved) throw new Error("bank is approved; refusing to rebuild it");
@@ -51,8 +69,9 @@ export async function buildBank(): Promise<{ ok: boolean; issues: string[] }> {
   const result = await generate({
     model,
     prompt: fill(template, { "paste text": text }) + "\n" + JSON_NOTE,
-    schema: BankSchema.omit({ approved: true, meta: true }),
-    timeoutMs: 900000
+    schema: BuildSchema,
+    timeoutMs: 900000,
+    maxTokens: 8000
   });
   if (!result.ok) return { ok: false, issues: [`model: ${result.error} (${result.detail})`] };
   const bank: Bank = {

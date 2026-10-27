@@ -23,6 +23,8 @@ export async function generate<T>(opts: {
   schema: z.ZodType<T>;
   timeoutMs?: number;
   baseUrl?: string;
+  maxTokens?: number; // stop a runaway answer (repeating list items) instead of waiting out the timeout
+
 }): Promise<GenerateResult<T>> {
   const server = SERVERS[opts.model];
   const baseUrl = opts.baseUrl ?? server?.url;
@@ -31,6 +33,10 @@ export async function generate<T>(opts: {
   const body = JSON.stringify({
     model: server?.alias ?? opts.model,
     temperature: 0,
+    // Streamed: headers arrive at once. Without it, Node's fetch gives up after 300 s
+    // waiting for headers, which a long answer (the bank build) never sends in time.
+    stream: true,
+    ...(opts.maxTokens ? { max_tokens: opts.maxTokens } : {}),
     messages: [{ role: "user", content: opts.prompt }],
     response_format: { type: "json_schema", json_schema: { name: "output", schema } }
   });
@@ -73,9 +79,12 @@ async function attempt<T>(
 
   let content: unknown;
   try {
-    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    content = JSON.parse(data.choices?.[0]?.message?.content ?? "");
-  } catch {
+    content = JSON.parse(await readContent(res));
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      return { ok: false, error: "timeout", detail: `no answer in ${timeoutMs} ms` };
+    }
     return { ok: false, error: "retry", detail: "not JSON" };
   }
   const parsed = schema.safeParse(content);
@@ -83,4 +92,27 @@ async function attempt<T>(
   // Issue paths only: the content may hold resume text.
   const paths = parsed.error.issues.slice(0, 3).map((i) => i.path.join(".") || "(root)");
   return { ok: false, error: "retry", detail: paths.join(", ") };
+}
+
+// The answer text from a streamed (server-sent events) or a plain JSON response.
+async function readContent(res: Response): Promise<string> {
+  if (!(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    return data.choices?.[0]?.message?.content ?? "";
+  }
+  let text = "";
+  let buffer = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const data = line.startsWith("data:") ? line.slice(5).trim() : "";
+      if (!data || data === "[DONE]") continue;
+      const event = JSON.parse(data) as { choices?: { delta?: { content?: string } }[] };
+      text += event.choices?.[0]?.delta?.content ?? "";
+    }
+  }
+  return text;
 }

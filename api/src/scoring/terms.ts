@@ -29,7 +29,9 @@ export const SYNONYMS: Record<string, string> = {
   "next.js": "nextjs",
   "vue.js": "vue",
   "node js": "node.js",
-  "machine-learning": "machine learning"
+  "machine-learning": "machine learning",
+  mentorship: "mentoring",
+  mentor: "mentoring"
 };
 
 export function norm(s: string): string {

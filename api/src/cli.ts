@@ -11,7 +11,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   jobs [--q <text>] [--limit N] [--unparsed]
   jd parse <job_id>
   jd parse-all [--limit N]
-  score <job_id>
+  score <job_id> [--no-judge]
   risk <job_id>
   tailor <job_id>        (engine not built yet)`;
 
@@ -65,7 +65,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "parse-all") return t.jdParseAll(t.db(), Number(flag(rest, "limit") ?? 20));
       break;
     case "score":
-      return t.score(t.db(), need(sub, "job id"));
+      return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
     case "tailor":
       throw new Error("tailor: the resume selection engine is not built yet");
   }

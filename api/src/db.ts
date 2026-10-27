@@ -43,6 +43,16 @@ export function openDb(path: string): Db {
       content_equivalence_score REAL NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS judge_cache (
+      key TEXT PRIMARY KEY,
+      requirement TEXT NOT NULL,
+      label TEXT NOT NULL,
+      bullet_ids TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      bank_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
   return db;
 }

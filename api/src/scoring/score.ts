@@ -140,7 +140,7 @@ export function buildIndex(bullets: Bullet[], vocab: Set<string>): BulletIndex {
   return index;
 }
 
-function evidence(r: string, bullets: Bullet[], index: BulletIndex, vocab: Set<string>): string[] {
+export function evidence(r: string, bullets: Bullet[], index: BulletIndex, vocab: Set<string>): string[] {
   const ids = new Set<string>();
   for (const t of terms(r, vocab)) for (const id of index.get(t) ?? []) ids.add(id);
   for (const b of bullets) if (hasTerm(b.text, r)) ids.add(b.id);
@@ -208,11 +208,16 @@ export function scoreRequirements(
     if (asked > 0) return item(years >= asked ? "supported" : "not_demonstrated", years >= asked ? 1 : 0, [], "years");
     if (dontHave.has(norm(r))) return item("not_demonstrated", 0, [], "user");
     const verdict = verdicts.get(r);
+    const inList = listed.has(norm(r)) || terms(r, vocab).some((t) => listed.has(t));
     if (verdict) {
-      if (verdict.label === "not_demonstrated") return item("not_demonstrated", 0, [], "judge");
+      // The judge reads bullets only: a "no" leaves a listed skill at skill_list_only.
+      if (verdict.label === "not_demonstrated") {
+        return inList ? item("skill_list_only", CREDIT.skill_list_only, [], "judge") : item("not_demonstrated", 0, [], "judge");
+      }
       const b = best(verdict.bullet_ids, verdict.label);
       // The judge found evidence, but not in this record's bullets.
-      return b.ids.length ? item(b.label, b.credit, b.ids, "judge") : item("not_demonstrated", 0, [], "judge");
+      if (b.ids.length) return item(b.label, b.credit, b.ids, "judge");
+      return inList ? item("skill_list_only", CREDIT.skill_list_only, [], "judge") : item("not_demonstrated", 0, [], "judge");
     }
     const hits = evidence(r, bullets, index, vocab);
     if (hits.length) {
@@ -220,7 +225,7 @@ export function scoreRequirements(
       const b = best(hits, qualifier ? "partial" : "supported");
       return item(b.label, b.credit, b.ids, qualifier ? "index_no_judge" : "index");
     }
-    if (listed.has(norm(r)) || terms(r, vocab).some((t) => listed.has(t))) {
+    if (inList) {
       return item("skill_list_only", CREDIT.skill_list_only, [], "index");
     }
     if (learnable.has(norm(r))) return item("learnable", 0, [], "user");

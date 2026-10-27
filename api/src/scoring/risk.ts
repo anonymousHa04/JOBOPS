@@ -1,6 +1,7 @@
 import type { Bank, SkillsExtra } from "../profile/schema.ts";
 import type { Requirements } from "../requirements/schema.ts";
 import { allBullets, scoreRequirements, totalYears, yearsAsked } from "./score.ts";
+import type { Verdicts } from "./score.ts";
 import { norm } from "./terms.ts";
 
 export type RiskKind = "must_have" | "years" | "senior_signal" | "impact" | "keywords" | "title_level";
@@ -18,10 +19,11 @@ export function riskCheck(
   bank: Bank,
   extra: SkillsExtra,
   selected: string[],
-  jobId?: string
+  jobId?: string,
+  verdicts: Verdicts = new Map()
 ): Risk[] {
   const risks: Risk[] = [];
-  const score = scoreRequirements(req, bank, extra, selected, jobId);
+  const score = scoreRequirements(req, bank, extra, selected, jobId, verdicts);
   const chosen = allBullets(bank).filter((b) => selected.includes(b.id));
 
   for (const item of score.items) {

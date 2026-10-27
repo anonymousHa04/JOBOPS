@@ -18,6 +18,7 @@ import {
 } from "./profile/bank.ts";
 import { loadRequirements, parseJob } from "./requirements/parse.ts";
 import { riskCheck } from "./scoring/risk.ts";
+import { judgeRequirements, loadVerdicts } from "./scoring/judge.ts";
 import { allBullets, scoreJob } from "./scoring/score.ts";
 
 export function db(): Db {
@@ -121,8 +122,16 @@ export async function jdParseAll(d: Db, limit: number) {
   return { parsed: done.length, failed };
 }
 
-export function score(d: Db, jobId: string) {
-  return scoreJob(d, jobId);
+// Score with the LLM judge for requirements the index cannot settle (cached verdicts
+// first). judge=false scores with cached verdicts only (no model calls).
+export async function score(d: Db, jobId: string, judge = true) {
+  const req = loadRequirements(d, jobId);
+  if (!req) throw new Error("parse the JD first: jd parse <job_id>");
+  const bank = requireBank();
+  const extra = loadSkillsExtra();
+  if (!judge) return { ...scoreJob(d, jobId, loadVerdicts(d, req, bank, extra)), judge: "off (cached verdicts only)" };
+  const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
+  return { ...scoreJob(d, jobId, verdicts), judge: stats };
 }
 
 // Risks over the whole bank until the engine's bullet selection exists.
@@ -131,5 +140,6 @@ export function risk(d: Db, jobId: string) {
   if (!req) throw new Error("parse the JD first: jd parse <job_id>");
   const bank = requireBank();
   const ids = allBullets(bank).map((b) => b.id);
-  return { job_id: jobId, risks: riskCheck(req, bank, loadSkillsExtra(), ids, jobId) };
+  const extra = loadSkillsExtra();
+  return { job_id: jobId, risks: riskCheck(req, bank, extra, ids, jobId, loadVerdicts(d, req, bank, extra)) };
 }

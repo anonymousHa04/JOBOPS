@@ -78,8 +78,12 @@ server.registerTool(
 
 server.registerTool(
   "score",
-  { description: "Score the bank against a parsed JD: band, hard constraint, gaps, skill questions.", inputSchema: job },
-  ({ job_id }) => reply(() => t.score(t.db(), job_id))
+  {
+    description: "Score the bank against a parsed JD: band, hard constraint, gaps, skill questions. " +
+      "Uses the local LLM judge (general7) for requirements the index cannot settle; judge=false uses cached verdicts only.",
+    inputSchema: { ...job, judge: z.boolean().default(true) }
+  },
+  ({ job_id, judge }) => reply(() => t.score(t.db(), job_id, judge))
 );
 
 server.registerTool(

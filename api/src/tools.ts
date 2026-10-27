@@ -12,6 +12,7 @@ import {
   dismissRisk,
   loadBank,
   loadPreferences,
+  retagBank,
   loadSkillsExtra,
   recordLearnable,
   resumeTextPath,
@@ -59,6 +60,12 @@ export function bankStatus() {
 export async function bankBuild() {
   const r = await buildBank();
   return { ...bankStatus(), ok: r.ok, issues: r.issues };
+}
+
+// Add tags to bullets with fewer than 5, only tags the bullet's text names (local model).
+export async function bankRetag() {
+  const r = await retagBank();
+  return { ...r, issues: checkBank(requireBank(), readFileSync(resumeTextPath(), "utf8")).length };
 }
 
 export function bankCheck() {

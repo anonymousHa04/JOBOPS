@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { generate } from "../model/llm.ts";
+import { hasTerm } from "../scoring/terms.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
 import { z } from "zod";
 import { BankSchema, BulletSchema, EntrySchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
@@ -156,4 +157,52 @@ export function vocabulary(b: Bank, extra: SkillsExtra): Set<string> {
   for (const entry of [...b.roles, ...b.projects]) entry.bullets.forEach((bl) => bl.tags.forEach(add));
   extra.skills.filter((s) => s.status === "have").forEach((s) => add(s.name));
   return terms;
+}
+
+const RETAG_PROMPT = `List the skills, tools, technologies, and domains this resume bullet names.
+
+Bullet: [bullet]
+Tags it already has: [tags]
+
+Rules:
+- Only things the bullet itself says, as short lowercase terms (e.g. "kubernetes", "event pipeline").
+- Do not infer: no skill or tool the bullet does not mention.
+- Up to 8 tags, existing ones included.
+
+Return JSON: {"tags": [...]}`;
+
+// Adds tags to bullets with fewer than 5 (local model, one bullet per call). A suggested
+// tag is kept only if the bullet's own text names it (synonyms count): tags are evidence
+// in scoring, so an unsupported tag would overstate the fit. Text is never changed.
+// Returns bullet ids and counts only.
+export async function retagBank(opts: { baseUrl?: string; model?: string } = {}): Promise<{
+  retagged: { id: string; before: number; after: number }[]; still_short: string[]; error: string | null;
+}> {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  if (bank.approved) throw new Error("bank is approved; edit tags by hand");
+  const model = opts.model ?? process.env.JOBOPS_PARSE_MODEL ?? "qwen2.5:14b";
+  const schema = z.object({ tags: z.array(z.string()).max(12) });
+  const retagged: { id: string; before: number; after: number }[] = [];
+  const still_short: string[] = [];
+  let error: string | null = null;
+  for (const b of [...bank.roles, ...bank.projects].flatMap((e) => e.bullets)) {
+    if (b.tags.length >= 5) continue;
+    if (!error) {
+      const prompt = RETAG_PROMPT.replace("[bullet]", b.text).replace("[tags]", b.tags.join(", "));
+      const res = await generate({ model, prompt, schema, timeoutMs: 120000, maxTokens: 200, baseUrl: opts.baseUrl });
+      if (!res.ok) error = `${res.error}: ${res.detail}`;
+      else {
+        const before = b.tags.length;
+        for (const t of res.value.tags.map((x) => x.trim().toLowerCase())) {
+          if (b.tags.length >= 8) break;
+          if (t && !b.tags.includes(t) && hasTerm(b.text, t)) b.tags.push(t);
+        }
+        if (b.tags.length > before) retagged.push({ id: b.id, before, after: b.tags.length });
+      }
+    }
+    if (b.tags.length < 5) still_short.push(b.id);
+  }
+  saveBank(bank);
+  return { retagged, still_short, error };
 }

@@ -3,7 +3,7 @@ import "./env.ts";
 import * as t from "./tools.ts";
 
 const USAGE = `usage: node api/src/cli.ts <command>
-  bank build | check | approve | status
+  bank build | check | retag | approve | status
   skill add <name> --evidence "<where used>"
   skill no <name>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low]
@@ -36,6 +36,7 @@ async function main(argv: string[]): Promise<unknown> {
     case "bank":
       if (sub === "build") return t.bankBuild();
       if (sub === "check") return t.bankCheck();
+      if (sub === "retag") return t.bankRetag();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
       break;

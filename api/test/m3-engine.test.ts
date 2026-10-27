@@ -23,6 +23,7 @@ import { checkText, pdftotext } from "../src/render/parseback.ts";
 import { renderRecord, resumeData } from "../src/render/render.ts";
 import { lintRecord, tenure } from "../src/tailor/lint.ts";
 import type { ResumeRecord } from "../src/profile/schema.ts";
+import { loadBank, retagBank, saveBank } from "../src/profile/bank.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 
@@ -422,4 +423,25 @@ test("same company: start from that company's record, and warn above 3 applicati
     assert.ok(fourth.lint.some((f) => f.code === "same_company_applications"));
     assert.ok(!(await go("other-1")).lint.some((f) => f.code.startsWith("same_company")));
   } finally { m.close(); }
+});
+
+test("bank retag: keeps only tags the bullet names, never changes text", async () => {
+  tempProfile();
+  const b = structuredClone(bank);
+  b.approved = false;
+  b.roles[1].bullets[0].tags = ["reporting", "dashboards"]; // "Built internal reporting dashboards"
+  saveBank(b);
+  const server = createServer((rq, rs) => {
+    rq.resume();
+    rq.on("end", () => rs.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ tags: ["internal", "kubernetes", "reporting dashboards"] }) } }] })));
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const r = await retagBank({ baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1` });
+    const after = loadBank()!.roles[1].bullets[0];
+    assert.deepEqual(after.tags, ["reporting", "dashboards", "internal", "reporting dashboards"]); // no "kubernetes"
+    assert.equal(after.text, "Built internal reporting dashboards");
+    assert.deepEqual(r.retagged, [{ id: "old-1", before: 2, after: 4 }]);
+    assert.ok(r.still_short.includes("old-1"));
+  } finally { server.close(); }
 });

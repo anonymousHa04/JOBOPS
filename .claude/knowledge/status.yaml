@@ -152,6 +152,10 @@ milestone_3:
     state: done
     what: "api/src/mcp/server.ts: tools tailor (job_id, force, dry_run), tailor_all_dry_run, render (resume_id), lint (resume_id); results are codes, ids, scores, questions, never resume text. The engine build order (engine-algorithm 10) is complete with this step."
     tests: "api/test/mcp-tools.test.ts starts the stdio server like Claude Code does, checks the tools are listed and answer errors cleanly; 48 tests total"
+  - id: m3-bank-built
+    state: review
+    what: "Real bank built on local qwen2.5:14b (6 roles, 2 projects, 22 bullets; number check clean) after two fixes (streamed answers; capped lists). bank retag (new): local 14B suggests tags for bullets with < 5; a tag is kept only if the bullet's text names it (tags are evidence in scoring); text never changes. 15 bullets retagged; 4 still under 5 tags (their text names few skills): patch-infotech-4, atdrive-group-2, adadda-marketing-1, jobops-1"
+    next: "user reviews profile/bank.yaml (Claude never reads it), adds tags by hand if wanted, then: node api/src/cli.ts bank approve"
   - id: m3-review-findings
     state: todo
     when: "later, after the template step (user 2026-10-27: leave it, keep a note)"

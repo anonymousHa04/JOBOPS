@@ -21,6 +21,8 @@ import { dryRunAll, tailorJob } from "../src/tailor/tailor.ts";
 import { spawnSync } from "node:child_process";
 import { checkText, pdftotext } from "../src/render/parseback.ts";
 import { renderRecord, resumeData } from "../src/render/render.ts";
+import { lintRecord, tenure } from "../src/tailor/lint.ts";
+import type { ResumeRecord } from "../src/profile/schema.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 
@@ -373,4 +375,51 @@ test("parse-back: broken bullets, wrapped links, missing fields, and icon glyphs
   assert.ok(codes(good.replace("linkedin.com/in/", "linkedin.com/in/\n")).includes("link_wrapped"));
   assert.ok(codes(good.replace(data.experience[0].dates, "")).includes("field_missing"));
   assert.ok(codes(good + "\uf0e0").includes("icon_glyphs"));
+});
+
+// Lint, tenure/gaps, same company (gaps-and-rejection-risks.md §2-3, engine-algorithm.md §4 step 8).
+const lintCodes = (r: ResumeRecord, b = fullBank) => lintRecord(r, b, extra, { now: new Date("2026-10-27") }).map((f) => f.code);
+
+test("lint: each check reports its problem; lint never changes the record", () => {
+  const base = sampleRecord();
+  const clean = lintCodes(base);
+  assert.ok(clean.includes("check_linkedin")); // always: a manual check
+  for (const c of ["planned_work", "possible_typo", "metric_led_over_2", "link_not_url", "same_opening_verb"]) assert.ok(!clean.includes(c), c);
+  const r = structuredClone(base);
+  r.content.bullets[0].text = "Will migrate 40 services to Kubernates next quarter";
+  r.content.bullets.forEach((b, i) => { if (i < 3 && b.entry_id === "cur") b.text = `${10 + i}% faster ${b.text}`; });
+  const linkBank = structuredClone(fullBank);
+  linkBank.basics.links = ["LinkedIn"];
+  const before = structuredClone(r);
+  const codes = lintCodes(r, linkBank);
+  for (const c of ["planned_work", "possible_typo", "metric_led_over_2", "link_not_url"]) assert.ok(codes.includes(c), c);
+  assert.deepEqual(r, before);
+});
+
+test("tenure: short roles, gaps over 6 months, and mixed date formats; a year-only end is not a gap", () => {
+  assert.deepEqual(tenure(fullBank, new Date("2026-10-27")).map((f) => f.code), ["mixed_date_formats"]); // "Jan 2018" vs "2014"
+  const b = structuredClone(fullBank);
+  b.roles[0].dates = "Mar 2026 - Present";
+  b.roles[1].dates = "Jan 2014 - Jun 2025";
+  assert.deepEqual(tenure(b, new Date("2026-10-27")).map((f) => f.code).sort(), ["gap", "short_tenure"]);
+});
+
+test("same company: start from that company's record, and warn above 3 applications", async () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const m = await fakeModel(["Cut deploy time 40% by moving services to Kubernetes"]);
+  const companyOf = (id: string) => (id.startsWith("acme") ? "Acme" : "Other");
+  try {
+    const go = (id: string) => tailorJob(db, req, id, loadRecords(db, k8sBank).records, k8sBank, ready, budget, new Map(),
+      { baseUrl: m.url, companies: { company: companyOf(id), companyOf } });
+    const first = await go("acme-1");
+    assert.equal(first.decision, "adapt");
+    const second = await go("acme-2");
+    assert.equal(second.start, first.resume_id); // one version across roles
+    assert.equal(second.decision, "reuse");
+    await go("acme-3");
+    const fourth = await go("acme-4");
+    assert.ok(fourth.lint.some((f) => f.code === "same_company_applications"));
+    assert.ok(!(await go("other-1")).lint.some((f) => f.code.startsWith("same_company")));
+  } finally { m.close(); }
 });

@@ -16,7 +16,8 @@ const USAGE = `usage: node api/src/cli.ts <command>
   risk <job_id>
   tailor <job_id> [--dry-run] [--force]
   tailor --all --dry-run
-  render <resume_id>     (PDF, kept only if the parse-back test passes)`;
+  render <resume_id>     (PDF, kept only if the parse-back test passes)
+  lint <resume_id>`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
@@ -69,6 +70,8 @@ async function main(argv: string[]): Promise<unknown> {
       break;
     case "score":
       return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
+    case "lint":
+      return t.lint(t.db(), need(sub, "resume id"));
     case "render":
       return t.render(t.db(), need(sub, "resume id"));
     case "tailor":

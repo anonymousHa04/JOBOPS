@@ -11,6 +11,9 @@ import { idealContent } from "./ideal.ts";
 import type { Budget, ResumeContent } from "./ideal.ts";
 import { originalContent, toStored, writeRecord } from "./records.ts";
 import { REWORD_MODEL, rewordContent } from "./reword.ts";
+import { lintRecord, sameCompany } from "./lint.ts";
+import type { Finding } from "./lint.ts";
+import { TAILORED_BANDS } from "../scoring/config.ts";
 import type { RewordLog } from "./reword.ts";
 
 // One JD through the engine (engine-algorithm.md §4): starting record, ideal content,
@@ -23,7 +26,11 @@ export type Plan = {
   ideal: ResumeContent;
   risks: Risk[];
   unjudged: number; // requirements still waiting for the judge (dry runs use the cache only)
+  same_company: { records: string[]; versions: number; warnings: Finding[] };
 };
+
+// Where each JD's company is known: lets the engine keep one version per company.
+export type Companies = { company: string; companyOf: (jdId: string) => string | undefined };
 
 // Records that can start a new one: real resumes, not not_tailored entries. The
 // original resume counts even before its record is written.
@@ -41,15 +48,21 @@ export function planJob(
   extra: SkillsExtra,
   budget: Budget,
   verdicts: Verdicts,
-  force = false
+  force = false,
+  companies?: Companies
 ): Plan {
   const o = { jobId, verdicts };
-  const start = pickStart(candidates(records, bank), req, bank, extra, o)?.record ?? null;
+  const sc = companies ? sameCompany(companies.company, records, companies.companyOf) : { records: [], versions: 0, warnings: [] };
+  // Same company (§4 step 8): start from that company's record while it still fits the JD
+  // (tailorable band); otherwise the best record overall.
+  const own = candidates(records, bank).filter((r) => sc.records.includes(r.resume_id));
+  const ownBest = pickStart(own, req, bank, extra, o);
+  const start = (ownBest && TAILORED_BANDS.includes(ownBest.score.band) ? ownBest : pickStart(candidates(records, bank), req, bank, extra, o))?.record ?? null;
   const ideal = idealContent(req, bank, extra, budget, { ...o, start: start?.content });
   const risks = riskCheck(req, bank, extra, ideal.bullets.map((b) => b.id), jobId, verdicts);
   const decision = decide(ideal, start, req, bank, extra, risks, { ...o, force });
   const unjudged = needsJudge(req, bank, extra).filter((r) => !verdicts.has(r)).length;
-  return { decision, start, ideal, risks, unjudged };
+  return { decision, start, ideal, risks, unjudged, same_company: sc };
 }
 
 export type TailorResult = {
@@ -66,6 +79,7 @@ export type TailorResult = {
   path: string | null;
   created: boolean;
   reworded: RewordLog[];
+  lint: Finding[]; // the written record's lint, tenure, and same-company findings
   error: string | null;
 };
 
@@ -81,9 +95,9 @@ export async function tailorJob(
   extra: SkillsExtra,
   budget: Budget,
   verdicts: Verdicts,
-  opts: { force?: boolean; baseUrl?: string } = {}
+  opts: { force?: boolean; baseUrl?: string; companies?: Companies } = {}
 ): Promise<TailorResult> {
-  const plan = planJob(req, jobId, records, bank, extra, budget, verdicts, opts.force);
+  const plan = planJob(req, jobId, records, bank, extra, budget, verdicts, opts.force, opts.companies);
   const d = plan.decision;
   const base = {
     job_id: jobId, reason: d.reason, band: d.band, score: d.score, equivalence: d.equivalence,
@@ -92,7 +106,7 @@ export async function tailorJob(
   };
   if (d.risk_gate.blocked) {
     return { ...base, decision: "blocked", reason: `open risks: ${d.risk_gate.open.join(", ")}`,
-      resume_id: null, path: null, created: false, reworded: [], error: null };
+      resume_id: null, path: null, created: false, reworded: [], lint: plan.same_company.warnings, error: null };
   }
 
   // The original resume is the first record.
@@ -125,7 +139,8 @@ export async function tailorJob(
     review_findings: [], changes, evidence_refs, content,
     meta: reworded.length ? { model: REWORD_MODEL } : undefined
   });
-  return { ...base, decision: d.decision, resume_id: record.resume_id, path, created, reworded, error };
+  const lint = d.decision === "not_tailored" ? [] : [...lintRecord(record, bank, extra), ...plan.same_company.warnings];
+  return { ...base, decision: d.decision, resume_id: record.resume_id, path, created, reworded, lint, error };
 }
 
 export type DryRow = {
@@ -141,6 +156,7 @@ export type DryRow = {
   to_reword: number;
   unsupported_must_haves: string[];
   unjudged: number;
+  same_company: string[]; // warning codes
 };
 
 // `tailor --all --dry-run` (§4 step 7): the decision for every parsed JD and every
@@ -150,18 +166,20 @@ export function dryRunAll(
   records: ResumeRecord[],
   bank: Bank,
   extra: SkillsExtra,
-  budget: Budget
+  budget: Budget,
+  companyOf: (jdId: string) => string | undefined = () => undefined
 ): { rows: DryRow[]; questions: { id: string; question: string; job_ids: string[] }[] } {
   const rows: DryRow[] = [];
   const questions = new Map<string, { id: string; question: string; job_ids: string[] }>();
   for (const j of jobs) {
-    const p = planJob(j.req, j.job_id, records, bank, extra, budget, j.verdicts);
+    const p = planJob(j.req, j.job_id, records, bank, extra, budget, j.verdicts, false, { company: j.company, companyOf });
     const d = p.decision;
     rows.push({
       job_id: j.job_id, company: j.company, title: j.title, decision: d.decision, band: d.band, score: d.score,
       equivalence: d.equivalence, start: p.start?.resume_id ?? null, blocked: d.risk_gate.blocked,
       to_reword: d.decision === "adapt" ? p.ideal.bullets.filter((b) => b.reword).length : 0,
-      unsupported_must_haves: d.flags.unsupported_must_haves, unjudged: p.unjudged
+      unsupported_must_haves: d.flags.unsupported_must_haves, unjudged: p.unjudged,
+      same_company: p.same_company.warnings.map((w) => w.code)
     });
     for (const r of p.risks) {
       const q = questions.get(r.id) ?? { id: r.id, question: r.question, job_ids: [] };

@@ -24,6 +24,7 @@ import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { renderRecord } from "./render/render.ts";
+import { lintRecord } from "./tailor/lint.ts";
 
 export function db(): Db {
   const path = process.env.DB_PATH ?? "data/jobops.db";
@@ -160,8 +161,25 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   const extra = loadSkillsExtra();
   const { records, checks } = loadRecords(d, bank);
   const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
-  const result = await tailorJob(d, req, jobId, records, bank, extra, loadPreferences().tailoring, verdicts, { force: opts.force });
+  const companyOf = companies(d);
+  const result = await tailorJob(d, req, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
+    { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf } });
   return { ...result, judge: stats, edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id) };
+}
+
+// Job id -> company, for the same-company rule.
+function companies(d: Db): (jdId: string) => string | undefined {
+  const rows = d.prepare("SELECT id, company FROM jobs").all() as { id: string; company: string }[];
+  const m = new Map(rows.map((r) => [r.id, r.company]));
+  return (id) => m.get(id);
+}
+
+// Lint a stored record (gaps-and-rejection-risks.md §3): reports, never rewrites.
+export function lint(d: Db, resumeId: string) {
+  const bank = requireBank();
+  const record = loadRecords(d, bank).records.find((r) => r.resume_id === resumeId);
+  if (!record) throw new Error(`no record ${resumeId}`);
+  return { resume_id: resumeId, findings: lintRecord(record, bank, loadSkillsExtra()) };
 }
 
 // `tailor --all --dry-run`: the decision table for every parsed JD (or one) and all
@@ -185,7 +203,7 @@ export function tailorAll(d: Db, opts: { jobId?: string } = {}) {
     records: records.length,
     edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id),
     stale_records: checks.filter((c) => !c.edited && (c.stale_bank || c.stale_engine)).map((c) => c.resume_id),
-    ...dryRunAll(jobs, records, bank, extra, loadPreferences().tailoring)
+    ...dryRunAll(jobs, records, bank, extra, loadPreferences().tailoring, companies(d))
   };
 }
 

@@ -84,6 +84,15 @@ function range(dates: string): string[] {
   return dates.split(/\s*(?:-|–|—|\bto\b)\s*/i);
 }
 
+// A role's span as months since year 0, or null when its dates do not parse.
+export function span(dates: string, now = new Date()): { start: number; end: number } | null {
+  const parts = range(dates);
+  if (parts.length !== 2) return null;
+  const start = toMonths(parts[0], now);
+  const end = toMonths(parts[1], now);
+  return start !== null && end !== null && end >= start ? { start, end } : null;
+}
+
 // Sum of role durations in years; unparseable dates are skipped.
 export function totalYears(bank: Bank, now = new Date()): number {
   let months = 0;

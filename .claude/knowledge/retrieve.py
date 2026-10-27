@@ -41,11 +41,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXES = os.path.join(HERE, "fixes.jsonl")
 EVAL = os.path.join(HERE, "eval.json")
 
+# .claude/skills/ mirrors .agents/skills/ (the shared copy agents use), so only one is indexed.
 DENY_PREFIX = ("profile/", "data/", "node_modules/", "graphify-out/", ".scout/", ".agent-logs/",
-               ".claude/specs/", ".git/")
+               ".claude/specs/", ".claude/skills/", ".git/")
 DENY_GLOB = (".env", ".env.*", "*.pem", "*.key", "*secret*", "*token*", "package-lock.json", "go.sum")
 ALLOW_EXT = (".ts", ".go", ".md", ".yaml", ".yml", ".json", ".sh", ".py", ".toml")
-REQUIREMENT_DOCS = ("README.md", "requierements/")
+REQUIREMENT_DOCS = ("README.md", "requierements/", ".agents/skills/")
+DECISIONS = ".agents/skills/m3-notes/references/decisions.md"
 MAX_FILE_BYTES = 200_000
 
 # Semantic search (Phase 2): local embeddings from llama.cpp (llama-server --embeddings,
@@ -113,7 +115,9 @@ def kind_of(path):
 
 
 def evidence_of(path, kind):
-    if kind == "doc" and (path == "README.md" or path.startswith("requierements/")):
+    # Requirements: product scope, the user's design docs, and the shared skills
+    # (e.g. m3-notes: the engine spec and bullet rules).
+    if path == "README.md" or path.startswith(("requierements/", ".agents/skills/")):
         return "requirement"
     return "source_fact"
 
@@ -474,6 +478,14 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
     pkg.add(s, "(constraints)", 1, 3, rule, "constraint", "task", "requirement", "edit boundary + package.json",
             force=True)
 
+    # 2b. Decisions digest: every agreed product decision, always included in full for
+    #     product code (api/, jd-search/), so a local coder cannot miss one.
+    s = pkg.section("decisions")
+    if any(f.startswith(("api/", "jd-search/")) for f in files) and DECISIONS in ix.lines:
+        ls = ix.lines[DECISIONS]
+        pkg.add(s, DECISIONS, 1, len(ls), "\n".join(ls), "doc", "task", "requirement",
+                "agreed decisions (always included for product code)", force=True)
+
     # 3. Exact references: target files, paths and exported symbols named in the spec.
     s = pkg.section("targets_and_references")
     for f in targets:
@@ -564,7 +576,19 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
                 STATUS_EVIDENCE.get(fx["status"], "hypothesis"), "matched: " + ", ".join(why[:3]))
         pkg.seen.discard((".claude/knowledge/fixes.jsonl", 0, 0))  # several fixes share the file
 
-    # 8. Related source by exact search (BM25) over the task's words.
+    # 8. Playbook: the shared skill sections (.agents/skills/) that best match the
+    #    task, e.g. m3-notes' scoring rules for a scoring task. Exact search only, so
+    #    it needs no index write. Local coders cannot load skills; this is how they see them.
+    s = pkg.section("playbook")
+    words = [w for w in WORD.findall(spec_text) if len(w) >= 4]
+    words += [w for f in files for w in WORD.findall(os.path.basename(f).split(".")[0])]
+    for c, score in ix.search(words, limit=40):
+        if not c["path"].startswith(".agents/skills/") or c["path"] == DECISIONS or len(s["items"]) >= 2:
+            continue
+        pkg.add(s, c["path"], c["start"], c["end"], c["text"], "doc", "exact", "requirement",
+                "skill section matching the task (BM25)", score=score)
+
+    # 9. Related source by exact search (BM25) over the task's words.
     s = pkg.section("related_source")
     words = [w for w in WORD.findall(spec_text) if len(w) >= 4]
     for c, score in ix.search(words, limit=8, kinds=("source",)):
@@ -575,7 +599,7 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
                            "exact search (BM25) hit at line %d" % c["start"], score=score):
             pkg.seen.discard((c["path"], 0, 0))
 
-    # 9. Semantic matches (Phase 2): related by meaning, never above the task,
+    # 10. Semantic matches (Phase 2): related by meaning, never above the task,
     #    constraints, or exact/structural evidence. A failure is reported, not hidden.
     s = pkg.section("semantic")
     if semantic:
@@ -591,7 +615,7 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
     else:
         s["status"] = "disabled"
 
-    # 10. Docs: exact search over requirements and project docs.
+    # 11. Docs: exact search over requirements and project docs.
     s = pkg.section("docs")
     words = [w for w in WORD.findall(spec_text) if len(w) >= 4]
     for c, score in ix.search(words, limit=4, kinds=("doc",)):

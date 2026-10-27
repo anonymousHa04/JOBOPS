@@ -45,7 +45,7 @@ if [ "${KNOWLEDGE:-1}" = 1 ]; then
   for f in "$@"; do [ -s "$f" ] || new="$new $f"; done
   # shellcheck disable=SC2086
   if python3 "$knowledge/retrieve.py" context --spec "$spec" --files "$@" ${new:+--new $new} \
-       --budget "${CONTEXT_BUDGET:-3500}" --format md --out "$logs/$task.context.md" \
+       --budget "${CONTEXT_BUDGET:-4500}" --format md --out "$logs/$task.context.md" \
        --log "$logs/$task.context.json" > "$logs/$task.context.err" 2>&1; then
     echo ok > "$logs/$task.context.status"
     context_read="--read $logs/$task.context.md"

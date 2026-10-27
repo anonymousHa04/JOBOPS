@@ -131,6 +131,17 @@ independent; path and symbol hits are the fairer signal.
 Semantic search (embeddings, vector store) is Phase 2; it plugs in as another
 method and never overrides the task or constraints.
 
+## Shared skills for local coders (2026-10-27)
+
+Skills in `.agents/skills/` (shared with other agent tools; `.claude/skills/` holds
+the Claude Code copies) are indexed by the knowledge layer as requirements. aider and
+mini cannot load skills, so each context package has a **playbook** section: the 1-2
+skill sections that best match the task by exact search (e.g. m3-notes "Content
+equivalence" and "Tests" for an equivalence task). `.claude/skills/` is not indexed,
+so results are not duplicated. For product code (`api/`, `jd-search/`) every
+package also carries `.agents/skills/m3-notes/references/decisions.md` in full: the
+digest of every agreed decision, so no decision depends on a search hit.
+
 ## Phase 3: feedback loop (2026-10-26)
 
 Branch `feedback`. From `agentManagementAndFeedbackSystem.md` <!-- agentManagementAndFeedbackSystem.md --> §6.

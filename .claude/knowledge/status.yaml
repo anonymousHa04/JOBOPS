@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-10-26
-branch: retire-ollama
+branch: m3-engine
 
 environment:
   - id: env-llama-cpp
@@ -90,17 +90,27 @@ agent_system:
     evidence: "m3-05-ab escalation resolved with untyped-empty-array-never; hints.sh returns its resolution for the real error"
 
 milestone_3:
-  # Product work on milestone-3-requirements (paused until the agent system is ready).
+  # Product work, branch m3-engine. Engine spec: the m3-notes skill
+  # (.agents/skills/m3-notes, mirrored in .claude/skills/m3-notes), adopted 2026-10-27;
+  # where it differs from M3-NOTES.md, the skill wins.
+  - id: m3-engine-spec
+    state: done
+    what: "m3-notes skill installed for Claude Code and shared agents; local coders get its matching sections through the context package's playbook section"
+    changes_needed: "scoring to 55 must / 15 themes / 10 nice / 20 keywords with recency and must-have caps, labels supported_metric and skill_list_only; inverted index plus LLM judge for qualified requirements and index misses; evidence field on user bullets (number check against the answer); decision: reuse at equivalence >= 95 for any tailorable band, risk gate before rewording, tailor --all --dry-run; guard codes number_added, term_added, scope_raised, scope_phrase_added, too_long, fixed_field_changed; records in profile/records with content, bank, and engine hashes"
+    work_split: "manager: ideal, equivalence, decide, guard, scoring and their tests; local coders: tailor CLI, MCP tool, YAML writer, prompt-3 wiring, lint"
+    decisions_digest: "m3-notes references/decisions.md (2026-10-27): every agreed decision in one file; always included in full in context packages for product code (api/, jd-search/); context budgets raised to 4500 (aider) and 4000 (mini) to keep room for code context"
+    review_aware: "tailoring loads profile/reviews/* locally, maps findings to engine actions or user questions, stores finding ids + status in the record (never the text), reports open ones"
   - id: m3-engine
     state: blocked
     blocked_on: user go-ahead; content equivalence formula
     what: selection, content equivalence, rewrite check, resume records, tailoring (requierements/jobops_resume_selection_generation_engine.md)
   - id: m3-content-equivalence-formula
-    state: todo
+    state: done
+    decided: "m3-notes engine-algorithm 5: same id+text 1.0, alias->JD term 0.9, reworded 0.5, one side 0; summary 1 unit; skills 1 unit x Jaccard; 100 x matched / (bullet union + 2)"
     what: "define during the engine design session (proposal in chat: id+text = 1, reworded = 0.5, over the union, plus summary variant)"
   - id: m3-tests
-    state: blocked
-    blocked_on: user approval of the 7 minimal test cases (fake resume only)
+    state: todo
+    what: "m3-notes engine-algorithm 8: 5 engine tests + 2 invariants on a fake resume; plus earlier cases for the built parts"
   - id: m3-bank-build
     state: todo
     what: node api/src/cli.ts bank build on the real resume (local model), user review and approve profile/bank.yaml

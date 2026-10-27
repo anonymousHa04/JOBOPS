@@ -74,7 +74,7 @@ if [ "${KNOWLEDGE:-1}" = 1 ]; then
   for f in "$@"; do [ -s "$root/$f" ] || new="$new $f"; done
   # shellcheck disable=SC2086
   if (cd "$root" && python3 "$knowledge/retrieve.py" context --spec "$spec_file" --files "$@" ${new:+--new $new} \
-        --budget "${CONTEXT_BUDGET:-3000}" --format md --out "$root/.agent-logs/$task.context.md" \
+        --budget "${CONTEXT_BUDGET:-4000}" --format md --out "$root/.agent-logs/$task.context.md" \
         --log "$root/.agent-logs/$task.context.json") > "$root/.agent-logs/$task.context.err" 2>&1; then
     echo ok > "$root/.agent-logs/$task.context.status"
     task_text="$(cat "$root/.agent-logs/$task.context.md")"

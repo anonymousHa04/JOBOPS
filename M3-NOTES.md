@@ -27,6 +27,12 @@ tailoring), in the design-doc session.
 
 ---
 
+> **2026-10-27: the engine spec is now the `m3-notes` skill**
+> (`.agents/skills/m3-notes/references/engine-algorithm.md`). Where it differs from
+> the decisions below (scoring weights and caps, labels, decision rule, guard codes,
+> record location, equivalence formula), the skill wins. The decisions below stay as
+> the history of how they were reached.
+
 ## 1. Resume selection engine: decisions
 
 Design source: `requierements/jobops_resume_selection_generation_engine.md` <!-- requierements/jobops_resume_selection_generation_engine.md -->.

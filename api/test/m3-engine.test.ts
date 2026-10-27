@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openDb } from "../src/db.ts";
 import type { Bank, SkillsExtra } from "../src/profile/schema.ts";
 import type { Requirements } from "../src/requirements/schema.ts";
 import { decide } from "../src/tailor/decide.ts";
@@ -7,6 +11,9 @@ import type { StoredRecord } from "../src/tailor/decide.ts";
 import { equivalence } from "../src/tailor/equivalence.ts";
 import { idealContent, metricLed } from "../src/tailor/ideal.ts";
 import type { ResumeContent } from "../src/tailor/ideal.ts";
+import { contentHash, loadRecords, originalContent, writeRecord } from "../src/tailor/records.ts";
+import type { NewRecord } from "../src/tailor/records.ts";
+import { checkFixedFields, checkRewrite, guardedReword } from "../src/tailor/guard.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 
@@ -115,4 +122,97 @@ test("equivalence: alias-only rewording counts 0.9, a reworded bullet 0.5", () =
   const reworded = structuredClone(ideal);
   reworded.bullets[0].text = "Different wording";
   assert.equal(equivalence(reworded, ideal).value, Math.round((100 * (n - 1 + 0.5 + 2) / (n + 2)) * 10) / 10);
+});
+
+// Records (engine-algorithm.md §7): YAML is the truth, SQLite the index, hashes catch drift.
+const newRecord = (content: ResumeContent, decision: NewRecord["decision"] = "adapt"): NewRecord => ({
+  jd_id: decision === "original" ? "original" : "job-1", source_resume_id: null, decision, reason: "test",
+  band: null, score: null, equivalence: null, flags: { unsupported_must_haves: [], risks: [] },
+  review_findings: [], changes: [], evidence_refs: [], content
+});
+const tempProfile = () => { process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-rec-")); };
+
+test("records: content hash ignores reword marks and key order, changes with the text", () => {
+  const ideal = idealContent(req, bank, extra, budget);
+  const marked = structuredClone(ideal);
+  marked.bullets[0].reword = { alias_only: false, keywords: ["Kubernetes"] };
+  assert.equal(contentHash(marked), contentHash(ideal));
+  const reordered = { skills: ideal.skills, bullets: ideal.bullets, summary_text: ideal.summary_text, summary_variant: ideal.summary_variant };
+  assert.equal(contentHash(reordered), contentHash(ideal));
+  const edited = structuredClone(ideal);
+  edited.bullets[0].text += " today";
+  assert.notEqual(contentHash(edited), contentHash(ideal));
+});
+
+test("records: written once, never overwritten, and the index rebuilds from YAML", () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const orig = writeRecord(db, bank, newRecord(originalContent(bank), "original"));
+  assert.equal(orig.record.resume_id, "original");
+  const ideal = idealContent(req, bank, extra, budget);
+  const first = writeRecord(db, bank, newRecord(ideal));
+  assert.ok(first.created);
+  const before = readFileSync(first.path, "utf8");
+  const again = writeRecord(db, bank, { ...newRecord(ideal), reason: "different" });
+  assert.equal(again.created, false);
+  assert.equal(readFileSync(first.path, "utf8"), before);
+  db.exec("DELETE FROM resume_records");
+  const { records, checks } = loadRecords(db, bank);
+  assert.deepEqual(records.map((r) => r.resume_id).sort(), [first.record.resume_id, "original"].sort());
+  assert.ok(checks.every((c) => !c.edited && !c.stale_bank && !c.stale_engine));
+  const row = db.prepare("SELECT content_hash FROM resume_records WHERE resume_id = ?").get(first.record.resume_id) as { content_hash: string };
+  assert.equal(row.content_hash, contentHash(ideal));
+});
+
+test("records: a hand-edited record and a changed bank are detected", () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const { path } = writeRecord(db, bank, newRecord(idealContent(req, bank, extra, budget)));
+  writeFileSync(path, readFileSync(path, "utf8").replace("Backend engineer.", "Backend engineer!"));
+  assert.ok(loadRecords(db, bank).checks[0].edited);
+  assert.equal(loadRecords(db, bank).records.length, 0);
+  tempProfile();
+  writeRecord(db, bank, newRecord(idealContent(req, bank, extra, budget)));
+  const changed = structuredClone(bank);
+  changed.roles[0].bullets[0].text += " in production";
+  const c = loadRecords(db, changed).checks[0];
+  assert.ok(!c.edited && c.stale_bank && !c.stale_engine);
+});
+
+// Rewrite guard (engine-algorithm.md §6).
+const guardOpts = { vocab: new Set(["kubernetes", "typescript", "go", "docker", "rust"]), allowed: ["Kubernetes"], maxWords: 25 };
+const src = "Built the deploy pipeline on k8s, cutting deploys by 40%";
+
+test("guard: each rule fires on its own", () => {
+  assert.deepEqual(checkRewrite(src, "Built the Kubernetes deploy pipeline, cutting deploys by 40%", guardOpts), []);
+  const cases: [string, string][] = [
+    ["Built the deploy pipeline on k8s, cutting deploys by 45%", "number_added"],
+    ["Built the deploy pipeline on k8s and Rust, cutting deploys by 40%", "term_added"],
+    ["Led the deploy pipeline on k8s, cutting deploys by 40%", "scope_raised"],
+    ["Built the end-to-end deploy pipeline on k8s, cutting deploys by 40%", "scope_phrase_added"],
+    [`Built the deploy pipeline on k8s, cutting deploys by 40%${" again".repeat(20)}`, "too_long"],
+    ["40% faster deploys from the pipeline built on k8s", "number_led"]
+  ];
+  for (const [rewrite, code] of cases) assert.deepEqual(checkRewrite(src, rewrite, guardOpts), [code], code);
+});
+
+test("guard: retry once with the codes, then fall back to the bank text", async () => {
+  const seen: string[][] = [];
+  const bad = await guardedReword(src, guardOpts, async (codes) => { seen.push(codes); return "Led the pipeline, 90% faster"; });
+  assert.equal(bad.outcome, "fallback");
+  assert.equal(bad.text, src);
+  assert.equal(seen.length, 2);
+  assert.deepEqual(seen[0], []);
+  assert.ok(seen[1].includes("scope_raised"));
+  let n = 0;
+  const ok = await guardedReword(src, guardOpts, async () => (n++ === 0 ? null : "Built the Kubernetes deploy pipeline, cutting deploys by 40%"));
+  assert.equal(ok.outcome, "accepted_on_retry");
+});
+
+test("guard: titles, employers, and dates must byte-match the bank", () => {
+  const shown = bank.roles.map((r) => ({ entry_id: r.id, title: r.title, company: r.company, dates: r.dates }));
+  assert.deepEqual(checkFixedFields(bank, shown), []);
+  shown[0].title = "Staff Engineer";
+  shown[1].dates = "2014 – 2017";
+  assert.deepEqual(checkFixedFields(bank, shown).map((f) => `${f.entry_id}.${f.field}`), ["cur.title", "old.dates"]);
 });

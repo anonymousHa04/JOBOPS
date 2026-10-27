@@ -118,6 +118,15 @@ milestone_3:
     what: "api/src/tailor/ideal.ts (ideal content: must-have coverage first, then themes, impact, recency, id; budgets; every role >= 1 bullet; <= 2 metric-led per role; starting record's wording reused; reword marks for JD keywords missing literally, alias-only flagged; skills JD-first in JD spelling, nothing added; summary variant as written), equivalence.ts (spec 5 formula), decide.ts (pickStart on cached verdicts; years gate / poor bands -> not_tailored; reuse at >= 95; flags for unsupported must-haves and risks; risk gate blocks adapt, never reuse)"
     tests: "api/test/m3-engine.test.ts, 7 tests from engine-algorithm 8 plus invariants, fake resume only; total 29 tests pass"
     open: "spec 5 formula (union + 2, with a skills unit) vs its worked examples (union + 1): implemented as written; decisions identical, numbers differ slightly (one swap 88.2% vs 87.5% at 14 bullets) - user to confirm"
+  - id: m3-engine-step-3-records
+    state: done
+    what: "api/src/tailor/records.ts: one YAML per JD in profile/records/ (id = jd id + content hash; original resume is record 'original'), written with wx so never overwritten; SQLite resume_records is an index rebuilt from YAML by loadRecords; content hash (sorted keys, reword marks excluded), bank hash, engine version (config values + judge prompt + logic version); hand-edited records reported and left out, stale bank/engine reported. ResumeRecordSchema replaced (decision original/reuse/adapt/not_tailored, flags, review_findings ids+statuses, hashes); old empty resume_records table dropped on open"
+    tests: "3 record tests in api/test/m3-engine.test.ts"
+  - id: m3-engine-step-4-guard
+    state: done
+    what: "api/src/tailor/guard.ts: checkRewrite (number_added, term_added except the bullet's reword keywords, scope_raised on the verb ladder, scope_phrase_added, too_long, number_led), checkFixedFields (title/company/dates byte-match the bank), guardedReword (one attempt, one retry with codes, then bank text; codes only)"
+    tests: "3 guard tests in api/test/m3-engine.test.ts; total 35 tests pass"
+    next: "step 5 rewording: prompt 3 on general7 through guardedReword (local coders: prompt-3 wiring)"
   - id: m3-bank-schema-per-skill
     state: todo
     what: "skill bank entries: ids like <roleprefix>-<topic> and an evidence field for source: user (number check against the user's answer); current BulletSchema requires ids ending in a number and has no evidence"

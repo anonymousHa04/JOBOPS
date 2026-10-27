@@ -115,18 +115,28 @@ export const PreferencesSchema = z.object({
   }),
 });
 
-// Define ResumeRecordSchema
+// One tailored resume per JD (engine-algorithm.md §7): the YAML in profile/records/ is the
+// source of truth; SQLite resume_records only indexes it. The original resume is the
+// first record (decision "original").
 export const ResumeRecordSchema = z.object({
-  resume_id: z.string(),
+  resume_id: z.string().regex(/^[A-Za-z0-9._-]+$/),
   jd_id: z.string(),
   source_resume_id: z.string().nullable(),
   created_at: z.string(),
-  jd_suitability_score: z.number().min(0).max(100),
-  content_equivalence_score: z.number().min(0).max(100),
-  decision: z.enum(['reuse', 'adapt', 'assemble']),
-  flag_gaps: z.boolean(),
-  gaps: z.array(z.string()),
-  review: z.boolean(),
+  decision: z.enum(["original", "reuse", "adapt", "not_tailored"]),
+  reason: z.string(),
+  band: z.string().nullable(),
+  score: z.number().min(0).max(100).nullable(),
+  equivalence: z.number().min(0).max(100).nullable(),
+  flags: z.object({
+    unsupported_must_haves: z.array(z.string()),
+    risks: z.array(z.string()),
+  }),
+  // Ids and statuses only, never the review text (engine-algorithm.md §4 step 9).
+  review_findings: z.array(z.object({
+    id: z.string(),
+    status: z.enum(["addressed", "open", "needs_facts"]),
+  })),
   changes: z.array(z.object({
     bullet_id: z.string(),
     from: z.string().nullable(),
@@ -140,14 +150,10 @@ export const ResumeRecordSchema = z.object({
   content: z.object({
     summary_variant: z.string(),
     summary_text: z.string(),
-    sections: z.array(z.object({
-      entry_id: z.string(),
-      bullets: z.array(z.object({
-        id: z.string(),
-        text: z.string(),
-      })),
-    })),
+    bullets: z.array(z.object({ id: z.string(), entry_id: z.string(), text: z.string() })),
+    skills: z.array(z.string()),
   }),
+  hashes: z.object({ content: z.string(), bank: z.string(), engine: z.string() }),
   meta: z.object({
     model: z.string().optional(),
     prompt_version: z.string().optional(),

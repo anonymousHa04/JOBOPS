@@ -7,6 +7,9 @@ export function openDb(path: string): Db {
   if (path !== ":memory:") {
     db.pragma("journal_mode=WAL");
   }
+  // The first resume_records table (no hashes) was never written to; replace it.
+  const cols = db.prepare("SELECT name FROM pragma_table_info('resume_records')").all() as { name: string }[];
+  if (cols.length && !cols.some((c) => c.name === "content_hash")) db.exec("DROP TABLE resume_records");
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
@@ -37,10 +40,16 @@ export function openDb(path: string): Db {
     CREATE TABLE IF NOT EXISTS resume_records (
       resume_id TEXT PRIMARY KEY,
       jd_id TEXT NOT NULL,
+      path TEXT NOT NULL,
       source_resume_id TEXT,
       decision TEXT NOT NULL,
-      jd_suitability_score REAL NOT NULL,
-      content_equivalence_score REAL NOT NULL,
+      band TEXT,
+      score REAL,
+      equivalence REAL,
+      flags TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      bank_hash TEXT NOT NULL,
+      engine_version TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS judge_cache (

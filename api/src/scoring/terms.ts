@@ -19,7 +19,17 @@ export const SYNONYMS: Record<string, string> = {
   ml: "machine learning",
   genai: "generative ai",
   "agentic ai": "agents",
-  "ai agents": "agents"
+  "ai agents": "agents",
+  eks: "kubernetes",
+  gke: "kubernetes",
+  aks: "kubernetes",
+  "amazon web services": "aws",
+  reactjs: "react",
+  "react.js": "react",
+  "next.js": "nextjs",
+  "vue.js": "vue",
+  "node js": "node.js",
+  "machine-learning": "machine learning"
 };
 
 export function norm(s: string): string {

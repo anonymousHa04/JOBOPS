@@ -721,7 +721,7 @@ def main():
     se.add_argument("query")
     se.add_argument("--limit", type=int, default=6)
     e = sub.add_parser("eval")
-    e.add_argument("--budget", type=int, default=3000)
+    e.add_argument("--budget", type=int, default=4500)  # same as run-coder.sh (CONTEXT_BUDGET)
     a = ap.parse_args()
 
     root = repo_root()

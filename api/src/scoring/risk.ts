@@ -25,7 +25,9 @@ export function riskCheck(
   const chosen = allBullets(bank).filter((b) => selected.includes(b.id));
 
   for (const item of score.items) {
-    if (item.kind === "must" && item.label === "not_demonstrated" && yearsAsked(item.requirement) === 0) {
+    // A missing must-have (credit below 0.5, per the engine spec), except learnable ones
+    // (not a blocker by user decision) and years (the hard constraint, reported below).
+    if (item.kind === "must" && item.credit < 0.5 && item.label !== "learnable" && yearsAsked(item.requirement) === 0) {
       const skill = norm(item.requirement);
       const before = extra.learnable
         .filter((a) => a.skill === skill && a.job_id !== jobId)

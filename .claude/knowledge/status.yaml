@@ -104,6 +104,13 @@ milestone_3:
     state: blocked
     blocked_on: user go-ahead; content equivalence formula
     what: selection, content equivalence, rewrite check, resume records, tailoring (requierements/jobops_resume_selection_generation_engine.md)
+  - id: m3-engine-step-1a-scoring
+    state: done
+    what: "scoring per m3-notes engine-algorithm 2-3: inverted index over bullet text and tags; labels supported_metric/supported/partial/skill_list_only/learnable/not_demonstrated/unknown with credits x recency; 55 must / 15 themes / 10 nice / 20 literal keywords (must-have keywords x2), empty parts redistributed; must-have caps 84.9 / 74.9; years gate; index misses are unknown (never auto not_demonstrated); qualified requirements partial until judged; verdicts slot for the judge; risk check uses credit < 0.5"
+    evidence: "fake-bank smoke 2026-10-27: every credit, cap, redistribution, and keyword weight matched by hand; check.sh pass, self-test 29/29, eval 44/44 (eval budget aligned to 4500)"
+  - id: m3-engine-step-1b-judge
+    state: todo
+    what: "LLM judge (qwen2.5:7b via general7) for requirements in needsJudge(): candidates from the index (qualified) or top bullets (index miss); verdicts cached by requirement text + prompt version + bank hash; record scoring reuses bank verdicts without model calls"
   - id: m3-content-equivalence-formula
     state: done
     decided: "m3-notes engine-algorithm 5: same id+text 1.0, alias->JD term 0.9, reworded 0.5, one side 0; summary 1 unit; skills 1 unit x Jaccard; 100 x matched / (bullet union + 2)"

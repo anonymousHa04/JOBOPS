@@ -1,7 +1,7 @@
 import { vocabulary } from "../profile/bank.ts";
 import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { span, totalYears } from "../scoring/score.ts";
-import { hasTerm, norm, SYNONYMS } from "../scoring/terms.ts";
+import { hasTerm, norm, synonyms } from "../scoring/terms.ts";
 import { metricLed } from "./ideal.ts";
 
 // Resume lint (gaps-and-rejection-risks.md §3), tenure/gaps (§2 recruiter scan), and the
@@ -62,7 +62,7 @@ export function lintRecord(record: ResumeRecord, bank: Bank, extra: SkillsExtra,
   // Length: one page up to about 8 years of experience.
   if (opts.pages !== undefined && opts.pages > 1 && totalYears(bank, opts.now) <= 8) add("too_long", `${opts.pages} pages`, "engine");
   // Spelling: a word one letter away from a known term ("Kubernates") is likely a typo.
-  const known = [...vocab, ...Object.keys(SYNONYMS), ...Object.values(SYNONYMS)].filter((k) => k.length >= 5 && !k.includes(" "));
+  const known = [...vocab, ...Object.keys(synonyms()), ...Object.values(synonyms())].filter((k) => k.length >= 5 && !k.includes(" "));
   for (const b of bullets) {
     for (const w of new Set(b.text.toLowerCase().match(/[a-z][a-z0-9.+#-]{4,}/g) ?? [])) {
       // A word that only extends a known one ("template" / "templates") or differs only in

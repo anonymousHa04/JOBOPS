@@ -1,0 +1,34 @@
+# Synonyms for matching JD wording against the experience bank: alias -> the term it means.
+# Matching is case-insensitive and whole-word. Add your own in profile/synonyms.yaml
+# (same format, git-ignored); an entry there wins over the same alias here.
+k8s: kubernetes
+eks: kubernetes
+gke: kubernetes
+aks: kubernetes
+js: javascript
+ts: typescript
+golang: go
+postgres: postgresql
+node: node.js
+nodejs: node.js
+node js: node.js
+aws lambda: lambda
+amazon web services: aws
+gcp: google cloud
+llms: llm
+large language models: llm
+ci/cd: ci-cd
+rest api: rest
+rest apis: rest
+restful: rest
+ml: machine learning
+machine-learning: machine learning
+genai: generative ai
+agentic ai: agents
+ai agents: agents
+reactjs: react
+react.js: react
+next.js: nextjs
+vue.js: vue
+mentorship: mentoring
+mentor: mentoring

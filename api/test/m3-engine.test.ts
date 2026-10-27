@@ -22,10 +22,13 @@ import { spawnSync } from "node:child_process";
 import { checkText, pdftotext } from "../src/render/parseback.ts";
 import { renderRecord, resumeData } from "../src/render/render.ts";
 import { lintRecord, tenure } from "../src/tailor/lint.ts";
+import { norm } from "../src/scoring/terms.ts";
 import type { ResumeRecord } from "../src/profile/schema.ts";
-import { loadBank, retagBank, saveBank } from "../src/profile/bank.ts";
+import { dedupeSkills, loadBank, regroupSkills, retagBank, saveBank } from "../src/profile/bank.ts";
 
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
+// Never the real profile: its overrides (profile/synonyms.yaml, ...) must not change results.
+process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-test-"));
 
 const bullet = (id: string, text: string, tags: string[], impact: "high" | "medium" | "low" = "medium") =>
   ({ id, text, short: text.split(" ").slice(0, 5).join(" "), tags, impact, source: "resume" as const });
@@ -444,4 +447,34 @@ test("bank retag: keeps only tags the bullet names, never changes text", async (
     assert.deepEqual(r.retagged, [{ id: "old-1", before: 2, after: 4 }]);
     assert.ok(r.still_short.includes("old-1"));
   } finally { server.close(); }
+});
+
+test("bank: repeated skills are removed, in a group and across groups, first spelling kept", () => {
+  const b = structuredClone(bank);
+  b.skills = { languages: ["Go", "TypeScript", "go", "Go", "Python"], frameworks: ["React"], tools: ["Docker", "typescript", "react"], domains: ["Docker"] };
+  assert.equal(dedupeSkills(b), 5);
+  assert.deepEqual(b.skills, { languages: ["Go", "TypeScript", "Python"], frameworks: ["React"], tools: ["Docker"], domains: [] });
+});
+
+test("bank: known frameworks leave languages, known languages leave frameworks", () => {
+  const b = structuredClone(bank);
+  b.skills = { languages: ["TypeScript", "React", "Node.js", "Go"], frameworks: ["Express", "Python"], tools: [], domains: [] };
+  assert.equal(regroupSkills(b), 3);
+  assert.deepEqual(b.skills.languages, ["TypeScript", "Go", "Python"]);
+  assert.deepEqual(b.skills.frameworks, ["React", "Node.js", "Express"]);
+});
+
+test("lists: your profile files add synonyms and pin skill groups, over the defaults", () => {
+  tempProfile();
+  const dir = process.env.JOBOPS_PROFILE_DIR!;
+  const b = structuredClone(bank);
+  b.skills = { languages: ["Node.js", "Go"], frameworks: [], tools: [], domains: [] };
+  assert.equal(regroupSkills(structuredClone(b)), 1); // default: Node.js is a framework
+  writeFileSync(join(dir, "skill-groups.yaml"), "languages: [node.js]\n");
+  assert.equal(regroupSkills(b), 0); // yours: it stays a language
+  assert.equal(norm("hapi"), "hapi");
+  writeFileSync(join(dir, "synonyms.yaml"), "hapi: node.js\n");
+  assert.equal(norm("hapi"), "node.js");
+  writeFileSync(join(dir, "synonyms.yaml"), "hapi: [broken\n");
+  assert.throws(() => norm("x"), /synonyms\.yaml/);
 });

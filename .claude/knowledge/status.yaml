@@ -153,17 +153,21 @@ milestone_3:
     what: "api/src/mcp/server.ts: tools tailor (job_id, force, dry_run), tailor_all_dry_run, render (resume_id), lint (resume_id); results are codes, ids, scores, questions, never resume text. The engine build order (engine-algorithm 10) is complete with this step."
     tests: "api/test/mcp-tools.test.ts starts the stdio server like Claude Code does, checks the tools are listed and answer errors cleanly; 48 tests total"
   - id: m3-bank-built
-    state: review
+    state: done
     what: "Real bank built on local qwen2.5:14b (6 roles, 2 projects, 22 bullets; number check clean) after two fixes (streamed answers; capped lists). bank retag (new): local 14B suggests tags for bullets with < 5; a tag is kept only if the bullet's text names it (tags are evidence in scoring); text never changes. 15 bullets retagged; 4 still under 5 tags (their text names few skills): patch-infotech-4, atdrive-group-2, adadda-marketing-1, jobops-1"
     next: "user reviews profile/bank.yaml (Claude never reads it), adds tags by hand if wanted, then: node api/src/cli.ts bank approve"
+  - id: editable-lists
+    state: done
+    what: "Synonyms and skill groups moved from code to YAML: api/config/synonyms.yaml and api/config/skill-groups.yaml (defaults, committed); profile/synonyms.yaml and profile/skill-groups.yaml (user's, git-ignored) win. api/src/lists.ts loads both, validates (a broken file is an error naming it), re-reads on change (MCP server sees edits). Tests point JOBOPS_PROFILE_DIR at a temp folder so user overrides never change results"
   - id: m3-review-findings
     state: todo
     when: "later, after the template step (user 2026-10-27: leave it, keep a note)"
     why: "profile/reviews is free text and private (Claude never reads it), so the engine cannot map findings to actions yet; engine-algorithm 4 step 9 is not implemented"
     what: "review extract: local qwen2.5:14b turns profile/reviews/* once into profile/reviews/findings.yaml (id, kind from a fixed list: skills/ordering/summary/spelling/length/needs_facts, engine action); the user reviews and approves it like the bank; tailor loads approved findings, applies engine-fixable ones in code, stores review_findings [{id, status: addressed|open|needs_facts}] (ids only) and reports open ones; needs_facts findings become bullet-writing.md questions. Not chosen: a model call on every tailor (varies per run, unreviewed)"
   - id: m3-bank-schema-per-skill
-    state: todo
-    what: "skill bank entries: ids like <roleprefix>-<topic> and an evidence field for source: user (number check against the user's answer); current BulletSchema requires ids ending in a number and has no evidence"
+    state: done
+    what: "BulletSchema: ids <entry-id>-<n> or <entry-id>-<topic>; optional evidence (the user's answer) for source: user; checkBank flags user bullets without evidence and checks their numbers against the evidence. bullet add --topic --evidence. Skills: regroup (known frameworks out of languages and back) and dedupe on every save; bank dedupe command"
+    bank: "user answered the question bank in chat (one-time exception, 2026-10-27): 6 user bullets added (4 schneider-electric, 2 jobops) with evidence; scale/load bullet waits on the user confirming the numbers are teams (40 design, 50 load test, 50 = ~250 engineers in one session)"
   - id: m3-content-equivalence-formula
     state: done
     decided: "m3-notes engine-algorithm 5: same id+text 1.0, alias->JD term 0.9, reworded 0.5, one side 0; summary 1 unit; skills 1 unit x Jaccard; 100 x matched / (bullet union + 2)"

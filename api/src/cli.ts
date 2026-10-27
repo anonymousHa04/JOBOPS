@@ -3,10 +3,10 @@ import "./env.ts";
 import * as t from "./tools.ts";
 
 const USAGE = `usage: node api/src/cli.ts <command>
-  bank build | check | retag | approve | status
+  bank build | check | retag | dedupe | approve | status
   skill add <name> --evidence "<where used>"
   skill no <name>
-  bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low]
+  bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
   jobs [--q <text>] [--limit N] [--unparsed]
@@ -37,6 +37,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "build") return t.bankBuild();
       if (sub === "check") return t.bankCheck();
       if (sub === "retag") return t.bankRetag();
+      if (sub === "dedupe") return t.bankDedupeSkills();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
       break;
@@ -49,7 +50,8 @@ async function main(argv: string[]): Promise<unknown> {
       const impact = flag(rest, "impact") ?? "medium";
       if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");
       const tags = need(flag(rest, "tags"), "--tags").split(",");
-      return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact);
+      return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact,
+        { topic: flag(rest, "topic"), evidence: flag(rest, "evidence") });
     }
     case "learnable": {
       const answer = need(rest[0], "yes|no");

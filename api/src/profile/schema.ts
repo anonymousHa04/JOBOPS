@@ -2,12 +2,15 @@ import { z } from 'zod';
 
 // Define Bullet schema
 export const BulletSchema = z.object({
-  id: z.string().regex(/^[a-z0-9-]+-\d+$/),
+  // <entry-id>-<n> from the resume, or <entry-id>-<topic> for bullets the user adds.
+  id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)+$/),
   text: z.string(),
   short: z.string(),
   tags: z.array(z.string().toLowerCase()).min(1).max(12),
   impact: z.enum(['high', 'medium', 'low']),
   source: z.enum(['resume', 'user']).default('resume'),
+  // For source: user, the user's answer the bullet is written from ("answer YYYY-MM-DD: ...").
+  evidence: z.string().optional(),
 });
 
 // Define Entry schema

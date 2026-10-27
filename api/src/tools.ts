@@ -10,6 +10,7 @@ import {
   buildBank,
   checkBank,
   dismissRisk,
+  bankDedupe,
   loadBank,
   loadPreferences,
   retagBank,
@@ -68,6 +69,10 @@ export async function bankRetag() {
   return { ...r, issues: checkBank(requireBank(), readFileSync(resumeTextPath(), "utf8")).length };
 }
 
+export function bankDedupeSkills() {
+  return { ...bankDedupe(), ...bankStatus() };
+}
+
 export function bankCheck() {
   return { issues: checkBank(requireBank(), readFileSync(resumeTextPath(), "utf8")) };
 }
@@ -84,8 +89,8 @@ export function skillAdd(name: string, have: boolean, evidence: string) {
   return { skill: name.toLowerCase(), status: have ? "have" : "dont_have" };
 }
 
-export function bulletAdd(entryId: string, text: string, tags: string[], impact: "high" | "medium" | "low") {
-  return { id: addBullet(entryId, text, tags, impact) };
+export function bulletAdd(entryId: string, text: string, tags: string[], impact: "high" | "medium" | "low", opts: { topic?: string; evidence?: string } = {}) {
+  return { id: addBullet(entryId, text, tags, impact, opts) };
 }
 
 export function learnableSet(skill: string, learnable: boolean, jobId: string) {

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { generate } from "../model/llm.ts";
 import { hasTerm } from "../scoring/terms.ts";
+import { SKILL_GROUPS, skillGroups, skillKey } from "../lists.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
 import { z } from "zod";
 import { BankSchema, BulletSchema, EntrySchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
@@ -26,8 +27,56 @@ export function loadBank(): Bank | null {
   return BankSchema.parse(parse(readFileSync(bankPath(), "utf8")));
 }
 
+// Files each skill in the group api/config/skill-groups.yaml (or your
+// profile/skill-groups.yaml, which wins) gives it; unlisted skills stay where they are.
+// Returns how many moved.
+export function regroupSkills(b: Bank): number {
+  const groups = skillGroups();
+  const next: Bank["skills"] = { languages: [], frameworks: [], tools: [], domains: [] };
+  let moved = 0;
+  for (const g of SKILL_GROUPS) {
+    for (const s of b.skills[g]) {
+      const want = groups.get(skillKey(s)) ?? g;
+      if (want !== g) moved++;
+      next[want].push(s);
+    }
+  }
+  b.skills = next;
+  return moved;
+}
+
+// Removes repeated skills: exact and case-only repeats in a group, and a skill already
+// listed in an earlier group (languages, frameworks, tools, domains). The first
+// spelling is kept. Returns how many were removed.
+export function dedupeSkills(b: Bank): number {
+  const seen = new Set<string>();
+  let removed = 0;
+  for (const group of ["languages", "frameworks", "tools", "domains"] as const) {
+    b.skills[group] = b.skills[group].filter((s) => {
+      const k = s.trim().toLowerCase();
+      if (!k || seen.has(k)) { removed++; return false; }
+      seen.add(k);
+      return true;
+    });
+  }
+  return removed;
+}
+
+// Every save files skills in the right group, then removes repeats (the model can
+// misfile and repeat list items).
 export function saveBank(b: Bank): void {
+  regroupSkills(b);
+  dedupeSkills(b);
   writeYaml(bankPath(), BankSchema.parse(b));
+}
+
+export function bankDedupe(): { moved: number; removed: number } {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const moved = regroupSkills(bank);
+  const removed = dedupeSkills(bank);
+  if (moved || removed) writeYaml(bankPath(), BankSchema.parse(bank));
+  return { moved, removed };
 }
 
 export function loadSkillsExtra(): SkillsExtra {
@@ -93,9 +142,11 @@ export function checkBank(b: Bank, resumeText: string): string[] {
       if (seen.has(bullet.id)) issues.push(`${bullet.id}: duplicate id`);
       seen.add(bullet.id);
       if (!bullet.id.startsWith(`${entry.id}-`)) issues.push(`${bullet.id}: id not prefixed by ${entry.id}`);
-      // User-added bullets are not in the resume text; the user vouches for them.
-      for (const n of bullet.source === "user" ? [] : bullet.text.match(NUMBER) ?? []) {
-        if (!resumeText.includes(n)) issues.push(`${bullet.id}: number ${n} not in resume`);
+      // Numbers must come from the source: the resume, or the user's answer (evidence).
+      if (bullet.source === "user" && !bullet.evidence) issues.push(`${bullet.id}: user bullet without evidence`);
+      const source = bullet.source === "user" ? bullet.evidence ?? "" : resumeText;
+      for (const n of bullet.text.match(NUMBER) ?? []) {
+        if (!source.includes(n)) issues.push(`${bullet.id}: number ${n} not in ${bullet.source === "user" ? "evidence" : "resume"}`);
       }
       if (bullet.short.split(/\s+/).filter(Boolean).length > 15) issues.push(`${bullet.id}: short over 15 words`);
       if (bullet.tags.length < 5 || bullet.tags.length > 8) issues.push(`${bullet.id}: ${bullet.tags.length} tags (want 5-8)`);
@@ -113,13 +164,20 @@ export function addSkill(name: string, status: "have" | "dont_have", evidence: s
 }
 
 // Adds a user-written bullet to a role or project; returns its new id.
-export function addBullet(entryId: string, text: string, tags: string[], impact: "high" | "medium" | "low"): string {
+export function addBullet(
+  entryId: string,
+  text: string,
+  tags: string[],
+  impact: "high" | "medium" | "low",
+  opts: { topic?: string; evidence?: string } = {}
+): string {
   const bank = loadBank();
   if (!bank) throw new Error("no bank; run bank build first");
   const entry = [...bank.roles, ...bank.projects].find((e) => e.id === entryId);
   if (!entry) throw new Error(`unknown entry ${entryId}`);
   const used = entry.bullets.map((b) => Number(b.id.slice(entryId.length + 1)) || 0);
-  const id = `${entryId}-${Math.max(0, ...used) + 1}`;
+  const id = opts.topic ? `${entryId}-${opts.topic}` : `${entryId}-${Math.max(0, ...used) + 1}`;
+  if ([...bank.roles, ...bank.projects].some((e) => e.bullets.some((b) => b.id === id))) throw new Error(`bullet ${id} exists`);
   const clean = text.trim().replace(/\s+/g, " ");
   entry.bullets.push({
     id,
@@ -127,7 +185,8 @@ export function addBullet(entryId: string, text: string, tags: string[], impact:
     short: clean.split(" ").slice(0, 15).join(" "),
     tags: tags.map((t) => t.trim().toLowerCase()).filter(Boolean),
     impact,
-    source: "user"
+    source: "user",
+    ...(opts.evidence ? { evidence: opts.evidence } : {})
   });
   saveBank(bank);
   return id;

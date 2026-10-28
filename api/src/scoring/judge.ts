@@ -15,7 +15,7 @@ import { norm } from "./terms.ts";
 // call per requirement, cached by requirement + prompt version + bank hash, so scoring a
 // stored record never calls the model again. Logs and results carry ids, never text.
 
-const JUDGE_MODEL = process.env.JOBOPS_JUDGE_MODEL ?? "qwen2.5:7b";
+export const JUDGE_MODEL = process.env.JOBOPS_JUDGE_MODEL ?? "qwen2.5:7b";
 const MAX_CANDIDATES = 6;
 
 const PROMPT = `You judge whether a candidate's resume bullets show one job requirement.
@@ -136,4 +136,10 @@ export async function judgeRequirements(
     stats.judged++;
   }
   return { verdicts, stats };
+}
+
+// Requirements that still need a judge verdict (no model calls).
+export function needsJudgeCount(db: Db, req: Requirements, bank: Bank, extra: SkillsExtra): number {
+  const verdicts = loadVerdicts(db, req, bank, extra);
+  return needsJudge(req, bank, extra).filter((r) => !verdicts.has(r)).length;
 }

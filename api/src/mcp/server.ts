@@ -108,6 +108,23 @@ server.registerTool(
 );
 
 server.registerTool(
+  "job_from_url",
+  {
+    description: "Add one job by its link and run the rest: fetch it (Greenhouse, Lever, Ashby, Workday, " +
+      "SmartRecruiters by their APIs; any other careers page through the crawler), parse the JD, judge and score, " +
+      "decide, reword on the local model, write the record, and render the PDF. Steps already done are skipped. " +
+      "When a step's model is not running it stops and returns the commands to continue; it never starts models.",
+    inputSchema: {
+      url: z.url().describe("The job's link"),
+      company: z.string().optional().describe("Company name, when the page does not say it well"),
+      force: z.boolean().default(false),
+      render: z.boolean().default(true)
+    }
+  },
+  ({ url, company, force, render }) => reply(() => t.jobAdd(t.db(), url, { company, force, render }))
+);
+
+server.registerTool(
   "tailor_all_dry_run",
   {
     description: "Decision table for every parsed JD (reuse/adapt/not_tailored, band, score, equivalence, " +

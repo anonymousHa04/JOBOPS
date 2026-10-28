@@ -19,7 +19,8 @@ import type { Browser, Page } from "playwright-core";
 
 type Ats = { name: string; slug: string };
 type Job = { title: string; url: string; location: string };
-type Details = { description: string; location: string; posted_at: string };
+// title and company are for a single job added by its link (job add <url>).
+export type Details = { description: string; location: string; posted_at: string; title: string; company: string };
 
 const MAX_HOPS = 2;
 const MAX_JOBS = 500;
@@ -252,13 +253,22 @@ export async function list(start: string): Promise<{ ats?: Ats; jobs?: Job[]; bl
 export async function describe(url: string): Promise<Details | { blocked: string }> {
   if (!(await allowed(url))) return { blocked: "robots.txt disallows " + new URL(url).pathname };
   const fromHtml = (html: string): Details | null => {
+    const { document } = parseHTML(html);
+    const meta = (prop: string) => document.querySelector(`meta[property="${prop}"], meta[name="${prop}"]`)?.getAttribute("content")?.trim() ?? "";
+    const heading = (document.querySelector("h1")?.textContent ?? "").replace(/\s+/g, " ").trim();
+    const title = heading || meta("og:title") || (document.querySelector("title")?.textContent ?? "").trim();
+    const company = meta("og:site_name");
     const ld = jsonLdPostings(html)[0];
     if (ld && typeof ld.description === "string") {
-      return { description: text(ld.description), location: ldLocation(ld), posted_at: iso(ld.datePosted) };
+      const org = ld.hiringOrganization as Record<string, unknown> | undefined;
+      return {
+        description: text(ld.description), location: ldLocation(ld), posted_at: iso(ld.datePosted),
+        title: typeof ld.title === "string" ? ld.title : title,
+        company: typeof org?.name === "string" ? org.name : company
+      };
     }
-    const { document } = parseHTML(html);
     const main = text(new Readability(document as unknown as Document).parse()?.content ?? "");
-    return main.length >= 500 ? { description: main, location: "", posted_at: "" } : null;
+    return main.length >= 500 ? { description: main, location: "", posted_at: "", title, company } : null;
   };
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
@@ -274,7 +284,7 @@ export async function describe(url: string): Promise<Details | { blocked: string
     const { page } = await open(browser);
     const blocked = await load(page, url);
     if (blocked) return { blocked };
-    return fromHtml(await page.content()) ?? { description: "", location: "", posted_at: "" };
+    return fromHtml(await page.content()) ?? { description: "", location: "", posted_at: "", title: "", company: "" };
   } finally {
     await browser.close();
   }

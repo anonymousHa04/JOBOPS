@@ -116,3 +116,16 @@ async function readContent(res: Response): Promise<string> {
   }
   return text;
 }
+
+// Is the server for this model up? For pipelines that stop, rather than fail, when a
+// step's model is not running. Returns the llm.sh role to start.
+export async function modelUp(model: string): Promise<{ up: boolean; role: string }> {
+  const server = SERVERS[model];
+  if (!server) return { up: false, role: "" };
+  try {
+    const r = await fetch(`${server.url}/models`, { signal: AbortSignal.timeout(3000) });
+    return { up: r.ok, role: server.role };
+  } catch {
+    return { up: false, role: server.role };
+  }
+}

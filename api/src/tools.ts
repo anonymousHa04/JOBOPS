@@ -26,12 +26,16 @@ import {
 import type { Ats } from "./profile/bank.ts";
 import { loadRequirements, parseJob } from "./requirements/parse.ts";
 import { riskCheck } from "./scoring/risk.ts";
-import { judgeRequirements, loadVerdicts } from "./scoring/judge.ts";
+import { JUDGE_MODEL, judgeRequirements, loadVerdicts, needsJudgeCount } from "./scoring/judge.ts";
 import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { renderRecord } from "./render/render.ts";
 import { lintRecord } from "./tailor/lint.ts";
+import { fetchJob } from "./jobs/from-url.ts";
+import { createJobRepository } from "./jobs/repository.ts";
+import { modelUp } from "./model/llm.ts";
+import { REWORD_MODEL } from "./tailor/reword.ts";
 
 export function db(): Db {
   const path = process.env.DB_PATH ?? "data/jobops.db";
@@ -248,4 +252,78 @@ export async function render(d: Db, resumeId: string) {
   if (!record) throw new Error(`no record ${resumeId} (hand-edited records are skipped; see tailor --all --dry-run)`);
   if (record.decision === "not_tailored") throw new Error(`record ${resumeId} is not_tailored: ${record.reason}`);
   return { resume_id: resumeId, ...(await renderRecord(record, bank)) };
+}
+
+// `job add <url>`: fetch one job from its link, then parse, judge and score, decide,
+// reword, write the record, and render the PDF. Steps already done are skipped, so the
+// same command continues where it stopped. A step whose model is not running stops the
+// pipeline with the commands to continue; models are never started or stopped here
+// (only one heavy model fits in memory).
+type Step = { step: string; status: "done" | "cached" | "skipped" | "stopped"; detail?: string };
+
+export async function jobAdd(d: Db, url: string, opts: { company?: string; force?: boolean; render?: boolean } = {}) {
+  const steps: Step[] = [];
+  const out = (extra: Record<string, unknown> = {}) => ({ url, steps, ...extra });
+  const stop = (step: string, role: string, why: string) => {
+    steps.push({ step, status: "stopped", detail: why });
+    return out({ next: [`.claude/bin/llm.sh stop all`, `.claude/bin/llm.sh start ${role}`, `node api/src/cli.ts job add "${url}"`] });
+  };
+
+  // 1. Fetch and store (the same link again finds the stored job).
+  let known = new Map<string, string>();
+  try {
+    known = new Map(loadPreferences().companies.include.map((c) => [c.slug.toLowerCase(), c.name]));
+  } catch {
+    // No preferences yet: names come from the board or page.
+  }
+  const input = await fetchJob(url, { company: opts.company, known });
+  const { job, created } = createJobRepository(d).upsert(input);
+  steps.push({ step: "fetch", status: created ? "done" : "cached", detail: `${job.company}: ${job.title}` });
+  const base = { job_id: job.id, company: job.company, title: job.title, location: job.location ?? null };
+
+  // 2. Parse the JD.
+  if (!loadRequirements(d, job.id)) {
+    const model = process.env.JOBOPS_JD_MODEL ?? "qwen2.5:7b";
+    const m = await modelUp(model);
+    if (!m.up) return stop("parse", m.role, `${model} is not running`);
+    await parseJob(d, job.id);
+    steps.push({ step: "parse", status: "done" });
+  } else {
+    steps.push({ step: "parse", status: "cached" });
+  }
+
+  // 3. Judge and score.
+  const bank = requireBank();
+  const extra = loadSkillsExtra();
+  const req = loadRequirements(d, job.id)!;
+  const open = needsJudgeCount(d, req, bank, extra);
+  if (open > 0) {
+    const m = await modelUp(JUDGE_MODEL);
+    if (!m.up) return stop("judge", m.role, `${open} requirements need the judge; ${JUDGE_MODEL} is not running`);
+  }
+  const scored = await score(d, job.id, open > 0);
+  steps.push({ step: "judge", status: open > 0 ? "done" : "cached", detail: `${scored.score} (${scored.band})` });
+  const scoreOut = { score: scored.score, band: scored.band, years: scored.hard, ask_user: scored.ask_user };
+
+  // 4. Decide; reword only for adapt.
+  const plan = tailorAll(d, { jobId: job.id }).rows[0];
+  if (plan.decision === "adapt" && plan.to_reword > 0 && !plan.blocked) {
+    const m = await modelUp(REWORD_MODEL);
+    if (!m.up) return { ...stop("tailor", m.role, `${plan.to_reword} bullets to reword; ${REWORD_MODEL} is not running`), ...base, ...scoreOut, decision: plan.decision };
+  }
+  const t = await tailor(d, job.id, { force: opts.force });
+  if (!("created" in t)) throw new Error("tailor returned a dry run");
+  steps.push({ step: "tailor", status: t.created ? "done" : "cached", detail: `${t.decision}: ${t.reason}` });
+  const result = { ...base, ...scoreOut, decision: t.decision, reason: t.reason, resume_id: t.resume_id,
+    record: t.path, questions: t.questions, lint: t.lint, error: t.error };
+  if (t.decision === "blocked") return out({ ...result, next: ["answer the questions (or add --force), then run the same command again"] });
+
+  // 5. PDF, for a tailored or reused resume.
+  if (opts.render === false || !t.resume_id || t.decision === "not_tailored") {
+    steps.push({ step: "render", status: "skipped" });
+    return out(result);
+  }
+  const pdf = await render(d, t.resume_id);
+  steps.push({ step: "render", status: pdf.ok ? "done" : "stopped", detail: pdf.ok ? undefined : `parse-back failed: ${pdf.issues.map((i) => i.code).join(", ")}` });
+  return out({ ...result, pdf: pdf.path, pdf_issues: pdf.issues });
 }

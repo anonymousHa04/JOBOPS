@@ -3,11 +3,13 @@ import type { FastifyInstance } from "fastify";
 import { JobInputSchema, JobListQuerySchema } from "./jobs/schema.ts";
 import type { Db } from "./db.ts";
 import { createJobRepository } from "./jobs/repository.ts";
+import { extensionRoutes } from "./extension/routes.ts";
 
 export function buildApp(opts: { db: Db; logger?: boolean }): FastifyInstance {
     const app = Fastify({ logger: opts.logger ?? false });
 
     const jobs = createJobRepository(opts.db);
+    extensionRoutes(app, opts.db);
 
     app.post<{ Body: unknown }>(`/jobs`, async (request, reply) => {
         const result = JobInputSchema.safeParse(request.body);

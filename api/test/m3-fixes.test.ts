@@ -1,0 +1,330 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Bank, ResumeRecord, SkillsExtra } from "../src/profile/schema.ts";
+import type { Requirements } from "../src/requirements/schema.ts";
+import { addRole, excludeTitleWords, loadBank, markBreak, saveBank, setCompany } from "../src/profile/bank.ts";
+import { degreeAsked, degreeHave, scoreRequirements, totalYears } from "../src/scoring/score.ts";
+import { tenure } from "../src/tailor/lint.ts";
+import { idealContent } from "../src/tailor/ideal.ts";
+import { renderRecord, resumeData } from "../src/render/render.ts";
+import { detectBoard, jobLinks, jsonLdPostings, robotsAllows } from "../src/careers/crawl.ts";
+import { boardOf, fetchJob, looksLikeJd } from "../src/jobs/from-url.ts";
+import { openDb } from "../src/db.ts";
+import { jobAdd } from "../src/tools.ts";
+
+// Career breaks, degree and soft-skill must-haves, synonym-aware skill questions,
+// preferences commands, the careers crawler's page reading, and `job add <url>`.
+// Fake resume and saved responses only: no real profile, no network, no browser.
+process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-fixes-"));
+const tempProfile = () => (process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-fixes-")));
+
+const bullet = (id: string, text: string, tags: string[]) =>
+  ({ id, text, short: text, tags, impact: "medium" as const, source: "resume" as const });
+
+const bank: Bank = {
+  basics: { name: "Test Person", email: "test@example.com", phone: "0", location: "Bangalore", links: [] },
+  summaries: [{ id: "s1", variant: "backend", text: "Backend engineer." }],
+  roles: [
+    {
+      id: "cur", title: "Senior Engineer", company: "Acme", location: "Bangalore", dates: "Mar 2025 - Oct 2026",
+      bullets: [
+        bullet("cur-1", "Moved 20 services to Kubernetes", ["kubernetes", "backend"]),
+        bullet("cur-2", "Presented the migration plan to four teams", ["migration", "planning"]),
+        bullet("cur-3", "Built AI agents that check designs", ["ai agents", "automation"])
+      ]
+    },
+    { id: "brk", title: "Career break (family)", dates: "Sep 2024 - Feb 2025", kind: "break", bullets: [] },
+    {
+      id: "old", title: "Engineer", company: "OldCo", location: "Pune", dates: "Jan 2020 - Aug 2024",
+      bullets: [bullet("old-1", "Wrote the TypeScript billing service", ["typescript", "billing"])]
+    }
+  ],
+  projects: [],
+  education: [{ id: "edu", degree: "B.Tech in Mechanical Engineering", school: "Some University", dates: "2015 - 2019", details: [] }],
+  skills: { languages: ["typescript"], frameworks: [], tools: ["kubernetes"], domains: ["AI Agents"] },
+  approved: true
+};
+const extra: SkillsExtra = { skills: [], dismissed: [], learnable: [] };
+const now = new Date("2026-10-28");
+const req = (over: Partial<Requirements>): Requirements =>
+  ({ role: "Backend Engineer", seniority: "senior", must_have: [], nice_to_have: [], keywords: [], themes: [], summary_variant: "backend", ...over });
+
+// --- Career breaks ---
+
+test("career break: adds no years and no short tenure, but leaves no gap", () => {
+  // cur: 19 months, old: 55 months; the 5-month break is not counted.
+  assert.equal(totalYears(bank, now), Math.round((74 / 12) * 10) / 10);
+  const job = structuredClone(bank);
+  job.roles[1].kind = "job";
+  assert.ok(totalYears(job, now) > totalYears(bank, now));
+  const codes = tenure(bank, now).map((f) => f.code);
+  assert.ok(!codes.includes("short_tenure"), "a break is not a short job");
+  assert.ok(!codes.includes("gap"), "the break covers its months");
+  const noBreak = structuredClone(bank);
+  noBreak.roles.splice(1, 1);
+  assert.ok(tenure(noBreak, now).some((f) => f.code === "gap"), "without the break the months are a gap");
+});
+
+test("career break: a role titled like one is marked on save", () => {
+  tempProfile();
+  const b = structuredClone(bank);
+  b.roles[1] = { id: "brk", title: "Sabbatical", dates: "Sep 2024 - Feb 2025", bullets: [] };
+  saveBank(b);
+  assert.equal(loadBank()!.roles[1].kind, "break");
+});
+
+test("bank mark-break: sets the title, drops company and location, refuses a role with bullets", () => {
+  tempProfile();
+  const b = structuredClone(bank);
+  b.roles[1] = { id: "brk", title: "Gap", company: "Home", location: "Pune", dates: "Sep 2024 - Feb 2025", bullets: [] };
+  saveBank(b);
+  assert.deepEqual(markBreak("brk", "Career break (health)"), { id: "brk", dates: "Sep 2024 - Feb 2025" });
+  const role = loadBank()!.roles[1];
+  assert.deepEqual([role.kind, role.title, role.company, role.location], ["break", "Career break (health)", undefined, undefined]);
+  assert.throws(() => markBreak("cur"), /has 3 bullets/);
+});
+
+const breakRecord = () => ({ resume_id: "fake", content: { summary_variant: "backend", summary_text: "Backend engineer.", skills: ["TypeScript", "Kubernetes"],
+  bullets: [{ id: "cur-1", entry_id: "cur", text: "Moved 20 services to Kubernetes" }, { id: "old-1", entry_id: "old", text: "Wrote the TypeScript billing service" }] } }) as unknown as ResumeRecord;
+
+test("render data: a career break appears without bullets, in its place, on two lines", () => {
+  const data = resumeData(breakRecord(), bank);
+  assert.deepEqual(data.experience.map((e) => [e.id, e.bullets.length]), [["cur", 1], ["brk", 0], ["old", 1]]);
+  assert.deepEqual([data.experience[1].title, data.experience[1].company], ["Career break", "Family"], "the reason is the second line");
+});
+
+// Third parse-back check (with pdftotext and pdf.js in render): OpenResume's resume
+// parser (AGPL-3.0), run from its local copy in .scout/openresume-runner, never part of
+// JobOps. Its phone and location patterns are US-only ("(xxx) xxx-xxxx", "City, ST"), so
+// those two fields are not compared.
+const OPENRESUME = join(import.meta.dirname, "..", "..", ".scout", "openresume-runner");
+const hasOpenResume = existsSync(join(OPENRESUME, "node_modules", ".bin", "tsx")) && ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
+
+test("OpenResume reads every entry back: titles, companies, dates, bullets, education, and the career break", { skip: !hasOpenResume && "OpenResume runner, typst, or pdftotext missing" }, async () => {
+  tempProfile();
+  const b = structuredClone(bank);
+  b.basics = { ...b.basics, email: "test.person@example.com", links: ["https://github.com/testperson"] };
+  const record = breakRecord();
+  const r = await renderRecord(record, b);
+  assert.ok(r.ok && r.path, JSON.stringify(r.issues));
+  const run = spawnSync(join(OPENRESUME, "node_modules", ".bin", "tsx"), ["parse.ts", r.path!], { cwd: OPENRESUME, encoding: "utf8" });
+  const json = run.stdout.split("\n").filter((l) => l.startsWith("{")).at(-1); // pdf.js prints warnings first
+  assert.ok(json, run.stderr);
+  const parsed = JSON.parse(json!) as {
+    profile: Record<string, string>;
+    workExperiences: { company: string; jobTitle: string; date: string; descriptions: string[] }[];
+    educations: { school: string; degree: string; date: string }[];
+    skills: { descriptions: string[] };
+  };
+  assert.deepEqual([parsed.profile.name, parsed.profile.email, parsed.profile.url, parsed.profile.summary],
+    ["Test Person", "test.person@example.com", "github.com/testperson", "Backend engineer."]);
+  assert.deepEqual(parsed.workExperiences.map((w) => [w.jobTitle, w.company, w.date, w.descriptions]), [
+    ["Senior Engineer", "Acme", "Mar 2025 - Oct 2026", ["Moved 20 services to Kubernetes"]],
+    ["", "Career break", "Sep 2024 - Feb 2025", []],
+    ["Engineer", "OldCo", "Jan 2020 - Aug 2024", ["Wrote the TypeScript billing service"]]
+  ]);
+  assert.deepEqual(parsed.educations.map((e) => [e.school, e.degree, e.date]), [["Some University", "B.Tech in Mechanical Engineering", "2015 - 2019"]]);
+  assert.deepEqual(parsed.skills.descriptions, ["TypeScript, Kubernetes"]);
+});
+
+// --- Degrees ---
+
+test("degree: checked against education; 'or equivalent experience' passes on years", () => {
+  assert.equal(degreeAsked("Bachelor’s or Master’s degree in CS"), 1);
+  assert.equal(degreeAsked("Master's degree in CS"), 2);
+  assert.equal(degreeAsked("PhD in Machine Learning"), 3);
+  assert.equal(degreeAsked("Kubernetes"), 0);
+  assert.equal(degreeHave(bank), 1); // B.Tech
+  const items = (must: string[], b = bank) => scoreRequirements(req({ must_have: must }), b, extra).items;
+  const [bachelor, master, equivalent] = items(["Bachelor's degree in Computer Science", "Master's degree required", "Master's degree in CS or equivalent experience"]);
+  assert.deepEqual([bachelor.label, bachelor.source], ["supported", "education"]);
+  assert.equal(master.label, "not_demonstrated");
+  assert.equal(equivalent.label, "supported", "6 years count as the equivalent");
+  const noDegree = { ...structuredClone(bank), education: [] };
+  assert.equal(items(["Bachelor's degree or equivalent experience"], noDegree)[0].label, "supported");
+  const r = scoreRequirements(req({ must_have: ["Master's degree required"] }), bank, extra);
+  assert.ok(!r.ask_user.some((q) => /degree/.test(q.skill)), "a degree is never a skill question");
+});
+
+// --- Soft skills ---
+
+test("soft skill must-have: scored as a theme, never caps the score, never asked", () => {
+  const r = scoreRequirements(req({ must_have: ["Kubernetes", "Excellent communication skills", "Experience in fast-paced agile environments"] }), bank, extra);
+  const soft = r.items.filter((i) => i.soft);
+  assert.deepEqual(soft.map((i) => i.kind), ["theme", "theme"]);
+  assert.equal(r.missing_must, 0);
+  assert.equal(r.cap, null);
+  assert.ok(!r.ask_user.some((q) => /communication|agile/.test(q.skill)));
+});
+
+test("soft skill: bullets that show it are partial evidence, and tailoring picks one", () => {
+  const r = scoreRequirements(req({ must_have: ["Excellent communication skills"] }), bank, extra);
+  const comm = r.items.find((i) => i.soft)!;
+  assert.deepEqual([comm.label, comm.bullet_ids.sort()], ["partial", ["cur-2", "old-1"]]); // "Presented", "Wrote"
+  const ideal = idealContent(req({ must_have: ["Kubernetes", "Excellent communication skills"] }), bank, extra,
+    { bullets_per_role: 1, bullets_total: 2, max_words: 25 });
+  assert.ok(ideal.bullets.some((b) => b.id === "cur-2"), "the communication bullet is chosen");
+});
+
+// --- Skill questions ---
+
+test("skill questions: a missed literal keyword the bank has under a synonym is not asked", () => {
+  const r = scoreRequirements(req({ keywords: ["Agentic AI", "Kafka"] }), bank, extra);
+  const kw = r.items.filter((i) => i.kind === "keyword");
+  assert.deepEqual(kw.map((i) => i.label), ["not_demonstrated", "not_demonstrated"], "keywords stay literal");
+  const asked = r.ask_user.map((q) => q.skill);
+  assert.ok(!asked.includes("agents"), "Agentic AI = AI Agents, which the bank lists");
+  assert.ok(asked.includes("kafka"));
+});
+
+// --- Preferences commands ---
+
+const PREFS = `# my preferences
+compensation: { currency: INR, unit: year, min: 1, target: 2, keep_if_unlisted: true }
+roles:
+  - title: SDE 3   # main target
+    aliases: [SDE III]
+seniority:
+  include: [senior]
+  exclude: [intern] # never
+location: { cities: [Bengaluru], remote: true, hybrid: true, onsite: true }
+visa_sponsorship_needed: false
+companies:
+  include:
+    # fintech
+    - { name: Razorpay, slug: razorpay, ats: auto }
+    - { name: Swiggy, slug: swiggy, ats: auto } # food
+  exclude: []
+tailoring: { bullets_per_role: 4, bullets_total: 12, max_words: 25 }
+`;
+
+test("prefs: roles, title exclusions, and companies are edited in place; comments stay", () => {
+  tempProfile();
+  const path = join(process.env.JOBOPS_PROFILE_DIR!, "preferences.yaml");
+  writeFileSync(path, PREFS);
+  assert.deepEqual(addRole("SDE 3", ["SDE III", "SDE-3"]), ["SDE-3"], "known aliases are skipped");
+  assert.deepEqual(addRole("Senior Software Engineer", []), ["Senior Software Engineer"]);
+  assert.deepEqual(excludeTitleWords(["Staff", "intern", "staff"]), ["staff"]);
+  assert.deepEqual(setCompany("razorpay", "razorpaysoftwareprivatelimited", "greenhouse"),
+    ["Razorpay: auto/razorpay -> greenhouse/razorpaysoftwareprivatelimited"]);
+  assert.deepEqual(setCompany("Razorpay", "razorpaysoftwareprivatelimited", "greenhouse"), [], "no change");
+  assert.deepEqual(setCompany("Atlassian", "https://example.com/careers", "careers"), ["Atlassian: added careers/https://example.com/careers"]);
+  const text = readFileSync(path, "utf8");
+  for (const c of ["# my preferences", "# main target", "# never", "# fintech", "# food"]) assert.ok(text.includes(c), `keeps ${c}`);
+  assert.match(text, /slug: razorpaysoftwareprivatelimited/);
+});
+
+// --- Careers crawler: reading pages ---
+
+test("crawler: the board behind a careers page, from its URLs", () => {
+  assert.deepEqual(detectBoard(["https://boards.greenhouse.io/embed/job_board?for=acme", "https://x.com/a.js"]), { name: "greenhouse", slug: "acme" });
+  assert.deepEqual(detectBoard(["https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/External/jobs"]), { name: "workday", slug: "acme.wd3/External" });
+  assert.deepEqual(detectBoard(["https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/x"]), { name: "workday", slug: "acme.wd5/Careers" });
+  assert.deepEqual(detectBoard(["https://jobs.lever.co/acme/123", "https://jobs.lever.co/acme"]), { name: "lever", slug: "acme" });
+  assert.deepEqual(detectBoard(["https://careers.smartrecruiters.com/AcmeLtd"]), { name: "smartrecruiters", slug: "AcmeLtd" });
+  assert.equal(detectBoard(["https://acme.com/careers"]), null);
+});
+
+test("crawler: robots.txt rules for every crawler, longest rule wins", () => {
+  const robots = "User-agent: Googlebot\nDisallow: /\n\nUser-agent: *\nDisallow: /company/jobs/\nAllow: /company/jobs/public/\n";
+  assert.equal(robotsAllows(robots, "/careers"), true);
+  assert.equal(robotsAllows(robots, "/company/jobs/123"), false);
+  assert.equal(robotsAllows(robots, "/company/jobs/public/9"), true);
+  assert.equal(robotsAllows("", "/anything"), true);
+});
+
+test("crawler: job links are the biggest same-pattern group that reads like job titles", () => {
+  const here = "https://acme.com/careers/all-jobs";
+  const links = [
+    { text: "Forward Deployed Engineering", href: "https://acme.com/enterprise/fde" },
+    { text: "Developer Support", href: "https://developer.acme.com/" },
+    { text: "Skip to content", href: "https://acme.com/careers/all-jobs#content" },
+    { text: "Senior Data Engineer", href: "https://acme.com/careers/details/27575", row: "Bengaluru or Remote" },
+    { text: "Senior Software Engineer", href: "https://acme.com/careers/details/27576", row: "Sydney" },
+    { text: "Engineering", href: "https://acme.com/careers/details/teams" }
+  ];
+  assert.deepEqual(jobLinks(links, here), [
+    { title: "Senior Data Engineer", url: "https://acme.com/careers/details/27575", location: "Bengaluru or Remote" },
+    { title: "Senior Software Engineer", url: "https://acme.com/careers/details/27576", location: "Sydney" }
+  ]);
+  assert.deepEqual(jobLinks(links.slice(0, 3), here), [], "menus and promos are not jobs");
+});
+
+test("crawler: JobPosting JSON-LD, in a graph or a list; malformed blocks skipped", () => {
+  const html = `<script type="application/ld+json">{"@graph":[{"@type":"Organization"},{"@type":"JobPosting","title":"SDE 3"}]}</script>
+    <script type="application/ld+json">{bad json</script>
+    <script type="application/ld+json">[{"@type":["JobPosting"],"title":"SDE 2"}]</script>`;
+  assert.deepEqual(jsonLdPostings(html).map((p) => p.title), ["SDE 3", "SDE 2"]);
+});
+
+// --- job add <url> ---
+
+const GH_JOB = { title: "Senior Backend Engineer", company_name: "Acme Inc", content: "&lt;p&gt;Responsibilities: build APIs.&lt;/p&gt;&lt;p&gt;Requirements: 5+ years of experience.&lt;/p&gt;",
+  location: { name: "Bengaluru" }, updated_at: "2026-10-01T10:00:00Z" };
+
+// Stubs fetch with saved responses by URL prefix; anything else is a connection error.
+function stubFetch(routes: Record<string, unknown>): () => void {
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const hit = Object.entries(routes).find(([prefix]) => url.startsWith(prefix));
+    if (!hit) throw new TypeError(`fetch failed: ${url}`);
+    return new Response(JSON.stringify(hit[1]), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  return () => { globalThis.fetch = real; };
+}
+
+test("job link: each board is read through its API, and an embedded Greenhouse job through the company list", async () => {
+  assert.equal(boardOf("https://job-boards.greenhouse.io/acme/jobs/123"), "greenhouse");
+  assert.equal(boardOf("https://acme.com/jobs?gh_jid=123"), "greenhouse");
+  assert.equal(boardOf("https://jobs.lever.co/acme/0f4e2c3a-1b2c-4d5e-8f90-123456789abc"), "lever");
+  assert.equal(boardOf("https://acme.wd3.myworkdayjobs.com/External/job/Pune/SDE_JR1"), "workday");
+  assert.equal(boardOf("https://jobs.smartrecruiters.com/acme/6000000001"), "smartrecruiters");
+  assert.equal(boardOf("https://acme.com/careers/details/1"), "careers");
+
+  const restore = stubFetch({
+    "https://boards-api.greenhouse.io/v1/boards/acmeinc/jobs/123": GH_JOB,
+    "https://acme.wd3.myworkdayjobs.com/wday/cxs/acme/External/job/Pune/SDE_JR1":
+      { jobPostingInfo: { title: "SDE 3", jobDescription: "<p>Responsibilities</p><p>Requirements</p>", location: "Pune", startDate: "2026-10-20" } },
+    "https://api.smartrecruiters.com/v1/companies/acme/postings/6000000001":
+      { name: "SDE III", company: { name: "ACME" }, location: { city: "Bengaluru", country: "in" },
+        jobAd: { sections: { jobDescription: { title: "Job", text: "<p>Build things</p>" } } } }
+  });
+  try {
+    const gh = await fetchJob("https://acme.com/jobs?gh_jid=123", { known: new Map([["acmeinc", "Acme"]]) });
+    assert.deepEqual([gh.title, gh.company, gh.location, gh.source_name], ["Senior Backend Engineer", "Acme", "Bengaluru", "greenhouse"]);
+    assert.match(gh.description, /Responsibilities: build APIs\.\n+Requirements/);
+    const wd = await fetchJob("https://acme.wd3.myworkdayjobs.com/External/job/Pune/SDE_JR1");
+    assert.deepEqual([wd.title, wd.location, wd.posted_at, wd.source_name], ["SDE 3", "Pune", "2026-10-20T00:00:00Z", "workday"]);
+    const sr = await fetchJob("https://jobs.smartrecruiters.com/acme/6000000001", { company: "Acme Corp" });
+    assert.deepEqual([sr.title, sr.company, sr.location], ["SDE III", "Acme Corp", "Bengaluru, IN"]);
+  } finally {
+    restore();
+  }
+});
+
+test("job link: a list or landing page is not a job description", () => {
+  assert.equal(looksLikeJd("Life at Acme. Our values. Benefits. Join us!"), false);
+  assert.equal(looksLikeJd("About the role: you will build APIs. Requirements: 5+ years of experience with Go."), true);
+});
+
+test("job add: stops with the commands to continue when the parse model is down; the job is kept", async () => {
+  tempProfile();
+  const db = openDb(":memory:");
+  const restore = stubFetch({ "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123": GH_JOB });
+  try {
+    const url = "https://job-boards.greenhouse.io/acme/jobs/123";
+    const first = await jobAdd(db, url) as { steps: { step: string; status: string }[]; next?: string[] };
+    assert.deepEqual(first.steps.map((s) => `${s.step}:${s.status}`), ["fetch:done", "parse:stopped"]);
+    assert.deepEqual(first.next, [".claude/bin/llm.sh stop all", ".claude/bin/llm.sh start general7", `node api/src/cli.ts job add "${url}"`]);
+    const again = await jobAdd(db, url) as { steps: { step: string; status: string }[] };
+    assert.deepEqual(again.steps.map((s) => `${s.step}:${s.status}`), ["fetch:cached", "parse:stopped"], "the stored job is found again");
+    assert.equal((db.prepare("SELECT COUNT(*) AS n FROM jobs").get() as { n: number }).n, 1);
+  } finally {
+    restore();
+  }
+});

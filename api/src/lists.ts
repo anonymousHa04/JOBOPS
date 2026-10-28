@@ -105,3 +105,38 @@ export function softSkills(): SoftSkills {
     };
   });
 }
+
+// Terms that are not skills (generic-terms.yaml), normalized like skill keys' words.
+export function genericTerms(): Set<string> {
+  const files = [join(CONFIG, "generic-terms.yaml"), join(profileDir(), "generic-terms.yaml")];
+  return cached(files, () => new Set(files.flatMap((f) => read(f, z.object({ terms: z.array(z.coerce.string()) }).strict())?.terms ?? [])
+    .map((t) => t.trim().toLowerCase().replace(/\s+/g, " "))));
+}
+
+// A JD term to ask about as a skill: not generic, not a soft skill.
+export function askable(term: string): boolean {
+  const t = term.trim().toLowerCase().replace(/\s+/g, " ");
+  return !genericTerms().has(t) && !softSkills().pattern.test(t);
+}
+
+const TellsSchema = z.object({
+  words: z.array(z.coerce.string()).default([]),
+  phrases: z.array(z.coerce.string()).default([]),
+  riders: z.array(z.coerce.string()).default([])
+}).strict();
+
+// AI-sounding wording (ai-tells.yaml); the user's lists are added to the defaults.
+export function aiTells(): { words: RegExp; phrases: RegExp; riders: RegExp; list: string[] } {
+  const files = [join(CONFIG, "ai-tells.yaml"), join(profileDir(), "ai-tells.yaml")];
+  return cached(files, () => {
+    const lists = files.map((f) => read(f, TellsSchema) ?? { words: [], phrases: [], riders: [] });
+    const all = (k: "words" | "phrases" | "riders") => lists.flatMap((l) => l[k]);
+    const alt = (xs: string[]) => xs.map((p) => p.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean).join("|") || "$^";
+    return {
+      words: new RegExp(`(^|[^a-z0-9-])(${alt(all("words"))})(?=$|[^a-z0-9-])`, "g"),
+      phrases: new RegExp(`(^|[^a-z0-9])(${alt(all("phrases"))})(?=$|[^a-z0-9])`, "g"),
+      riders: new RegExp(`,\\s*(${alt(all("riders"))})\\b`, "g"),
+      list: [...all("words"), ...all("phrases")]
+    };
+  });
+}

@@ -117,7 +117,7 @@ milestone_3:
     state: done
     what: "api/src/tailor/ideal.ts (ideal content: must-have coverage first, then themes, impact, recency, id; budgets; every role >= 1 bullet; <= 2 metric-led per role; starting record's wording reused; reword marks for JD keywords missing literally, alias-only flagged; skills JD-first in JD spelling, nothing added; summary variant as written), equivalence.ts (spec 5 formula), decide.ts (pickStart on cached verdicts; years gate / poor bands -> not_tailored; reuse at >= 95; flags for unsupported must-haves and risks; risk gate blocks adapt, never reuse)"
     tests: "api/test/m3-engine.test.ts, 7 tests from engine-algorithm 8 plus invariants, fake resume only; total 29 tests pass"
-    open: "spec 5 formula (union + 2, with a skills unit) vs its worked examples (union + 1): implemented as written; decisions identical, numbers differ slightly (one swap 88.2% vs 87.5% at 14 bullets) - user to confirm"
+    decided: "spec 5 formula as written (union + 2, with a skills unit), not its worked examples (union + 1); confirmed by the user 2026-10-28"
   - id: m3-engine-step-3-records
     state: done
     what: "api/src/tailor/records.ts: one YAML per JD in profile/records/ (id = jd id + content hash; original resume is record 'original'), written with wx so never overwritten; SQLite resume_records is an index rebuilt from YAML by loadRecords; content hash (sorted keys, reword marks excluded), bank hash, engine version (config values + judge prompt + logic version); hand-edited records reported and left out, stale bank/engine reported. ResumeRecordSchema replaced (decision original/reuse/adapt/not_tailored, flags, review_findings ids+statuses, hashes); old empty resume_records table dropped on open"

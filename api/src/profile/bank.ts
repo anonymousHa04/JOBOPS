@@ -5,6 +5,7 @@ import type { Document } from "yaml";
 import { generate } from "../model/llm.ts";
 import { hasTerm } from "../scoring/terms.ts";
 import { SKILL_GROUPS, skillGroups, skillKey } from "../lists.ts";
+import { aiTellsIn, cleanText, hiddenChars } from "../tailor/writing.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
 import { z } from "zod";
 import { BankSchema, BulletSchema, EntrySchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
@@ -88,9 +89,12 @@ export function markBreak(entryId: string, title?: string): { id: string; dates:
   return { id: role.id, dates: role.dates };
 }
 
-// Every save marks career breaks, files skills in the right group, then removes repeats
+// Every save cleans hidden characters, marks career breaks, files skills in the right group, then removes repeats
 // (the model can misfile and repeat list items).
 export function saveBank(b: Bank): void {
+  // Hidden characters and look-alike spaces never belong in resume text.
+  for (const e of [...b.roles, ...b.projects]) for (const bl of e.bullets) { bl.text = cleanText(bl.text); bl.short = cleanText(bl.short); }
+  for (const s of b.summaries) s.text = cleanText(s.text);
   markBreaks(b);
   regroupSkills(b);
   dedupeSkills(b);
@@ -116,16 +120,15 @@ export function loadPreferences(): Preferences {
   return PreferencesSchema.parse(parse(readFileSync(preferencesPath(), "utf8")));
 }
 
-// Edits preferences.yaml in place, keeping its comments, and returns only what it added
-// (never the file's content). The result must still match the schema.
+// Edits preferences.yaml in place: each edit changes only the nodes it touches, so every
+// comment stays. Returns only what changed (never the file's content). The result must
+// still match the schema.
 function editPreferences(edit: (p: Preferences, doc: Document) => string[]): string[] {
   if (!existsSync(preferencesPath())) throw new Error(`no preferences: ${preferencesPath()}`);
   const doc = parseDocument(readFileSync(preferencesPath(), "utf8"));
   const prefs = PreferencesSchema.parse(doc.toJS());
   const added = edit(prefs, doc);
   if (added.length) {
-    doc.set("roles", prefs.roles);
-    doc.setIn(["seniority", "exclude"], prefs.seniority.exclude);
     PreferencesSchema.parse(doc.toJS());
     writeFileSync(preferencesPath(), doc.toString());
   }
@@ -154,26 +157,41 @@ export function setCompany(name: string, slug: string, ats: Ats): string[] {
   });
 }
 
+// The list node at a path, for in-place edits.
+function seqAt(doc: Document, path: string[]) {
+  const node = doc.getIn(path);
+  if (!isSeq(node)) throw new Error(`preferences: ${path.join(".")} is not a list`);
+  return node;
+}
+
 // A target role and its aliases ("SDE 3", "SDE III"); an alias already present is skipped.
 export function addRole(title: string, aliases: string[]): string[] {
-  return editPreferences((p) => {
+  return editPreferences((p, doc) => {
     const lower = (x: string) => x.trim().toLowerCase();
     const known = new Set(p.roles.flatMap((r) => [r.title, ...r.aliases]).map(lower));
-    const names = [title, ...aliases].map((x) => x.trim()).filter((x) => x && !known.has(lower(x)));
+    const names = [...new Set([title, ...aliases].map((x) => x.trim()))].filter((x) => x && !known.has(lower(x)));
     if (!names.length) return [];
-    const role = p.roles.find((r) => lower(r.title) === lower(title));
-    if (role) role.aliases.push(...names);
-    else p.roles.push({ title: names[0], aliases: names.slice(1) });
+    const roles = seqAt(doc, ["roles"]);
+    const i = p.roles.findIndex((r) => lower(r.title) === lower(title));
+    const item = i >= 0 ? roles.items[i] : null;
+    if (isMap(item)) {
+      const list = item.get("aliases");
+      if (isSeq(list)) names.forEach((n) => list.add(doc.createNode(n)));
+      else item.set("aliases", doc.createNode([...p.roles[i].aliases, ...names]));
+    } else {
+      roles.add(doc.createNode({ title: names[0], aliases: names.slice(1) }));
+    }
     return names;
   });
 }
 
 // Title words that drop a posting ("staff", "solutions architect").
 export function excludeTitleWords(words: string[]): string[] {
-  return editPreferences((p) => {
+  return editPreferences((p, doc) => {
     const known = new Set(p.seniority.exclude.map((w) => w.trim().toLowerCase()));
     const add = [...new Set(words.map((w) => w.trim().toLowerCase()))].filter((w) => w && !known.has(w));
-    p.seniority.exclude.push(...add);
+    const list = seqAt(doc, ["seniority", "exclude"]);
+    add.forEach((w) => list.add(doc.createNode(w)));
     return add;
   });
 }
@@ -238,6 +256,10 @@ export function checkBank(b: Bank, resumeText: string): string[] {
         if (!source.includes(n)) issues.push(`${bullet.id}: number ${n} not in ${bullet.source === "user" ? "evidence" : "resume"}`);
       }
       if (bullet.short.split(/\s+/).filter(Boolean).length > 15) issues.push(`${bullet.id}: short over 15 words`);
+      const hidden = hiddenChars(bullet.text);
+      if (hidden.length) issues.push(`${bullet.id}: hidden characters ${hidden.join(",")} (removed on the next save)`);
+      const tells = aiTellsIn(bullet.text);
+      if (tells.length) issues.push(`${bullet.id}: reads AI-written: ${tells.join(", ")}`);
       if (bullet.tags.length < 5 || bullet.tags.length > 8) issues.push(`${bullet.id}: ${bullet.tags.length} tags (want 5-8)`);
     }
   }

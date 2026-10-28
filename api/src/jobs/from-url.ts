@@ -122,7 +122,7 @@ async function embeddedGreenhouse(url: string, slugs: string[]): Promise<{ job: 
 
 // Words a job description has and a landing or list page does not.
 const JD_SIGNALS = /\b(responsibilit|requirement|qualification|what you('|’)ll do|you will|about the role|about you|experience (with|in)|years of experience|must have|nice to have|we('|’)re looking for)/gi;
-const looksLikeJd = (t: string) => new Set((t.match(JD_SIGNALS) ?? []).map((m) => m.toLowerCase().slice(0, 12))).size >= 2;
+export const looksLikeJd = (t: string) => new Set((t.match(JD_SIGNALS) ?? []).map((m) => m.toLowerCase().slice(0, 12))).size >= 2;
 
 // Fetches one job. `company` overrides the name read from the board or page; `known`
 // maps board slugs to the names in the user's company list.

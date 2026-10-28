@@ -205,13 +205,14 @@ var (
 	tagRe   = regexp.MustCompile(`<[^>]*>`)
 	spaceRe = regexp.MustCompile(`[ \t]+`)
 	blankRe = regexp.MustCompile(`\n\s*\n+`)
+	edgeRe  = regexp.MustCompile(` *\n *`)
 )
 
 // StripHTML turns HTML into plain text with paragraph breaks kept.
 func StripHTML(s string) string {
 	s = strings.NewReplacer("</p>", "\n\n", "<br>", "\n", "<br/>", "\n", "<br />", "\n", "</li>", "\n").Replace(s)
 	s = html.UnescapeString(tagRe.ReplaceAllString(s, " "))
-	s = spaceRe.ReplaceAllString(s, " ")
+	s = edgeRe.ReplaceAllString(spaceRe.ReplaceAllString(s, " "), "\n")
 	return strings.TrimSpace(blankRe.ReplaceAllString(s, "\n\n"))
 }
 

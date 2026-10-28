@@ -17,7 +17,7 @@ import {
   TAILORED_BANDS
 } from "./config.ts";
 import type { Band, Part } from "./config.ts";
-import { softSkills } from "../lists.ts";
+import { askable, softSkills } from "../lists.ts";
 import { hasTerm, norm, terms } from "./terms.ts";
 
 // Scoring per the m3-notes skill (engine-algorithm.md §2-3): an inverted index finds
@@ -342,8 +342,9 @@ export function scoreRequirements(
   const skills = items
     .filter((i) => (i.label === "unknown" || i.label === "not_demonstrated") && !["years", "education", "user"].includes(i.source))
     .filter((i) => !(i.kind === "keyword" && known(i.requirement)))
-    .filter((i) => looksLikeSkill(i.requirement) && !soft.pattern.test(i.requirement))
+    .filter((i) => looksLikeSkill(i.requirement) && askable(i.requirement))
     .map((i) => norm(i.requirement))
+    .filter((r) => askable(r))
     .filter((r) => !dontHave.has(r) && !answered.has(r));
   const ask_user = [...new Set(skills)].sort().map((skill) => ({
     skill,

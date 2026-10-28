@@ -1,5 +1,6 @@
 import type { Bank, SkillsExtra } from "../profile/schema.ts";
 import type { Requirements } from "../requirements/schema.ts";
+import { askable } from "../lists.ts";
 import { allBullets, scoreRequirements, totalYears, yearsAsked } from "./score.ts";
 import type { Verdicts } from "./score.ts";
 import { norm } from "./terms.ts";
@@ -81,8 +82,9 @@ export function riskCheck(
   if (score.coverage.keyword < 0.6) {
     const missing = score.items
       .filter((i) => i.kind === "keyword" && i.label !== "supported" && yearsAsked(i.requirement) === 0)
+      .filter((i) => askable(i.requirement)) // not generic words or soft skills
       .map((i) => i.requirement);
-    risks.push({
+    if (missing.length) risks.push({
       id: "keywords",
       kind: "keywords",
       detail: `keyword coverage ${Math.round(score.coverage.keyword * 100)}%`,

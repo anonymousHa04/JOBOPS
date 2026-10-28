@@ -1,13 +1,14 @@
 import type { Bank } from "../profile/schema.ts";
 import { norm, terms } from "../scoring/terms.ts";
 import { metricLed } from "./ideal.ts";
+import { aiTellsIn, cleanText } from "./writing.ts";
 
 // Rewrite guard (engine-algorithm.md §6): a reworded bullet may only say what its source
 // says. Every check is deterministic; failures are codes, and only codes are logged.
 
 export type GuardCode =
   | "number_added" | "term_added" | "scope_raised" | "scope_phrase_added" | "too_long"
-  | "number_led" | "fixed_field_changed" | "no_output";
+  | "number_led" | "fixed_field_changed" | "no_output" | "ai_tell_added";
 
 // Scope ladder, low -> high (SKILL.md); stems match verb forms (lead/led/leading).
 const LADDER = [
@@ -46,6 +47,9 @@ export function checkRewrite(
   if (rewrite.trim().split(/\s+/).length > opts.maxWords) codes.push("too_long");
   // Metric restraint: never restructure a bullet to lead with a number.
   if (metricLed(rewrite) && !metricLed(source)) codes.push("number_led");
+  // AI-sounding wording (config/ai-tells.yaml) the source did not have.
+  const srcTells = new Set(aiTellsIn(source));
+  if (aiTellsIn(rewrite).some((x) => !srcTells.has(x))) codes.push("ai_tell_added");
   return codes;
 }
 
@@ -81,7 +85,9 @@ export async function guardedReword(
 ): Promise<GuardResult> {
   const codes: GuardCode[][] = [];
   for (const attempt of [0, 1]) {
-    const text = await reword(attempt === 0 ? [] : codes[0]);
+    // Hidden characters and look-alike spaces never mean anything in a bullet: removed.
+    const raw = await reword(attempt === 0 ? [] : codes[0]);
+    const text = raw === null ? null : cleanText(raw).replace(/\s+/g, " ").trim();
     const c: GuardCode[] = text === null ? ["no_output"] : checkRewrite(source, text, opts);
     codes.push(c);
     if (text !== null && c.length === 0) return { text, outcome: attempt === 0 ? "accepted" : "accepted_on_retry", codes };

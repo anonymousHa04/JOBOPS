@@ -38,10 +38,15 @@ export function resumeData(record: ResumeRecord, bank: Bank, paper = "a4"): Resu
   const byEntry = new Map<string, string[]>();
   for (const b of record.content.bullets) byEntry.set(b.entry_id, [...(byEntry.get(b.entry_id) ?? []), b.text]);
   // Entries in bank order; an entry appears only with at least one bullet in the record.
-  // A career break has no bullets and always appears, so the timeline shows no hole.
-  const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id) || e.kind === "break").map((e) => ({
-    id: e.id, title: e.title, company: e.company ?? "", location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? []
-  }));
+  // A career break has no bullets and always appears, so the timeline shows no hole. It
+  // keeps two lines like every entry ("Career break" + dates, then the reason): a parser
+  // that splits entries by their lines (OpenResume) merged a one-line break into the next job.
+  const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id) || e.kind === "break").map((e) => {
+    const reason = e.kind === "break" ? e.title.match(/^(.*?)\s*\((.+)\)\s*$/) : null;
+    const title = reason ? reason[1] : e.title;
+    const company = reason ? reason[2].charAt(0).toUpperCase() + reason[2].slice(1) : e.company ?? "";
+    return { id: e.id, title, company, location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? [] };
+  });
   return {
     name: bank.basics.name, phone: bank.basics.phone, email: bank.basics.email, location: bank.basics.location,
     links: bank.basics.links.map(link), paper,

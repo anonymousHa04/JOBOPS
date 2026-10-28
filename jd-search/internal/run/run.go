@@ -37,7 +37,9 @@ type Report struct {
 	Unreachable []string          `json:"unreachable"`
 	Rejected    map[string]int    `json:"rejected"`
 	Samples     []string          `json:"samples"`
-	Errors      []string          `json:"errors"`
+	// Kept, but the posting names no location; listed so the user can check them.
+	LocationUnknown []string `json:"location_unknown"`
+	Errors          []string `json:"errors"`
 }
 
 const maxListed = 20
@@ -62,7 +64,7 @@ func (o *Options) defaults() {
 
 func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 	opts.defaults()
-	rep := Report{Detected: map[string]string{}, Rejected: map[string]int{}, Unreachable: []string{}, Samples: []string{}, Errors: []string{}}
+	rep := Report{Detected: map[string]string{}, Rejected: map[string]int{}, Unreachable: []string{}, Samples: []string{}, Errors: []string{}, LocationUnknown: []string{}}
 	var mu sync.Mutex
 
 	boards := &http.Client{Timeout: opts.Timeout, Transport: &limited{
@@ -109,6 +111,9 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 						continue
 					}
 					rep.Matched++
+					if p.Location == "" && len(rep.LocationUnknown) < maxListed {
+						rep.LocationUnknown = append(rep.LocationUnknown, fmt.Sprintf("%s: %s (%s)", p.Company, p.Title, p.URL))
+					}
 					if len(rep.Samples) < maxListed {
 						rep.Samples = append(rep.Samples, fmt.Sprintf("%s: %s (%s)", p.Company, p.Title, p.Location))
 					}
@@ -165,6 +170,16 @@ func describe(ctx context.Context, prefs filter.Prefs, p sources.Posting) (sourc
 	if !hadLocation && d.Location != "" {
 		p.Location = d.Location
 		p.Remote = p.Remote || strings.Contains(strings.ToLower(d.Location), "remote")
+	}
+	// Still none: one of the user's cities named in the description is the best guess.
+	if p.Location == "" {
+		desc := strings.ToLower(p.Description)
+		for _, c := range prefs.Location.Cities {
+			if c != "" && strings.Contains(desc, strings.ToLower(c)) {
+				p.Location = c + " (from the description)"
+				break
+			}
+		}
 	}
 	if hadLocation || p.Location != "" {
 		ok, reason := filter.Match(prefs, p)

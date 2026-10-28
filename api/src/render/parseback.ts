@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { ResumeData } from "./render.ts";
+import { hiddenChars } from "../tailor/writing.ts";
 
 // Parse-back test (engine-algorithm.md §7, gaps-and-rejection-risks.md "ATS parsing"):
 // read the PDF's text the way an ATS does, with two independent extractors (poppler's
@@ -83,6 +84,16 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   // Icon fonts show up as private-use characters: noise for an ATS.
   const icons = [...text].filter((c) => c.codePointAt(0)! >= 0xe000 && c.codePointAt(0)! <= 0xf8ff).length;
   if (icons) add("icon_glyphs", String(icons));
+  // Hidden characters, and words the record does not have: hidden or white text (keyword
+  // stuffing) is read by an ATS and caught by recruiters. A word split across lines
+  // still matches, because expected text is compared with its spaces removed.
+  const hidden = hiddenChars(text.replace(/\u00AD/g, "")); // soft hyphens from line breaks are layout
+  if (hidden.length) add("hidden_chars", hidden.join(","));
+  const expected = norm([data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "summary experience projects education skills",
+    data.summary, ...entries.flatMap((e) => [e.title, e.company, e.location, e.dates, ...e.bullets]),
+    ...data.education.flatMap((e) => [e.school, e.degree, e.dates, ...e.details]), ...data.skills].join(" ")).replace(/[^a-z0-9]/g, "");
+  const extra = [...new Set(t.match(/[a-z0-9]+/g) ?? [])].filter((w) => !expected.includes(w));
+  if (extra.length) add("extra_text", `${extra.length} words not in the record`);
   return issues;
 }
 

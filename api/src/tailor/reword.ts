@@ -7,6 +7,7 @@ import type { Requirements } from "../requirements/schema.ts";
 import { allBullets } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
 import { guardedReword } from "./guard.ts";
+import { tellWords } from "./writing.ts";
 import type { GuardCode } from "./guard.ts";
 import type { Budget, ResumeContent } from "./ideal.ts";
 
@@ -31,6 +32,7 @@ Additional rules for this bullet:
 - Use only these JD terms, and only because the bullet already shows them: [allowed]
 - Keep numbers only where the original has them. Never lead with a number.
 - Keep the verb at the same level (do not turn "built" into "led").
+- Write plainly, like a person: no em or en dashes between clauses, no ", ensuring/fostering/showcasing ..." endings, and none of these words: [tells].
 - Return exactly one item in "include", with the id [id].`;
 
 const RETRY = `
@@ -52,7 +54,7 @@ export function rewordPrompt(
     M: "1",
     "25": String(maxWords)
   });
-  prompt += RULES.replace("[allowed]", allowed.join(", ")).replace("[id]", bullet.id);
+  prompt += RULES.replace("[allowed]", allowed.join(", ")).replace("[id]", bullet.id).replace("[tells]", tellWords().join(", "));
   if (codes.length) prompt += RETRY.replace("[codes]", codes.join(", "));
   return prompt;
 }

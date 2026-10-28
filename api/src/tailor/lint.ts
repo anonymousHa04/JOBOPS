@@ -4,6 +4,7 @@ import { span, totalYears } from "../scoring/score.ts";
 import { softSkills } from "../lists.ts";
 import { hasTerm, norm, synonyms } from "../scoring/terms.ts";
 import { metricLed } from "./ideal.ts";
+import { aiTellsIn, hiddenChars } from "./writing.ts";
 
 // Resume lint (gaps-and-rejection-risks.md §3), tenure/gaps (§2 recruiter scan), and the
 // same-company warning (engine-algorithm.md §4 step 8). Lint reports; it never rewrites.
@@ -51,6 +52,14 @@ export function lintRecord(record: ResumeRecord, bank: Bank, extra: SkillsExtra,
   for (const b of bullets) {
     if (signals(b.text) === 0) add("no_scope_or_outcome", b.id, "user");
     if (PLANNED.test(b.text)) add("planned_work", b.id, "user");
+  }
+  // Hidden characters (removed on the next bank save or rewrite) and AI-sounding wording
+  // (config/ai-tells.yaml): labels only, never the text.
+  for (const [id, text] of [["summary", record.content.summary_text], ...bullets.map((b) => [b.id, b.text])] as [string, string][]) {
+    const hidden = hiddenChars(text);
+    if (hidden.length) add("hidden_chars", `${id}: ${hidden.join(",")}`, "engine");
+    const tells = aiTellsIn(text);
+    if (tells.length) add("ai_tell", `${id}: ${tells.join(", ")}`, "user");
   }
   // Skills shown in no bullet (interviewers probe them); soft skills listed as skills.
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));

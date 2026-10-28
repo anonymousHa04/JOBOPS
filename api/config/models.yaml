@@ -45,3 +45,7 @@ tasks:
     model: qwen2.5:14b
     env: JOBOPS_REWORD_MODEL
     timeout_s: 60
+  report_normalize:   # a chat's job report (browser extension) tidied into the report shape
+    model: qwen2.5:7b
+    timeout_s: 180
+    max_tokens: 1500

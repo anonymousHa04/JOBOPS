@@ -36,7 +36,7 @@ export type Companies = { company: string; companyOf: (jdId: string) => string |
 // Records that can start a new one: real resumes, not not_tailored entries. The
 // original resume counts even before its record is written.
 function candidates(records: ResumeRecord[], bank: Bank): StoredRecord[] {
-  const usable = records.filter((r) => r.decision !== "not_tailored").map(toStored);
+  const usable = records.filter((r) => r.decision !== "not_tailored").map((r) => toStored(r, bank));
   if (!usable.some((r) => r.resume_id === "original")) usable.unshift({ resume_id: "original", content: originalContent(bank) });
   return usable;
 }

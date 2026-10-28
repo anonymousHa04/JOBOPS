@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Bank, ResumeRecord } from "../profile/schema.ts";
-import { parseBack } from "./parseback.ts";
+import { parseBack, pdftotext } from "./parseback.ts";
 import type { Issue } from "./parseback.ts";
 
 // Record -> PDF (decisions.md: PDF only when applying directly). The record gives the
@@ -72,11 +72,28 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
   try {
     const data = resumeData(record, bank, opts.paper);
     copyFileSync(TEMPLATE, join(work, "resume.typ"));
-    writeFileSync(join(work, "data.json"), JSON.stringify(data));
     const out = join(work, "resume.pdf");
-    const r = spawnSync("typst", ["compile", "--root", work, join(work, "resume.typ"), out], { encoding: "utf8" });
-    if (r.error) return { ok: false, path: null, issues: [], error: "typst not found (brew install typst)" };
-    if (r.status !== 0) return { ok: false, path: null, issues: [], error: `typst failed: ${r.stderr.split("\n")[0]}` };
+    const compile = (d: ResumeData): string | null => {
+      writeFileSync(join(work, "data.json"), JSON.stringify(d));
+      const r = spawnSync("typst", ["compile", "--root", work, join(work, "resume.typ"), out], { encoding: "utf8" });
+      if (r.error) return "typst not found (brew install typst)";
+      return r.status !== 0 ? `typst failed: ${r.stderr.split("\n")[0]}` : null;
+    };
+    // A hyphenated word that lands at a line break loses its hyphen in text extraction
+    // ("robots.txtaware") or gains a space ("robots.txt- aware"), in some ATS too. Only
+    // those words are rendered again with a non-breaking hyphen (U+2011), so they stay
+    // whole on one line; every other hyphen stays a plain one.
+    let shown = data;
+    const kept = new Set<string>();
+    let error = compile(shown);
+    for (let pass = 0; pass < 3 && !error; pass++) {
+      const broken = brokenHyphenWords(pdftotext(out), data).filter((w) => !kept.has(w));
+      if (!broken.length) break;
+      broken.forEach((w) => kept.add(w));
+      shown = noBreak(data, kept);
+      error = compile(shown);
+    }
+    if (error) return { ok: false, path: null, issues: [], error };
     const check = await parseBack(out, data, opts.maxPages ?? 2);
     if (!check.ok) return { ok: false, path: null, issues: check.issues, error: null };
     const dir = opts.outDir ?? pdfDir();
@@ -87,6 +104,21 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+}
+
+// Hyphenated words of the resume that do not come back from the PDF as written: a line
+// break at the hyphen made the extractor drop it ("robots.txtaware") or add a space.
+export function brokenHyphenWords(extracted: string, data: ResumeData): string[] {
+  const texts = [data.summary, ...[...data.experience, ...data.projects].flatMap((e) => e.bullets)];
+  const words = [...new Set(texts.flatMap((t) => t.split(/\s+/)).filter((w) => /\w-\w/.test(w)))];
+  const flat = extracted.replace(/\s+/g, " ");
+  return words.filter((w) => !flat.includes(w.replace(/[.,;:)]+$/, "")));
+}
+
+function noBreak(data: ResumeData, words: Set<string>): ResumeData {
+  const fix = (t: string) => t.split(" ").map((w) => (words.has(w) ? w.replace(/-/g, "\u2011") : w)).join(" ");
+  const entries = (es: ResumeData["experience"]) => es.map((e) => ({ ...e, bullets: e.bullets.map(fix) }));
+  return { ...data, summary: fix(data.summary), experience: entries(data.experience), projects: entries(data.projects) };
 }
 
 // Pages the record would render to (typst only, no parse-back), or null without typst.

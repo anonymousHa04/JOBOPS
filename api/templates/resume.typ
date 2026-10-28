@@ -11,19 +11,21 @@
 #let data = json("data.json")
 
 #set document(author: data.name, title: data.name)
-#set page(paper: data.at("paper", default: "a4"), margin: 0.5in, header: none, footer: none)
+#set page(paper: data.at("paper", default: "a4"), margin: (x: 0.65in, y: 0.6in), header: none, footer: none)
 #set text(font: "New Computer Modern", size: 10pt, lang: "en", ligatures: false)
-#set par(justify: false)
-#set list(indent: 0.6em, marker: [•])
+#set par(justify: false, leading: 0.75em)
+// Room between bullets, so a resume reads as separate points, not one block.
+#set list(indent: 0.6em, marker: [•], spacing: 0.7em)
 
 // Section title: small caps with a rule under it. Sticky: it moves to the next page with
 // the content after it, so a page never ends on a heading (parsers then split the
 // section: a "Skills" title on page 1 with its list on page 2 read as no skills).
-#let section(title) = block(sticky: true, above: 8pt, below: 0pt)[
+// The rule sits just under the title, and the block keeps a gap below it, so the first
+// line of plain text (Summary, Skills) never runs into the rule.
+#let section(title) = block(sticky: true, above: 16pt, below: 9pt)[
   #text(weight: 700, size: 11pt, smallcaps(title))
-  #v(-8pt)
+  #v(-7pt)
   #line(length: 100%, stroke: 0.6pt)
-  #v(-2pt)
 ]
 
 // Company first ("Acme, Bangalore"), then the title with its dates on the right, then
@@ -37,7 +39,7 @@
 // end. The gap (not a "|") keeps title and dates two items for parsers that split on it.
 #let entry(org, place, role, when) = {
   let dated(r) = if when != "" [#r#h(2em)#when] else [#r]
-  block(above: 0.9em, below: 0.5em, breakable: false)[
+  block(above: 1.3em, below: 0.7em, breakable: false)[
     #if org != "" [
       #strong(org)#if place != "" [, #place] \
       #dated(emph(role))

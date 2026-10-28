@@ -121,7 +121,17 @@ export function loadRecords(db: Db, bank: Bank): { records: ResumeRecord[]; chec
 }
 
 // What the engine compares against (decide.ts): content with no reword marks.
-export const toStored = (r: ResumeRecord): StoredRecord => ({
-  resume_id: r.resume_id,
-  content: { ...r.content, bullets: r.content.bullets.map((b) => ({ ...b, reword: null })) }
-});
+// A stored record as a starting point, with each bullet's text taken from the bank as it
+// is now: a bullet edited in the bank since the record was made must not come back with
+// its old text on reuse. A rewording stays only while the bank still has the text it was
+// made from. Bullets no longer in the bank are dropped.
+export const toStored = (r: ResumeRecord, bank: Bank): StoredRecord => {
+  const current = new Map([...bank.roles, ...bank.projects].flatMap((e) => e.bullets.map((b) => [b.id, b.text] as const)));
+  const bullets = r.content.bullets.flatMap((b) => {
+    const now = current.get(b.id);
+    if (now === undefined) return [];
+    const reworded = r.changes.find((c) => c.bullet_id === b.id && c.to === b.text && c.from === now);
+    return [{ ...b, text: reworded ? b.text : now, reword: null }];
+  });
+  return { resume_id: r.resume_id, content: { ...r.content, bullets } };
+};

@@ -5,14 +5,15 @@ import { vocabulary } from "../profile/bank.ts";
 import type { Bank, Bullet, SkillsExtra } from "../profile/schema.ts";
 import { generate } from "../model/llm.ts";
 import type { Requirements } from "../requirements/schema.ts";
-import { allBullets, bulletRecency, buildIndex, evidence, needsJudge } from "./score.ts";
+import { allBullets, bulletRecency, buildIndex, evidence, needsJudge, scoreRequirements } from "./score.ts";
+import { TAILORED_BANDS } from "./config.ts";
 import type { Verdict, Verdicts } from "./score.ts";
 import { norm } from "./terms.ts";
 
 // LLM judge for requirements the index cannot settle alone (engine-algorithm.md §2):
 // qualified requirements ("production Kubernetes") are judged on the bullets the index
 // found; index misses on the bullets that overlap the requirement most. One local model
-// call per requirement, cached by requirement + prompt version + bank hash, so scoring a
+// call per requirement (a few at once), skipped when the job's decision is already settled, cached by requirement + prompt version + bank hash, so scoring a
 // stored record never calls the model again. Logs and results carry ids, never text.
 
 export const JUDGE_MODEL = process.env.JOBOPS_JUDGE_MODEL ?? "qwen2.5:7b";
@@ -73,9 +74,15 @@ function candidates(r: string, bullets: Bullet[], hits: string[], recency: Map<s
     .slice(0, MAX_CANDIDATES);
 }
 
-export type JudgeStats = { needed: number; cached: number; judged: number; failed: number; error: string | null };
+export type JudgeStats = {
+  needed: number; cached: number; judged: number; failed: number; error: string | null;
+  // Why the judge did not run for this job (its decision is already settled), or null.
+  skipped: string | null;
+};
 
-// Cached verdicts only (no model calls): what record scoring and dry runs use.
+// Calls at once; the model server needs as many slots (llm.sh: LLM_GENERAL7_SLOTS).
+const PARALLEL = Math.max(1, Number(process.env.JOBOPS_JUDGE_PARALLEL ?? 3));
+
 export function loadVerdicts(db: Db, req: Requirements, bank: Bank, extra: SkillsExtra): Verdicts {
   const hash = bankHash(bank);
   const out: Verdicts = new Map();
@@ -90,6 +97,20 @@ export function loadVerdicts(db: Db, req: Requirements, bank: Bank, extra: Skill
 // Judge every requirement that needs it, using the cache first. If the model server is
 // unavailable, the remaining requirements keep their index-based labels and the error
 // is reported, never hidden.
+// Is the judge's answer able to change this job's decision? Not when the JD asks for more
+// years than the roles add up to (not_tailored either way), nor when a "supported" on
+// every open requirement still leaves the score below the tailorable bands.
+export function judgeSettled(req: Requirements, bank: Bank, extra: SkillsExtra, verdicts: Verdicts, open: string[]): string | null {
+  const now = scoreRequirements(req, bank, extra, undefined, undefined, verdicts);
+  if (!now.hard.pass) return `years: JD asks ${now.hard.years_asked}+, roles add up to ${now.hard.years_have}`;
+  const ids = allBullets(bank).map((b) => b.id);
+  const best: Verdicts = new Map(verdicts);
+  for (const r of open) best.set(r, { label: "supported", bullet_ids: ids });
+  const top = scoreRequirements(req, bank, extra, undefined, undefined, best);
+  if (!TAILORED_BANDS.includes(top.band)) return `best case ${top.score} (${top.band}) is below moderate`;
+  return null;
+}
+
 export async function judgeRequirements(
   db: Db,
   req: Requirements,
@@ -103,14 +124,18 @@ export async function judgeRequirements(
   const recency = bulletRecency(bank);
   const verdicts = loadVerdicts(db, req, bank, extra);
   const todo = needsJudge(req, bank, extra);
-  const stats: JudgeStats = { needed: todo.length, cached: verdicts.size, judged: 0, failed: 0, error: null };
+  const open = todo.filter((r) => !verdicts.has(r));
+  const stats: JudgeStats = { needed: todo.length, cached: verdicts.size, judged: 0, failed: 0, error: null, skipped: null };
+  if (open.length === 0) return { verdicts, stats };
+  stats.skipped = judgeSettled(req, bank, extra, verdicts, open);
+  if (stats.skipped) return { verdicts, stats };
+
   const put = db.prepare(
     `INSERT OR REPLACE INTO judge_cache (key, requirement, label, bullet_ids, model, prompt_version, bank_hash, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
-  for (const r of todo) {
-    if (verdicts.has(r)) continue;
-    if (stats.error) { stats.failed++; continue; } // server down: do not retry for every requirement
+  const judgeOne = async (r: string) => {
+    if (stats.error) { stats.failed++; return; } // server down: do not retry for every requirement
     const cands = candidates(r, bullets, evidence(r, bullets, index, vocab), recency);
     let verdict: Verdict;
     if (cands.length === 0) {
@@ -122,7 +147,7 @@ export async function judgeRequirements(
       if (!res.ok) {
         stats.failed++;
         stats.error = `${res.error}: ${res.detail}`;
-        continue;
+        return;
       }
       const allowed = new Set(cands.map((b) => b.id));
       const ids = res.value.bullet_ids.filter((id) => allowed.has(id)); // drop invented ids
@@ -134,12 +159,21 @@ export async function judgeRequirements(
       JUDGE_PROMPT_VERSION, hash, new Date().toISOString());
     verdicts.set(r, verdict);
     stats.judged++;
-  }
+  };
+  // PARALLEL workers over the open requirements; the server serves them in its slots.
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, open.length) }, async () => {
+    while (next < open.length) await judgeOne(open[next++]);
+  }));
   return { verdicts, stats };
 }
 
 // Requirements that still need a judge verdict (no model calls).
-export function needsJudgeCount(db: Db, req: Requirements, bank: Bank, extra: SkillsExtra): number {
+export function openRequirements(db: Db, req: Requirements, bank: Bank, extra: SkillsExtra): string[] {
   const verdicts = loadVerdicts(db, req, bank, extra);
-  return needsJudge(req, bank, extra).filter((r) => !verdicts.has(r)).length;
+  return needsJudge(req, bank, extra).filter((r) => !verdicts.has(r));
+}
+
+export function needsJudgeCount(db: Db, req: Requirements, bank: Bank, extra: SkillsExtra): number {
+  return openRequirements(db, req, bank, extra).length;
 }

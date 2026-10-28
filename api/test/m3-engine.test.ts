@@ -466,6 +466,7 @@ test("bank: known frameworks leave languages, known languages leave frameworks",
 
 test("lists: your profile files add synonyms and pin skill groups, over the defaults", () => {
   tempProfile();
+  process.env.JOBOPS_LIST_RECHECK_MS = "0"; // every edit below is read on the next call
   const dir = process.env.JOBOPS_PROFILE_DIR!;
   const b = structuredClone(bank);
   b.skills = { languages: ["Node.js", "Go"], frameworks: [], tools: [], domains: [] };
@@ -477,4 +478,5 @@ test("lists: your profile files add synonyms and pin skill groups, over the defa
   assert.equal(norm("hapi"), "node.js");
   writeFileSync(join(dir, "synonyms.yaml"), "hapi: [broken\n");
   assert.throws(() => norm("x"), /synonyms\.yaml/);
+  delete process.env.JOBOPS_LIST_RECHECK_MS;
 });

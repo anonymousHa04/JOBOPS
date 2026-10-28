@@ -1,7 +1,7 @@
 import type { Bank, SkillsExtra } from "../profile/schema.ts";
 import type { Requirements } from "../requirements/schema.ts";
-import { askable } from "../lists.ts";
-import { allBullets, scoreRequirements, totalYears, yearsAsked } from "./score.ts";
+import { askable, seniorSignals } from "../lists.ts";
+import { allBullets, bankHasTerm, scoreRequirements, totalYears, yearsAsked } from "./score.ts";
 import type { Verdicts } from "./score.ts";
 import { norm } from "./terms.ts";
 
@@ -57,9 +57,15 @@ export function riskCheck(
     });
   }
 
+  // A senior theme is a question only when no bullet in the bank shows it, in its tags or
+  // its wording (config/senior-signals.yaml: "50 teams" shows scale): an answer the bank
+  // already has is not asked.
+  const signals = seniorSignals();
+  const bankBullets = allBullets(bank);
   for (const word of SENIOR_THEMES) {
     if (!req.themes.some((t) => norm(t).includes(word))) continue;
-    if (chosen.some((b) => b.tags.some((t) => norm(t).includes(word)))) continue;
+    const re = signals.get(word) ?? new RegExp(`\\b${word}\\b`, "i");
+    if (bankBullets.some((b) => re.test(b.text) || b.tags.some((t) => re.test(t)))) continue;
     risks.push({
       id: `theme:${word}`,
       kind: "senior_signal",
@@ -83,6 +89,9 @@ export function riskCheck(
     const missing = score.items
       .filter((i) => i.kind === "keyword" && i.label !== "supported" && yearsAsked(i.requirement) === 0)
       .filter((i) => askable(i.requirement)) // not generic words or soft skills
+      .filter((i) => !bankHasTerm(bank, extra, i.requirement)) // literal miss, but the bank has it (Golang = Go)
+      .filter((i) => !extra.skills.some((x) => x.status === "dont_have" && norm(x.name) === norm(i.requirement))) // answered no
+      .filter((i) => !norm(`${req.role} ${req.seniority}`).includes(norm(i.requirement))) // the job's own title words
       .map((i) => i.requirement);
     if (missing.length) risks.push({
       id: "keywords",

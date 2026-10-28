@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { ResumeData } from "./render.ts";
 import { hiddenChars } from "../tailor/writing.ts";
+import { checkOpenResume, openResumeAvailable, runOpenResume } from "./openresume.ts";
 
 // Parse-back test (engine-algorithm.md §7, gaps-and-rejection-risks.md "ATS parsing"):
 // read the PDF's text the way an ATS does, with two independent extractors (poppler's
@@ -104,5 +105,13 @@ export async function parseBack(pdf: string, data: ResumeData, maxPages: number)
   if (!info.fontsEmbedded) issues.push({ code: "fonts_not_embedded", extractor: "pdffonts", detail: "" });
   issues.push(...checkText(pdftotext(pdf), data, "pdftotext"));
   issues.push(...checkText(await pdfjsText(pdf), data, "pdfjs"));
+  // Third reader when its local copy is installed; skipped (and said so by ats check) if not.
+  if (openResumeAvailable()) {
+    try {
+      issues.push(...checkOpenResume(runOpenResume(pdf), data));
+    } catch (err) {
+      issues.push({ code: "reader_failed", extractor: "openresume", detail: err instanceof Error ? err.message.slice(0, 200) : String(err) });
+    }
+  }
   return { ok: issues.length === 0, issues };
 }

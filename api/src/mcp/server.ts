@@ -144,6 +144,16 @@ server.registerTool(
 );
 
 server.registerTool(
+  "ats_check",
+  {
+    description: "ATS check: render a resume and read it back with three local readers (pdftotext, pdf.js, " +
+      "OpenResume), field by field. resume_id checks a record; without it, the fake test resume. Returns codes and ids.",
+    inputSchema: { resume_id: z.string().optional().describe("A record to check; omit for the fake resume") }
+  },
+  ({ resume_id }) => reply(() => t.ats(t.db(), { resumeId: resume_id }))
+);
+
+server.registerTool(
   "lint",
   {
     description: "Resume lint, tenure/gap checks for a record: findings as codes and ids, each marked " +

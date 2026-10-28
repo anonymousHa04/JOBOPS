@@ -182,9 +182,11 @@ export function dryRunAll(
       same_company: p.same_company.warnings.map((w) => w.code)
     });
     for (const r of p.risks) {
-      const q = questions.get(r.id) ?? { id: r.id, question: r.question, job_ids: [] };
+      // Same id, different wording (each job's "keywords" lists its own): kept apart.
+      const key = `${r.id}\n${r.question}`;
+      const q = questions.get(key) ?? { id: r.id, question: r.question, job_ids: [] };
       q.job_ids.push(j.job_id);
-      questions.set(r.id, q);
+      questions.set(key, q);
     }
   }
   rows.sort((a, b) => b.score - a.score || a.job_id.localeCompare(b.job_id));

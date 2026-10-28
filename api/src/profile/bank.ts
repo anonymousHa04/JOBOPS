@@ -89,6 +89,19 @@ export function markBreak(entryId: string, title?: string): { id: string; dates:
   return { id: role.id, dates: role.dates };
 }
 
+// Sets an education entry's degree text ("BTech in Mechanical Engineering"); the id may be
+// left out when there is one entry. Returns the id only, never the old text.
+export function setDegree(degree: string, id?: string): { id: string } {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const edu = id ? bank.education.find((e) => e.id === id) : bank.education.length === 1 ? bank.education[0] : undefined;
+  if (!edu) throw new Error(id ? `unknown education ${id}` : `${bank.education.length} education entries; name one: ${bank.education.map((e) => e.id).join(", ")}`);
+  if (!degree.trim() || /[<>]/.test(degree)) throw new Error("give the degree text, e.g. \"BTech in Mechanical Engineering\"");
+  edu.degree = degree.trim();
+  saveBank(bank);
+  return { id: edu.id };
+}
+
 // Every save cleans hidden characters, marks career breaks, files skills in the right group, then removes repeats
 // (the model can misfile and repeat list items).
 export function saveBank(b: Bank): void {
@@ -264,6 +277,17 @@ export function checkBank(b: Bank, resumeText: string): string[] {
     }
   }
   return issues;
+}
+
+// Removes a skill answer (a wrong name or a mistaken answer). Returns whether it existed.
+export function removeSkill(name: string): boolean {
+  const extra = loadSkillsExtra();
+  const key = name.trim().toLowerCase();
+  const before = extra.skills.length;
+  extra.skills = extra.skills.filter((s) => s.name !== key);
+  if (extra.skills.length === before) return false;
+  saveSkillsExtra(extra);
+  return true;
 }
 
 export function addSkill(name: string, status: "have" | "dont_have", evidence: string): void {

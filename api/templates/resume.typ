@@ -25,13 +25,23 @@
   v(-2pt)
 }
 
-// Two lines: bold left / right on top, plain left / italic right below. One line when
-// the bottom is empty (a career break).
-#let entry(top-left, top-right, bottom-left, bottom-right) = {
+// Company first ("Acme, Bangalore"), then the title with its dates on the right, then
+// bullets. ATS parsers (Workday) anchor an entry on the line with its dates: lines above
+// it are read as company and title, lines below as the description. With the title on
+// top, the company and location ended up in the description, and a career break's
+// reason line was glued onto the next job's title. An entry with no company (a career
+// break, a project) is one line: the title, bold, with its dates.
+// Dates follow the title after a fixed gap, never pushed to the right margin: text
+// extractors read a right-aligned run as a separate column and put every date at the
+// end. The gap (not a "|") keeps title and dates two items for parsers that split on it.
+#let entry(org, place, role, when) = {
+  let dated(r) = if when != "" [#r#h(2em)#when] else [#r]
   block(above: 0.9em, below: 0.5em, breakable: false)[
-    #strong(top-left) #h(1fr) #top-right
-    #if bottom-left != "" or bottom-right != "" [
-      \ #bottom-left #h(1fr) #emph(bottom-right)
+    #if org != "" [
+      #strong(org)#if place != "" [, #place] \
+      #dated(emph(role))
+    ] else [
+      #dated(strong(role))
     ]
   ]
 }
@@ -56,7 +66,7 @@
 #if data.experience.len() > 0 {
   section("Experience")
   for e in data.experience {
-    entry(e.title, e.dates, e.company, e.location)
+    entry(e.company, e.location, e.title, e.dates)
     if e.bullets.len() > 0 { bullets(e.bullets) }
   }
 }
@@ -64,7 +74,7 @@
 #if data.projects.len() > 0 {
   section("Projects")
   for p in data.projects {
-    entry(p.title, p.dates, p.company, p.location)
+    entry(p.company, p.location, p.title, p.dates)
     bullets(p.bullets)
   }
 }
@@ -72,7 +82,7 @@
 #if data.education.len() > 0 {
   section("Education")
   for e in data.education {
-    entry(e.school, e.dates, e.degree, "")
+    entry(e.school, "", e.degree, e.dates)
     if e.details.len() > 0 { bullets(e.details) }
   }
 }

@@ -74,10 +74,15 @@ export function yearsAsked(r: string): number {
 
 // Degree level asked by a requirement (0 if it asks for none): "Bachelor's or Master's"
 // asks for the lower one.
+// Abbreviations count when they read as a degree: "BS in CS", "B.Tech/BE", "MS degree".
+const BACHELOR_ABBR = /\b(b\.?\s?s\.?c?|b\.?\s?a|b\.?\s?tech|b\.?\s?e)\.?(?=\s*(in\b|degree|\/|,|or\b|from\b|$))/i;
+const MASTER_ABBR = /\b(m\.?\s?s\.?c?|m\.?\s?tech|m\.?\s?e|mba|mca)\.?(?=\s*(in\b|degree|\/|,|or\b|from\b|$))/i;
 export function degreeAsked(r: string): number {
-  if (!/\b(degree|bachelor|master|ph\.?\s?d|doctorate)/i.test(r)) return 0;
-  if (/\bbachelor/i.test(r)) return 1;
-  if (/\bmaster/i.test(r)) return 2;
+  const bachelor = /\bbachelor/i.test(r) || BACHELOR_ABBR.test(r);
+  const master = /\bmaster/i.test(r) || MASTER_ABBR.test(r);
+  if (!bachelor && !master && !/\b(degree|ph\.?\s?d|doctorate)/i.test(r)) return 0;
+  if (bachelor) return 1;
+  if (master) return 2;
   return /\b(ph\.?\s?d|doctorate)/i.test(r) ? 3 : 1;
 }
 
@@ -146,6 +151,18 @@ export function bulletRecency(bank: Bank, now = new Date()): Map<string, number>
     for (const b of e.bullets) out.set(b.id, r);
   }
   return out;
+}
+
+// Does the bank have this term under any name (skills list, confirmed extras, or a
+// bullet's text or tags; synonyms count: "Golang" = Go)?
+export function bankHasTerm(bank: Bank, extra: SkillsExtra, term: string): boolean {
+  const vocab = new Set([...vocabulary(bank, extra)].map(norm));
+  const listed = new Set([...Object.values(bank.skills).flat(), ...extra.skills.filter((x) => x.status === "have").map((x) => x.name)].map(norm));
+  if (listed.has(norm(term))) return true;
+  const found = terms(term, vocab);
+  if (found.some((t) => listed.has(t))) return true;
+  const index = buildIndex(allBullets(bank), vocab);
+  return found.some((t) => index.has(t)) || (vocab.has(norm(term)) && index.has(norm(term)));
 }
 
 const NUMBER = /\d/;

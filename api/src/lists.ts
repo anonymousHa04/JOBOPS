@@ -20,14 +20,23 @@ function read<T>(path: string, schema: z.ZodType<T>): T | null {
   }
 }
 
-const cache = new Map<string, { stamp: string; value: unknown }>();
+// Files are checked for changes at most once a second: matching calls these thousands of
+// times per job, and a stat per call made scoring slow. Tests that edit a list set
+// JOBOPS_LIST_RECHECK_MS=0 to see the edit on the next call.
+const recheckMs = () => Number(process.env.JOBOPS_LIST_RECHECK_MS ?? 1000);
+const cache = new Map<string, { stamp: string; value: unknown; checked: number }>();
 function cached<T>(files: string[], build: () => T): T {
   const key = files.join("|");
-  const stamp = files.map((f) => (existsSync(f) ? `${statSync(f).mtimeMs}:${statSync(f).size}` : "-")).join(",");
   const hit = cache.get(key);
-  if (hit && hit.stamp === stamp) return hit.value as T;
+  const now = Date.now();
+  if (hit && now - hit.checked < recheckMs()) return hit.value as T;
+  const stamp = files.map((f) => (existsSync(f) ? `${statSync(f).mtimeMs}:${statSync(f).size}` : "-")).join(",");
+  if (hit && hit.stamp === stamp) {
+    hit.checked = now;
+    return hit.value as T;
+  }
   const value = build();
-  cache.set(key, { stamp, value });
+  cache.set(key, { stamp, value, checked: now });
   return value;
 }
 
@@ -138,5 +147,19 @@ export function aiTells(): { words: RegExp; phrases: RegExp; riders: RegExp; lis
       riders: new RegExp(`,\\s*(${alt(all("riders"))})\\b`, "g"),
       list: [...all("words"), ...all("phrases")]
     };
+  });
+}
+
+// Senior signals (senior-signals.yaml): signal -> pattern of the bullet words that show it.
+export function seniorSignals(): Map<string, RegExp> {
+  const files = [join(CONFIG, "senior-signals.yaml"), join(profileDir(), "senior-signals.yaml")];
+  return cached(files, () => {
+    const merged = Object.assign({}, ...files.map((f) => read(f, z.record(z.string(), z.array(z.coerce.string()))) ?? {})) as Record<string, string[]>;
+    const out = new Map<string, RegExp>();
+    for (const [signal, words] of Object.entries(merged)) {
+      const alt = words.map((w) => w.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/#/g, "\\d[\\d,.]*\\+?").replace(/[-\s]+/g, "[-\\s]")).filter(Boolean);
+      out.set(signal.toLowerCase(), alt.length ? new RegExp(`(^|[^a-z0-9])(${alt.join("|")})($|[^a-z0-9])`, "i") : /$^/);
+    }
+    return out;
   });
 }

@@ -6,9 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Bank, ResumeRecord, SkillsExtra } from "../src/profile/schema.ts";
 import type { Requirements } from "../src/requirements/schema.ts";
-import { addRole, excludeTitleWords, loadBank, markBreak, saveBank, setCompany } from "../src/profile/bank.ts";
+import { addRole, checkBank, excludeTitleWords, loadBank, markBreak, saveBank, setCompany, vocabulary } from "../src/profile/bank.ts";
 import { degreeAsked, degreeHave, scoreRequirements, totalYears } from "../src/scoring/score.ts";
-import { tenure } from "../src/tailor/lint.ts";
+import { lintRecord, tenure } from "../src/tailor/lint.ts";
+import { aiTellsIn, cleanText, hiddenChars } from "../src/tailor/writing.ts";
+import { checkRewrite, guardedReword } from "../src/tailor/guard.ts";
+import { checkText } from "../src/render/parseback.ts";
+import { riskCheck } from "../src/scoring/risk.ts";
+import { norm } from "../src/scoring/terms.ts";
 import { idealContent } from "../src/tailor/ideal.ts";
 import { renderRecord, resumeData } from "../src/render/render.ts";
 import { detectBoard, jobLinks, jsonLdPostings, robotsAllows } from "../src/careers/crawl.ts";
@@ -91,10 +96,11 @@ test("bank mark-break: sets the title, drops company and location, refuses a rol
 const breakRecord = () => ({ resume_id: "fake", content: { summary_variant: "backend", summary_text: "Backend engineer.", skills: ["TypeScript", "Kubernetes"],
   bullets: [{ id: "cur-1", entry_id: "cur", text: "Moved 20 services to Kubernetes" }, { id: "old-1", entry_id: "old", text: "Wrote the TypeScript billing service" }] } }) as unknown as ResumeRecord;
 
-test("render data: a career break appears without bullets, in its place, on two lines", () => {
+test("render data: a career break appears in its place, shaped like a job (company line, then title)", () => {
   const data = resumeData(breakRecord(), bank);
   assert.deepEqual(data.experience.map((e) => [e.id, e.bullets.length]), [["cur", 1], ["brk", 0], ["old", 1]]);
-  assert.deepEqual([data.experience[1].title, data.experience[1].company], ["Career break", "Family"], "the reason is the second line");
+  assert.deepEqual([data.experience[1].company, data.experience[1].title, data.experience[1].kind], ["Career break", "Family", "break"],
+    "Workday reads a company line then a title line, and drops 'Career break' from the dated line");
 });
 
 // Third parse-back check (with pdftotext and pdf.js in render): OpenResume's resume
@@ -123,9 +129,9 @@ test("OpenResume reads every entry back: titles, companies, dates, bullets, educ
   assert.deepEqual([parsed.profile.name, parsed.profile.email, parsed.profile.url, parsed.profile.summary],
     ["Test Person", "test.person@example.com", "github.com/testperson", "Backend engineer."]);
   assert.deepEqual(parsed.workExperiences.map((w) => [w.jobTitle, w.company, w.date, w.descriptions]), [
-    ["Senior Engineer", "Acme", "Mar 2025 - Oct 2026", ["Moved 20 services to Kubernetes"]],
-    ["", "Career break", "Sep 2024 - Feb 2025", []],
-    ["Engineer", "OldCo", "Jan 2020 - Aug 2024", ["Wrote the TypeScript billing service"]]
+    ["Senior Engineer", "Acme, Bangalore", "Mar 2025 - Oct 2026", ["Moved 20 services to Kubernetes"]],
+    ["", "Career break", "Sep 2024 - Feb 2025", []], // OpenResume finds titles by job words; "Family" is not one
+    ["Engineer", "OldCo, Pune", "Jan 2020 - Aug 2024", ["Wrote the TypeScript billing service"]]
   ]);
   assert.deepEqual(parsed.educations.map((e) => [e.school, e.degree, e.date]), [["Some University", "B.Tech in Mechanical Engineering", "2015 - 2019"]]);
   assert.deepEqual(parsed.skills.descriptions, ["TypeScript, Kubernetes"]);
@@ -327,4 +333,66 @@ test("job add: stops with the commands to continue when the parse model is down;
   } finally {
     restore();
   }
+});
+
+// --- Hidden characters and AI-sounding wording ---
+
+test("hidden characters: found as code points, cleaned, and removed when the bank is saved", () => {
+  const dirty = "Built\u200B the API\u00A0service\u2060 for \u2018billing\u2019\u{E0041}";
+  assert.deepEqual(hiddenChars(dirty).sort(), ["U+00A0", "U+200B", "U+2060", "U+E0041"]);
+  assert.equal(cleanText(dirty), "Built the API service for 'billing'");
+  assert.deepEqual(hiddenChars("Plain text, with a - hyphen."), []);
+  tempProfile();
+  const b = structuredClone(bank);
+  b.roles[0].bullets[0].text = "Moved 20\u200B services to\u00A0Kubernetes";
+  assert.ok(checkBank(b, "20").some((i) => i.startsWith("cur-1: hidden characters U+200B,U+00A0")));
+  saveBank(b);
+  assert.equal(loadBank()!.roles[0].bullets[0].text, "Moved 20 services to Kubernetes");
+});
+
+test("AI tells: words, riders, dashes between clauses, and 'not only'; dates and hyphens are fine", () => {
+  assert.deepEqual(aiTellsIn("Spearheaded a robust pipeline, ensuring seamless delivery").sort(),
+    ["rider: ensuring", "robust", "seamless", "spearheaded"]);
+  assert.deepEqual(aiTellsIn("Moved services to Kubernetes \u2014 deploys got faster"), ["dash"]);
+  assert.deepEqual(aiTellsIn("Not only cut costs but also improved uptime"), ["not only"]);
+  assert.deepEqual(aiTellsIn("Jan 2019 \u2013 Present"), []);
+  assert.deepEqual(aiTellsIn("Wrote the on-call runbook for a state-machine service"), []);
+});
+
+test("guard: a rewrite that adds an AI tell is rejected; hidden characters are removed before checking", async () => {
+  const opts = { vocab: new Set([...vocabulary(bank, extra)].map(norm)), allowed: [], maxWords: 25 };
+  assert.deepEqual(checkRewrite("Moved 20 services to Kubernetes", "Seamlessly moved 20 services to Kubernetes", opts), ["ai_tell_added"]);
+  assert.deepEqual(checkRewrite("Leveraged Kubernetes for 20 services", "Leveraged Kubernetes for 20 services", opts), [], "the source's own wording is not added");
+  const answers = ["Moved 20 services to Kubernetes, ensuring uptime", "Moved\u200B 20 services to\u00A0Kubernetes"];
+  const r = await guardedReword("Moved 20 services to Kubernetes", opts, async () => answers.shift() ?? null);
+  assert.deepEqual([r.outcome, r.text, r.codes], ["accepted_on_retry", "Moved 20 services to Kubernetes", [["ai_tell_added"], []]]);
+});
+
+test("lint: AI tells in bullets are the user's call; hidden characters are the engine's", () => {
+  const record = { content: { summary_text: "Backend engineer\u200B.", skills: [],
+    bullets: [{ id: "cur-1", entry_id: "cur", text: "Leveraged Kubernetes to move 20 services" }] } } as unknown as ResumeRecord;
+  const found = lintRecord(record, bank, extra, { now }).filter((f) => f.code === "ai_tell" || f.code === "hidden_chars");
+  assert.deepEqual(found, [
+    { code: "hidden_chars", detail: "summary: U+200B", needs: "engine" },
+    { code: "ai_tell", detail: "cur-1: leveraged", needs: "user" }
+  ]);
+});
+
+test("parse-back: hidden characters and text the record does not have are flagged", () => {
+  const data = resumeData(breakRecord(), bank);
+  const good = [data.name, data.phone, data.location, data.email, "Summary", data.summary, "Experience",
+    ...data.experience.flatMap((e) => [e.title, e.dates, e.company, e.location, ...e.bullets]),
+    "Education", ...data.education.flatMap((e) => [e.school, e.dates, e.degree]), "Skills", data.skills.join(", ")].join("\n");
+  const codes = (text: string) => checkText(text, data, "test").map((i) => i.code).filter((c) => c === "hidden_chars" || c === "extra_text");
+  assert.deepEqual(codes(good), []);
+  assert.deepEqual(codes(good.replace("Kubernetes", "Kuber\u200Bnetes")), ["hidden_chars"]);
+  assert.deepEqual(codes(good + "\nkafka spark airflow"), ["extra_text"], "white-text keyword stuffing");
+});
+
+test("questions: generic terms are never asked, as skills or in the keyword question", () => {
+  const r = scoreRequirements(req({ must_have: ["Scale", "Software engineering", "Kafka"] }), bank, extra);
+  assert.deepEqual(r.ask_user.map((q) => q.skill), ["kafka"]);
+  const risks = riskCheck(req({ keywords: ["scale", "cost", "communication skills", "Kafka", "Spark"] }), bank, extra, ["cur-1"]);
+  const kw = risks.find((x) => x.id === "keywords");
+  assert.equal(kw?.question, "Have or don't have: Kafka, Spark?");
 });

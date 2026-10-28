@@ -12,7 +12,9 @@
 #                    16384), slots LLM_CODER_SLOTS (default 1), speculative decoding
 #                    LLM_SPEC=draft (default) | ngram | both | none
 #   embed      8082  mxbai-embed-large   embeddings only, CLS pooling (knowledge layer)
-#   general7   8084  qwen2.5:7b          product: JD parsing, requirement judge
+#   general7   8084  qwen2.5:7b          product: JD parsing, requirement judge; LLM_GENERAL7_SLOTS
+#                    parallel slots (default 3) sharing one 16k context (-kvu), so the
+#                    judge runs that many calls at once (JOBOPS_JUDGE_PARALLEL)
 #   general14  8085  qwen2.5:14b         product: one-time bank build, rewording
 # Heavy roles (coder, general7, general14) are exclusive: on a 16 GB Mac two of
 # them swap, so starting one while another runs is refused (LLM_ALLOW_BOTH=1 overrides).
@@ -53,7 +55,7 @@ spec() {
             slots=${LLM_CODER_SLOTS:-1}
             echo "8081 qwen2.5-coder-14b-instruct-q4_k_m.gguf qwen2.5-coder-14b -c $(( ${LLM_CODER_CTX:-16384} * slots )) -np $slots --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics $spec" ;;
     embed)     echo "8082 mxbai-embed-large-v1-f16.gguf mxbai-embed-large --embeddings --pooling cls -c 512 -b 512 -ub 512 -np 1" ;;
-    general7)  echo "8084 qwen2.5-7b-instruct-q4_k_m.gguf qwen2.5-7b -c 16384 -np 1 --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
+    general7)  echo "8084 qwen2.5-7b-instruct-q4_k_m.gguf qwen2.5-7b -c 16384 -np ${LLM_GENERAL7_SLOTS:-3} -kvu --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
     general14) echo "8085 qwen2.5-14b-instruct-q4_k_m.gguf qwen2.5-14b -c 16384 -np 1 --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
     *) return 1 ;;
   esac

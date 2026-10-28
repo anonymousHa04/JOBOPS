@@ -7,6 +7,7 @@ import type { Db } from "./db.ts";
 import {
   addBullet,
   addSkill,
+  removeSkill,
   buildBank,
   checkBank,
   dismissRisk,
@@ -16,6 +17,7 @@ import {
   addRole,
   excludeTitleWords,
   markBreak,
+  setDegree,
   setCompany,
   retagBank,
   loadSkillsExtra,
@@ -26,11 +28,14 @@ import {
 import type { Ats } from "./profile/bank.ts";
 import { loadRequirements, parseJob } from "./requirements/parse.ts";
 import { riskCheck } from "./scoring/risk.ts";
-import { JUDGE_MODEL, judgeRequirements, loadVerdicts, needsJudgeCount } from "./scoring/judge.ts";
+import { JUDGE_MODEL, judgeRequirements, judgeSettled, loadVerdicts, needsJudgeCount, openRequirements } from "./scoring/judge.ts";
 import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { renderRecord } from "./render/render.ts";
+import { atsCheck } from "./render/ats.ts";
+import { compareReport } from "./render/ats-report.ts";
+import type { Reported } from "./render/ats-report.ts";
 import { lintRecord } from "./tailor/lint.ts";
 import { fetchJob } from "./jobs/from-url.ts";
 import { createJobRepository } from "./jobs/repository.ts";
@@ -93,7 +98,13 @@ export function bankApprove() {
   return { approved: true };
 }
 
+export function skillRemove(name: string) {
+  return { skill: name.trim().toLowerCase(), removed: removeSkill(name) };
+}
+
 export function skillAdd(name: string, have: boolean, evidence: string) {
+  // A placeholder copied from instructions ("<skill>") is not a skill name.
+  if (/[<>]/.test(name) || /[<>]/.test(evidence)) throw new Error(`"${/[<>]/.test(name) ? name : evidence}" looks like a placeholder; use the real skill name and evidence`);
   addSkill(name, have ? "have" : "dont_have", evidence);
   return { skill: name.toLowerCase(), status: have ? "have" : "dont_have" };
 }
@@ -104,6 +115,10 @@ export function bulletAdd(entryId: string, text: string, tags: string[], impact:
 
 export function bankMarkBreak(entryId: string, title?: string) {
   return markBreak(entryId, title);
+}
+
+export function bankDegree(degree: string, id?: string) {
+  return setDegree(degree, id);
 }
 
 export function prefsRoleAdd(title: string, aliases: string[]) {
@@ -297,12 +312,14 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   const extra = loadSkillsExtra();
   const req = loadRequirements(d, job.id)!;
   const open = needsJudgeCount(d, req, bank, extra);
-  if (open > 0) {
+  const settled = open > 0 ? judgeSettled(req, bank, extra, loadVerdicts(d, req, bank, extra), openRequirements(d, req, bank, extra)) : null;
+  if (open > 0 && !settled) {
     const m = await modelUp(JUDGE_MODEL);
     if (!m.up) return stop("judge", m.role, `${open} requirements need the judge; ${JUDGE_MODEL} is not running`);
   }
   const scored = await score(d, job.id, open > 0);
-  steps.push({ step: "judge", status: open > 0 ? "done" : "cached", detail: `${scored.score} (${scored.band})` });
+  steps.push({ step: "judge", status: settled ? "skipped" : open > 0 ? "done" : "cached",
+    detail: `${scored.score} (${scored.band})${settled ? `; not needed: ${settled}` : ""}` });
   const scoreOut = { score: scored.score, band: scored.band, years: scored.hard, ask_user: scored.ask_user };
 
   // 4. Decide; reword only for adapt.
@@ -326,4 +343,20 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   const pdf = await render(d, t.resume_id);
   steps.push({ step: "render", status: pdf.ok ? "done" : "stopped", detail: pdf.ok ? undefined : `parse-back failed: ${pdf.issues.map((i) => i.code).join(", ")}` });
   return out({ ...result, pdf: pdf.path, pdf_issues: pdf.issues });
+}
+
+// ATS check (render/ats.ts): the local readers on the fake resume, or on a record. Issues
+// are codes and ids, never resume text.
+export async function ats(d: Db, opts: { resumeId?: string }) {
+  if (!opts.resumeId) return atsCheck();
+  const bank = requireBank();
+  const record = loadRecords(d, bank).records.find((r) => r.resume_id === opts.resumeId);
+  if (!record) throw new Error(`no record ${opts.resumeId}`);
+  return atsCheck({ record, bank });
+}
+
+// Compares what a site's resume autofill showed for the fake resume (a JSON file filled in
+// by hand after an upload test) with what it should show.
+export function atsCompare(file: string) {
+  return compareReport(JSON.parse(readFileSync(file, "utf8")) as Reported);
 }

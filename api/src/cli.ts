@@ -5,11 +5,13 @@ import * as t from "./tools.ts";
 const USAGE = `usage: node api/src/cli.ts <command>
   bank build | check | retag | dedupe | approve | status
   bank mark-break <role-id> [--title "Career break (reason)"]
+  bank degree "<degree text>" [--id <education-id>]
   prefs role <title> [--aliases "a,b"]   (target job title for jd-search)
   prefs exclude <word> [<word> ...]       (title words that drop a posting)
   prefs company <name> --slug <slug> --ats auto|greenhouse|lever|ashby|workday|smartrecruiters|careers
   skill add <name> --evidence "<where used>"
   skill no <name>
+  skill remove <name>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
@@ -23,7 +25,9 @@ const USAGE = `usage: node api/src/cli.ts <command>
   tailor <job_id> [--dry-run] [--force]
   tailor --all --dry-run
   render <resume_id>     (PDF, kept only if the parse-back test passes)
-  lint <resume_id>`;
+  lint <resume_id>
+  ats check [<resume_id>]  (local readers: pdftotext, pdf.js, OpenResume; the fake resume without an id)
+  ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected)`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
@@ -46,6 +50,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "dedupe") return t.bankDedupeSkills();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
+      if (sub === "degree") return t.bankDegree(need(rest[0], "degree text"), flag(rest, "id"));
       if (sub === "mark-break") return t.bankMarkBreak(need(rest[0], "role id"), flag(rest, "title"));
       break;
     case "prefs":
@@ -61,6 +66,7 @@ async function main(argv: string[]): Promise<unknown> {
     case "skill":
       if (sub === "add") return t.skillAdd(need(rest[0], "skill name"), true, flag(rest, "evidence") ?? "");
       if (sub === "no") return t.skillAdd(need(rest[0], "skill name"), false, "");
+      if (sub === "remove") return t.skillRemove(need(rest[0], "skill name"));
       break;
     case "bullet": {
       if (sub !== "add") break;
@@ -96,6 +102,10 @@ async function main(argv: string[]): Promise<unknown> {
       break;
     case "score":
       return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
+    case "ats":
+      if (sub === "check") return t.ats(t.db(), { resumeId: rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined });
+      if (sub === "compare") return t.atsCompare(need(rest[0], "report file"));
+      break;
     case "lint":
       return t.lint(t.db(), need(sub, "resume id"));
     case "render":

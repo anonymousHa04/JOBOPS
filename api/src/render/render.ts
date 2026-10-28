@@ -13,7 +13,8 @@ import type { Issue } from "./parseback.ts";
 const TEMPLATE = join(import.meta.dirname, "..", "..", "templates", "resume.typ");
 export const pdfDir = () => join(process.env.JOBOPS_PROFILE_DIR ?? "profile", "pdf");
 
-type Entry = { id: string; title: string; company: string; location: string; dates: string; bullets: string[] };
+// kind: a career break (render data only; the template ignores it, the readers' checks use it).
+type Entry = { id: string; title: string; company: string; location: string; dates: string; bullets: string[]; kind?: "break" };
 export type ResumeData = {
   name: string;
   phone: string;
@@ -39,13 +40,16 @@ export function resumeData(record: ResumeRecord, bank: Bank, paper = "a4"): Resu
   for (const b of record.content.bullets) byEntry.set(b.entry_id, [...(byEntry.get(b.entry_id) ?? []), b.text]);
   // Entries in bank order; an entry appears only with at least one bullet in the record.
   // A career break has no bullets and always appears, so the timeline shows no hole. It
-  // keeps two lines like every entry ("Career break" + dates, then the reason): a parser
-  // that splits entries by their lines (OpenResume) merged a one-line break into the next job.
+  // has the same two lines as a job: "Career break" where the company goes, the reason
+  // with the dates where the title goes. Workday reads every entry as a company line then
+  // a title line, and drops the words "Career break": with them on the dated line it took
+  // the next job's company line instead (tested 2026-10-28; this order keeps every job's
+  // fields, and Workday leaves only the break's title for the candidate to fill).
   const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id) || e.kind === "break").map((e) => {
     const reason = e.kind === "break" ? e.title.match(/^(.*?)\s*\((.+)\)\s*$/) : null;
-    const title = reason ? reason[1] : e.title;
-    const company = reason ? reason[2].charAt(0).toUpperCase() + reason[2].slice(1) : e.company ?? "";
-    return { id: e.id, title, company, location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? [] };
+    const company = reason ? reason[1] : e.company ?? "";
+    const title = reason ? reason[2].charAt(0).toUpperCase() + reason[2].slice(1) : e.title;
+    return { id: e.id, title, company, location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? [], ...(reason ? { kind: "break" as const } : {}) };
   });
   return {
     name: bank.basics.name, phone: bank.basics.phone, email: bank.basics.email, location: bank.basics.location,
@@ -62,7 +66,8 @@ export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; 
 
 // Compile in a temp folder (template + data.json only), parse it back, and move the PDF
 // into profile/pdf/<resume_id>.pdf only when every check passes.
-export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string } = {}): Promise<RenderResult> {
+// outDir: where the PDF goes (default profile/pdf); the ATS check's fake resume uses data/ats.
+export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string } = {}): Promise<RenderResult> {
   const work = mkdtempSync(join(tmpdir(), "jobops-render-"));
   try {
     const data = resumeData(record, bank, opts.paper);
@@ -74,8 +79,9 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
     if (r.status !== 0) return { ok: false, path: null, issues: [], error: `typst failed: ${r.stderr.split("\n")[0]}` };
     const check = await parseBack(out, data, opts.maxPages ?? 2);
     if (!check.ok) return { ok: false, path: null, issues: check.issues, error: null };
-    mkdirSync(pdfDir(), { recursive: true });
-    const path = join(pdfDir(), `${record.resume_id}.pdf`);
+    const dir = opts.outDir ?? pdfDir();
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${record.resume_id}.pdf`);
     copyFileSync(out, path);
     return { ok: true, path, issues: [], error: null };
   } finally {

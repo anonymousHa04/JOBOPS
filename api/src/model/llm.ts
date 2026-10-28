@@ -12,9 +12,10 @@ export type GenerateResult<T> =
 type Attempt<T> = GenerateResult<T> | { ok: false; error: "retry"; detail: string };
 
 // Model name -> llama.cpp server role (llm.sh). Only one heavy model runs at a time.
-const SERVERS: Record<string, { url: string; alias: string; role: string }> = {
-  "qwen2.5:7b": { url: process.env.LLM_GENERAL7_URL ?? "http://127.0.0.1:8084/v1", alias: "qwen2.5-7b", role: "general7" },
-  "qwen2.5:14b": { url: process.env.LLM_GENERAL14_URL ?? "http://127.0.0.1:8085/v1", alias: "qwen2.5-14b", role: "general14" }
+// The URL is read at each call, so a changed setting (or a test's fake server) applies.
+const SERVERS: Record<string, { url: () => string; alias: string; role: string }> = {
+  "qwen2.5:7b": { url: () => process.env.LLM_GENERAL7_URL ?? "http://127.0.0.1:8084/v1", alias: "qwen2.5-7b", role: "general7" },
+  "qwen2.5:14b": { url: () => process.env.LLM_GENERAL14_URL ?? "http://127.0.0.1:8085/v1", alias: "qwen2.5-14b", role: "general14" }
 };
 
 export async function generate<T>(opts: {
@@ -27,7 +28,7 @@ export async function generate<T>(opts: {
 
 }): Promise<GenerateResult<T>> {
   const server = SERVERS[opts.model];
-  const baseUrl = opts.baseUrl ?? server?.url;
+  const baseUrl = opts.baseUrl ?? server?.url();
   if (!baseUrl) return { ok: false, error: "unavailable", detail: `unknown model ${opts.model}` };
   const { $schema: _ignored, ...schema } = z.toJSONSchema(opts.schema) as Record<string, unknown>;
   const body = JSON.stringify({
@@ -123,7 +124,7 @@ export async function modelUp(model: string): Promise<{ up: boolean; role: strin
   const server = SERVERS[model];
   if (!server) return { up: false, role: "" };
   try {
-    const r = await fetch(`${server.url}/models`, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${server.url()}/models`, { signal: AbortSignal.timeout(3000) });
     return { up: r.ok, role: server.role };
   } catch {
     return { up: false, role: server.role };

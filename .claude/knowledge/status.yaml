@@ -3,8 +3,8 @@
 # searched: retrieve.py semantic "what is left for the engine".
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
-updated: 2026-10-26
-branch: m3-engine
+updated: 2026-10-28
+branch: milestone-4 (from dev; milestone-3 and m3-engine merged into dev)
 
 environment:
   - id: env-llama-cpp
@@ -101,7 +101,7 @@ milestone_3:
     decisions_digest: "m3-notes references/decisions.md (2026-10-27): every agreed decision in one file; always included in full in context packages for product code (api/, jd-search/); context budgets raised to 4500 (aider) and 4000 (mini) to keep room for code context"
     review_aware: "tailoring loads profile/reviews/* locally, maps findings to engine actions or user questions, stores finding ids + status in the record (never the text), reports open ones"
   - id: m3-engine
-    state: blocked
+    state: done
     blocked_on: user go-ahead; content equivalence formula
     what: selection, content equivalence, rewrite check, resume records, tailoring (requierements/jobops_resume_selection_generation_engine.md)
   - id: m3-engine-step-1a-scoring
@@ -131,10 +131,10 @@ milestone_3:
     what: "api/src/tailor/reword.ts: prompt 3 (requierements/select-and-tailor.md) filled with a shortlist of one marked bullet, plus the spec's extra rules (allowed JD terms, keep numbers, never lead with a number, same verb level) and on retry the failure codes; qwen2.5:7b (general7); every answer checked by guardedReword against the bank text; changes recorded; model server down -> bullets unchanged, error reported"
     tests: "3 reword tests against a scripted fake model server; total 38 tests pass; not yet run against the real 7B model"
   - id: settings-env-file
-    state: review
+    state: done
     what: ".env.example (committed) lists every setting with its default; .env (git-ignored) is a copy to edit. Loaded by api/src/env.ts (server, CLI, MCP server; shell variables win; tests never load it), .mcp.json jd-search launcher, llm.sh, retrieve.py; infra/qdrant compose reads QDRANT_DATA_DIR (docker compose --env-file .env). Rewording default switched to qwen2.5:14b (code, skill docs, llm.sh roles)"
   - id: m3-engine-step-6-tailor
-    state: review
+    state: done
     what: "api/src/tailor/tailor.ts: planJob (start record incl. the original resume before it is written, ideal, risks, decision, unjudged count), tailorJob (blocked adapt writes nothing; original record written first; reuse writes the start's content as this JD's record; adapt rewords; not_tailored records the reason; evidence_refs), dryRunAll (decision table sorted by score + open risk questions with job ids; cached verdicts only, no files). tools.ts tailor/tailorAll (bank must be approved, judge first); CLI: tailor <job_id> [--dry-run] [--force], tailor --all --dry-run. loadPreferences added (budgets)"
     tests: "4 tailor tests (dry run, blocked, adapt then reuse, not_tailored); total 42 tests pass"
     open: "review_findings stays [] until m3-review-findings (below); same-company warning and lint are later steps; MCP tool is the last step"
@@ -160,7 +160,7 @@ milestone_3:
     state: done
     what: "Synonyms and skill groups moved from code to YAML: api/config/synonyms.yaml and api/config/skill-groups.yaml (defaults, committed); profile/synonyms.yaml and profile/skill-groups.yaml (user's, git-ignored) win. api/src/lists.ts loads both, validates (a broken file is an error naming it), re-reads on change (MCP server sees edits). Tests point JOBOPS_PROFILE_DIR at a temp folder so user overrides never change results"
   - id: m3-review-findings
-    state: todo
+    state: deferred
     when: "later, after the template step (user 2026-10-27: leave it, keep a note)"
     why: "profile/reviews is free text and private (Claude never reads it), so the engine cannot map findings to actions yet; engine-algorithm 4 step 9 is not implemented"
     what: "review extract: local qwen2.5:14b turns profile/reviews/* once into profile/reviews/findings.yaml (id, kind from a fixed list: skills/ordering/summary/spelling/length/needs_facts, engine action); the user reviews and approves it like the bank; tailor loads approved findings, applies engine-fixable ones in code, stores review_findings [{id, status: addressed|open|needs_facts}] (ids only) and reports open ones; needs_facts findings become bullet-writing.md questions. Not chosen: a model call on every tailor (varies per run, unreviewed)"
@@ -173,20 +173,17 @@ milestone_3:
     decided: "m3-notes engine-algorithm 5: same id+text 1.0, alias->JD term 0.9, reworded 0.5, one side 0; summary 1 unit; skills 1 unit x Jaccard; 100 x matched / (bullet union + 2)"
     what: "define during the engine design session (proposal in chat: id+text = 1, reworded = 0.5, over the union, plus summary variant)"
   - id: m3-tests
-    state: todo
+    state: done
     what: "m3-notes engine-algorithm 8: 5 engine tests + 2 invariants on a fake resume; plus earlier cases for the built parts"
   - id: m3-bank-build
-    state: todo
+    state: done
     what: node api/src/cli.ts bank build on the real resume (local model), user review and approve profile/bank.yaml
   - id: product-provider-llama-cpp
     state: done
     what: move api/src/model/ollama.ts (JD parse, bank build, rewording) to the llama.cpp OpenAI-compatible API with json_schema; verified to work (6*7 test returned schema-valid JSON); then Ollama can be retired
   - id: rewording-model
-    state: flagged
-    what: local qwen2.5:7b for now; the user found a better option to switch to later
+    state: decided
+    what: local qwen2.5:14b with the humanizer rules (prompt + ai_tell_added guard); user decision 2026-10-28, closes the flag
 
-decisions_needed:
-  - id: engine-go
-    question: Start the resume selection engine (and settle the content equivalence formula)?
-  - id: m3-test-cases
-    question: Approve the 7 minimal M3 test cases?
+milestone_3_done: "2026-10-28: all README M3 items built and tested (81 TS tests + Go); first real adapt record (Okta Core Frontier) passes the three-reader parse-back; merged into dev"
+decisions_needed: []

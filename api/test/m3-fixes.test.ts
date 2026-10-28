@@ -20,6 +20,13 @@ import { detectBoard, jobLinks, jsonLdPostings, robotsAllows } from "../src/care
 import { boardOf, fetchJob, looksLikeJd } from "../src/jobs/from-url.ts";
 import { openDb } from "../src/db.ts";
 import { jobAdd } from "../src/tools.ts";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { copyFileSync } from "node:fs";
+import { judgeRequirements, judgeSettled } from "../src/scoring/judge.ts";
+import { needsJudge } from "../src/scoring/score.ts";
+import { fitPages } from "../src/tailor/tailor.ts";
+import { MAX_SKILLS } from "../src/scoring/config.ts";
 
 // Career breaks, degree and soft-skill must-haves, synonym-aware skill questions,
 // preferences commands, the careers crawler's page reading, and `job add <url>`.
@@ -395,4 +402,133 @@ test("questions: generic terms are never asked, as skills or in the keyword ques
   const risks = riskCheck(req({ keywords: ["scale", "cost", "communication skills", "Kafka", "Spark"] }), bank, extra, ["cur-1"]);
   const kw = risks.find((x) => x.id === "keywords");
   assert.equal(kw?.question, "Have or don't have: Kafka, Spark?");
+});
+
+// --- Tailored resume: skills, page fit, headings ---
+
+test("skills: JD matches first, then only skills the chosen bullets show; never soft skills; at most MAX_SKILLS", () => {
+  const b = structuredClone(bank);
+  b.skills.tools = ["Kubernetes", "Terraform", "Ansible", "Communication"]; // Terraform, Ansible: in no bullet
+  const ideal = idealContent(req({ must_have: ["Kubernetes"], keywords: ["TypeScript"] }), b, extra,
+    { bullets_per_role: 3, bullets_total: 6, max_words: 25 });
+  assert.equal(ideal.skills[0], "TypeScript", "the JD's own spelling first");
+  assert.ok(ideal.skills.includes("Kubernetes"));
+  for (const s of ["Terraform", "Ansible", "Communication"]) assert.ok(!ideal.skills.includes(s), `${s} left out`);
+  const many = structuredClone(bank);
+  const names = Array.from({ length: 20 }, (_, i) => `Tool${i + 1}`);
+  many.skills.tools = names;
+  const capped = idealContent(req({ keywords: names }), many, extra, { bullets_per_role: 3, bullets_total: 6, max_words: 25 });
+  assert.equal(capped.skills.length, MAX_SKILLS);
+});
+
+const hasTypst = !spawnSync("typst", ["--version"]).error && !spawnSync("pdfinfo", ["-v"]).error;
+
+test("page fit: drops the last bullet of the fullest entry, never an entry's only one", { skip: !hasTypst && "typst or pdfinfo missing" }, () => {
+  const b = structuredClone(bank);
+  b.roles[0].bullets.push(bullet("cur-4", "Wrote the runbook for the billing service", ["runbook", "billing"]));
+  const content = { summary_variant: "backend", summary_text: "Backend engineer.", skills: [],
+    bullets: ["cur-1", "cur-2", "cur-4", "old-1"].map((id) => ({ id, entry_id: id.split("-")[0], text: [...b.roles[0].bullets, ...b.roles[2].bullets].find((x) => x.id === id)!.text })) };
+  // A limit of 0 pages can never be met: it trims until every entry has one bullet.
+  const none = fitPages(content as never, b, 0);
+  assert.deepEqual(none.dropped.map((d) => d.id), ["cur-4", "cur-2"]);
+  assert.deepEqual(none.content.bullets.map((x) => x.id), ["cur-1", "old-1"]);
+  assert.deepEqual(fitPages(content as never, b, 2).dropped, [], "already within the limit");
+});
+
+test("template: a page never ends on a section heading, and Skills never splits", { skip: !hasTypst && "typst or pdfinfo missing" }, () => {
+  const TEMPLATE = join(import.meta.dirname, "..", "templates", "resume.typ");
+  const words = "Moved the billing and reporting services to Kubernetes with zero downtime for every tenant";
+  const heads = ["Summary", "Experience", "Projects", "Education", "Skills"];
+  // Many lengths, so page breaks land at many places, near Education and Skills too.
+  for (let n = 26; n <= 46; n += 2) {
+    const b = structuredClone(bank);
+    b.roles[0].bullets = Array.from({ length: n }, (_, i) => bullet(`cur-${i + 1}`, `${words} ${i + 1}`, ["kubernetes"]));
+    b.skills.tools = Array.from({ length: 15 }, (_, i) => `Tool${i + 1}`);
+    const record = { resume_id: "x", content: { summary_text: "Backend engineer.", skills: b.skills.tools,
+      bullets: [...b.roles[0].bullets.map((x) => ({ id: x.id, entry_id: "cur", text: x.text })), { id: "old-1", entry_id: "old", text: b.roles[2].bullets[0].text }] } } as unknown as ResumeRecord;
+    const work = mkdtempSync(join(tmpdir(), "jobops-pagebreak-"));
+    copyFileSync(TEMPLATE, join(work, "resume.typ"));
+    writeFileSync(join(work, "data.json"), JSON.stringify(resumeData(record, b)));
+    spawnSync("typst", ["compile", "--root", work, join(work, "resume.typ"), join(work, "r.pdf")]);
+    const pages = Number(spawnSync("pdfinfo", [join(work, "r.pdf")], { encoding: "utf8" }).stdout.match(/Pages:\s+(\d+)/)?.[1]);
+    const text = (p: number) => spawnSync("pdftotext", ["-f", String(p), "-l", String(p), join(work, "r.pdf"), "-"], { encoding: "utf8" }).stdout
+      .split("\n").map((l) => l.trim()).filter(Boolean);
+    for (let p = 1; p < pages; p++) assert.ok(!heads.includes(text(p).at(-1) ?? ""), `${n} bullets: page ${p} ends on a heading`);
+    const skillsPage = Array.from({ length: pages }, (_, i) => i + 1).find((p) => text(p).includes("Skills"))!;
+    assert.ok(text(skillsPage).some((l) => l.includes("Tool1,")), `${n} bullets: the skills list is on the Skills heading's page`);
+  }
+});
+
+// --- Judge: skip settled jobs, parallel calls ---
+
+test("judge: settled by years, settled when the best case is below moderate, open otherwise", () => {
+  const none = new Map();
+  assert.match(judgeSettled(req({ must_have: ["10+ years of experience", "Kafka"] }), bank, extra, none, ["Kafka"]) ?? "", /^years: JD asks 10\+/);
+  const said = { ...extra, skills: ["kafka", "spark", "flink"].map((n) => ({ name: n, status: "dont_have" as const, evidence: "", added_at: "" })) };
+  assert.match(judgeSettled(req({ must_have: ["Kafka", "Spark", "Flink", "Airflow"] }), bank, said, none, ["Airflow"]) ?? "", /below moderate/);
+  assert.equal(judgeSettled(req({ must_have: ["Kubernetes", "Airflow"] }), bank, extra, none, ["Airflow"]), null);
+});
+
+// A judge server that answers "supported" with the first bullet listed, after a delay,
+// and records how many calls ran at once.
+async function fakeJudge(opts: { fail?: boolean } = {}) {
+  let inFlight = 0;
+  const seen = { calls: 0, maxAtOnce: 0 };
+  const server = createServer((rq, rs) => {
+    let body = "";
+    rq.on("data", (c) => (body += c));
+    rq.on("end", () => {
+      seen.calls++;
+      inFlight++;
+      seen.maxAtOnce = Math.max(seen.maxAtOnce, inFlight);
+      setTimeout(() => {
+        inFlight--;
+        if (opts.fail) { rs.statusCode = 500; rs.end("down"); return; }
+        const prompt = (JSON.parse(body) as { messages: { content: string }[] }).messages[0].content;
+        const id = prompt.match(/^([a-z0-9-]+) \| /m)?.[1] ?? "";
+        rs.setHeader("content-type", "application/json");
+        rs.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ label: "supported", bullet_ids: [id] }) } }] }));
+      }, 60);
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  process.env.LLM_GENERAL7_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+  return { seen, close: () => { server.close(); delete process.env.LLM_GENERAL7_URL; } };
+}
+
+const judgeReq = () => req({ must_have: ["Kubernetes"],
+  themes: ["led a migration in production", "owned the billing platform", "production on-call at scale", "led design reviews", "owned observability"] });
+
+test("judge: calls run in parallel, every verdict is saved, and the cache answers the second time", async () => {
+  const db = openDb(":memory:");
+  const r = judgeReq();
+  const open = needsJudge(r, bank, extra).length;
+  assert.ok(open >= 4, "enough requirements need the judge");
+  process.env.JOBOPS_JUDGE_PARALLEL = "3";
+  const judge = await fakeJudge();
+  try {
+    const first = await judgeRequirements(db, r, bank, extra);
+    assert.deepEqual([first.stats.judged, first.stats.failed, first.stats.skipped], [open, 0, null]);
+    assert.equal(judge.seen.calls, open);
+    assert.ok(judge.seen.maxAtOnce >= 2, `calls overlapped (max ${judge.seen.maxAtOnce} at once)`);
+    const again = await judgeRequirements(db, r, bank, extra);
+    assert.equal(again.stats.cached, open);
+    assert.equal(judge.seen.calls, open, "no new calls");
+  } finally {
+    judge.close();
+  }
+});
+
+test("judge: a server failure stops further calls; nothing is cached", async () => {
+  const db = openDb(":memory:");
+  const judge = await fakeJudge({ fail: true });
+  try {
+    const r = await judgeRequirements(db, judgeReq(), bank, extra);
+    assert.equal(r.stats.judged, 0);
+    assert.ok(r.stats.error);
+    assert.ok(judge.seen.calls <= 3, `at most the first parallel round was sent (${judge.seen.calls})`);
+    assert.equal(r.verdicts.size, 0);
+  } finally {
+    judge.close();
+  }
 });

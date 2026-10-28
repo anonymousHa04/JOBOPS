@@ -69,3 +69,39 @@ export function skillGroups(): Map<string, SkillGroup> {
     return out;
   });
 }
+
+const SoftSchema = z.record(z.string(), z.object({
+  phrases: z.array(z.coerce.string()),
+  shown_by: z.array(z.coerce.string()).default([])
+}).strict());
+
+// Whole words, case-insensitive; a hyphen and a space match each other.
+function wordsPattern(words: string[]): RegExp {
+  const alt = words
+    .map((p) => p.trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[-\s]+/g, "[-\\s]"))
+    .filter(Boolean);
+  return alt.length ? new RegExp(`(^|[^a-z0-9])(${alt.join("|")})($|[^a-z0-9])`, "i") : /$^/;
+}
+
+export type SoftSkills = {
+  // Matches JD wording that asks for a soft skill.
+  pattern: RegExp;
+  // For a requirement, the pattern of bullet words that show it (null if none do).
+  shownBy: (requirement: string) => RegExp | null;
+};
+
+// Soft-skill groups (soft-skills.yaml); a group in the user's file replaces the default.
+export function softSkills(): SoftSkills {
+  const files = [join(CONFIG, "soft-skills.yaml"), join(profileDir(), "soft-skills.yaml")];
+  return cached(files, () => {
+    const groups = Object.values(Object.assign({}, ...files.map((f) => read(f, SoftSchema) ?? {})) as z.infer<typeof SoftSchema>);
+    const compiled = groups.map((g) => ({ asks: wordsPattern(g.phrases), shows: g.shown_by }));
+    return {
+      pattern: wordsPattern(groups.flatMap((g) => g.phrases)),
+      shownBy: (r: string) => {
+        const words = compiled.filter((g) => g.asks.test(r)).flatMap((g) => g.shows);
+        return words.length ? wordsPattern(words) : null;
+      }
+    };
+  });
+}

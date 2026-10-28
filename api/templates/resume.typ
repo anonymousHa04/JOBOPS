@@ -25,11 +25,14 @@
   v(-2pt)
 }
 
-// Two lines: bold left / right on top, plain left / italic right below.
+// Two lines: bold left / right on top, plain left / italic right below. One line when
+// the bottom is empty (a career break).
 #let entry(top-left, top-right, bottom-left, bottom-right) = {
   block(above: 0.9em, below: 0.5em, breakable: false)[
-    #strong(top-left) #h(1fr) #top-right \
-    #bottom-left #h(1fr) #emph(bottom-right)
+    #strong(top-left) #h(1fr) #top-right
+    #if bottom-left != "" or bottom-right != "" [
+      \ #bottom-left #h(1fr) #emph(bottom-right)
+    ]
   ]
 }
 
@@ -54,7 +57,7 @@
   section("Experience")
   for e in data.experience {
     entry(e.title, e.dates, e.company, e.location)
-    bullets(e.bullets)
+    if e.bullets.len() > 0 { bullets(e.bullets) }
   }
 }
 

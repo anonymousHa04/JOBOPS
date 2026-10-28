@@ -4,6 +4,9 @@ import * as t from "./tools.ts";
 
 const USAGE = `usage: node api/src/cli.ts <command>
   bank build | check | retag | dedupe | approve | status
+  bank mark-break <role-id> [--title "Career break (reason)"]
+  prefs role <title> [--aliases "a,b"]   (target job title for jd-search)
+  prefs exclude <word> [<word> ...]       (title words that drop a posting)
   skill add <name> --evidence "<where used>"
   skill no <name>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
@@ -40,6 +43,11 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "dedupe") return t.bankDedupeSkills();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
+      if (sub === "mark-break") return t.bankMarkBreak(need(rest[0], "role id"), flag(rest, "title"));
+      break;
+    case "prefs":
+      if (sub === "role") return t.prefsRoleAdd(need(rest[0], "title"), (flag(rest, "aliases") ?? "").split(",").filter(Boolean));
+      if (sub === "exclude") return t.prefsExclude(rest.length ? rest : [need(undefined, "word")]);
       break;
     case "skill":
       if (sub === "add") return t.skillAdd(need(rest[0], "skill name"), true, flag(rest, "evidence") ?? "");

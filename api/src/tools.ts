@@ -13,6 +13,9 @@ import {
   bankDedupe,
   loadBank,
   loadPreferences,
+  addRole,
+  excludeTitleWords,
+  markBreak,
   retagBank,
   loadSkillsExtra,
   recordLearnable,
@@ -91,6 +94,18 @@ export function skillAdd(name: string, have: boolean, evidence: string) {
 
 export function bulletAdd(entryId: string, text: string, tags: string[], impact: "high" | "medium" | "low", opts: { topic?: string; evidence?: string } = {}) {
   return { id: addBullet(entryId, text, tags, impact, opts) };
+}
+
+export function bankMarkBreak(entryId: string, title?: string) {
+  return markBreak(entryId, title);
+}
+
+export function prefsRoleAdd(title: string, aliases: string[]) {
+  return { added: addRole(title, aliases) };
+}
+
+export function prefsExclude(words: string[]) {
+  return { added: excludeTitleWords(words) };
 }
 
 export function learnableSet(skill: string, learnable: boolean, jobId: string) {

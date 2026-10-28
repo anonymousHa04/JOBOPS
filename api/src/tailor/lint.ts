@@ -1,6 +1,7 @@
 import { vocabulary } from "../profile/bank.ts";
 import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { span, totalYears } from "../scoring/score.ts";
+import { softSkills } from "../lists.ts";
 import { hasTerm, norm, synonyms } from "../scoring/terms.ts";
 import { metricLed } from "./ideal.ts";
 
@@ -14,7 +15,6 @@ export type Finding = { code: string; detail: string; needs: "engine" | "user" |
 const SIGNAL = /\d|\b(team|teams|services?|users?|customers?|engineers?|across|production|company|org|clients?|requests?|traffic|latency|uptime|throughput|cost|revenue|reduc\w*|cut|improv\w*|increas\w*|sav\w*|grew|scal\w*|launch\w*|migrat\w*)\b/gi;
 const signals = (t: string) => (t.match(SIGNAL) ?? []).length;
 const PLANNED = /\b(planned|planning|will|working on|in progress|going to)\b/i;
-const SOFT = /\b(communication|leadership|team player|hard[- ]working|detail[- ]oriented|passionate|problem[- ]solving|self[- ]motivated)\b/i;
 const FORMATS: [string, RegExp][] = [["Mon YYYY", /^[A-Za-z]{3,9}\.? \d{4}$/], ["MM/YYYY", /^\d{1,2}\/\d{4}$/], ["YYYY", /^\d{4}$/]];
 const SHORT_TENURE_MONTHS = 12;
 const GAP_MONTHS = 6;
@@ -56,7 +56,7 @@ export function lintRecord(record: ResumeRecord, bank: Bank, extra: SkillsExtra,
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
   const tagged = new Set(bank.roles.concat(bank.projects).flatMap((e) => e.bullets).filter((b) => bullets.some((x) => x.id === b.id)).flatMap((b) => b.tags.map(norm)));
   record.content.skills.forEach((s, i) => {
-    if (SOFT.test(s)) add("soft_skill_listed", `skill#${i + 1}`, "engine");
+    if (softSkills().pattern.test(s)) add("soft_skill_listed", `skill#${i + 1}`, "engine");
     else if (!tagged.has(norm(s)) && !bullets.some((b) => hasTerm(b.text, s))) add("skill_not_evidenced", `skill#${i + 1}`, "engine");
   });
   // Length: one page up to about 8 years of experience.
@@ -92,11 +92,12 @@ export function tenure(bank: Bank, now = new Date()): Finding[] {
   const spans = bank.roles.map((r) => {
     const s = span(r.dates, now);
     const yearEnd = /^\d{4}$/.test(r.dates.split(/\s*(?:-|–|—|\bto\b)\s*/i).at(-1)?.trim() ?? "");
-    return { id: r.id, s: s && yearEnd ? { start: s.start, end: s.end + 11 } : s };
+    return { id: r.id, kind: r.kind, s: s && yearEnd ? { start: s.start, end: s.end + 11 } : s };
   });
-  for (const { id, s } of spans) {
+  // A career break covers its months (no gap), but is not a job, so it has no tenure.
+  for (const { id, kind, s } of spans) {
     if (!s) out.push({ code: "date_unparsed", detail: id, needs: "user" });
-    else if (s.end - s.start < SHORT_TENURE_MONTHS) out.push({ code: "short_tenure", detail: `${id}: ${s.end - s.start} months`, needs: "user" });
+    else if (kind !== "break" && s.end - s.start < SHORT_TENURE_MONTHS) out.push({ code: "short_tenure", detail: `${id}: ${s.end - s.start} months`, needs: "user" });
   }
   const sorted = spans.filter((x) => x.s).sort((a, b) => a.s!.start - b.s!.start);
   for (let i = 1; i < sorted.length; i++) {

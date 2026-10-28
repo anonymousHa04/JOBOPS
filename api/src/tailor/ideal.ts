@@ -69,7 +69,8 @@ export function idealContent(
   for (const i of scored.items) {
     if (i.credit <= 0 || i.kind === "keyword") continue;
     for (const id of i.bullet_ids) {
-      if (i.kind === "must") musts.set(id, (musts.get(id) ?? new Set()).add(i.requirement));
+      // A soft-skill must-have also gets one bullet that shows it.
+      if (i.kind === "must" || i.soft) musts.set(id, (musts.get(id) ?? new Set()).add(i.requirement));
       if (i.kind === "theme") themes.set(id, (themes.get(id) ?? 0) + 1);
     }
   }

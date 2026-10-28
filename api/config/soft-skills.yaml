@@ -1,0 +1,37 @@
+# Soft skills, shown the way a real resume shows them: through what the bullets say was
+# done, never listed under Skills (resume lint flags that).
+#
+# Each group has:
+#   phrases:  JD wording that asks for it ("Excellent communication skills").
+#   shown_by: words in a bullet that show it ("mentored", "presented").
+#
+# A JD must-have that names a phrase is scored as a theme: it counts toward the score but
+# never caps it, it is never asked as a skill question, and tailoring picks one bullet that
+# shows it. A shown_by word counts as partial evidence; the judge can rate it higher.
+# A group with no shown_by words (travel) is noted, never evidenced.
+# Matching is case-insensitive and whole-word; a hyphen and a space match each other.
+# Your own groups go in profile/soft-skills.yaml (same format, git-ignored); a group with
+# the same name there replaces this one.
+
+communication:
+  phrases: [communication, communicator, english, presentation, presentations, public speaking]
+  shown_by: [presented, documented, wrote, explained, demoed, mentored, trained, onboarded, reviewed]
+collaboration:
+  phrases: [collaboration, collaborative, teamwork, team player, interpersonal, cross-functional]
+  shown_by: [cross-team, collaborated, partnered, coordinated, stakeholders, worked with]
+leadership:
+  phrases: [leadership, influence, influencing]
+  shown_by: [led, mentored, drove, guided, coached, owned]
+judgment:
+  phrases: [judgment, judgement, problem-solving, mindset, self-motivated, self-starter,
+    hard-working, detail-oriented, passionate]
+  shown_by: [designed, decided, chose, diagnosed, debugged, resolved, owned]
+ways_of_working:
+  phrases: [agile, fast-paced, iterative]
+  shown_by: [agile, scrum, sprint, sprints, iterated, shipped, released]
+customers:
+  phrases: [customer relationships, trusted relationships, empathetic, empathy, listening]
+  shown_by: [customers, clients, users, user feedback, support]
+conditions:
+  phrases: [travel]
+  shown_by: []

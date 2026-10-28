@@ -38,7 +38,8 @@ export function resumeData(record: ResumeRecord, bank: Bank, paper = "a4"): Resu
   const byEntry = new Map<string, string[]>();
   for (const b of record.content.bullets) byEntry.set(b.entry_id, [...(byEntry.get(b.entry_id) ?? []), b.text]);
   // Entries in bank order; an entry appears only with at least one bullet in the record.
-  const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id)).map((e) => ({
+  // A career break has no bullets and always appears, so the timeline shows no hole.
+  const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id) || e.kind === "break").map((e) => ({
     id: e.id, title: e.title, company: e.company ?? "", location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? []
   }));
   return {

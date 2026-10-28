@@ -33,6 +33,9 @@ export const MUST_MISSING_BELOW = 0.5;
 export const CAP_ONE_MISSING = 84.9;
 export const CAP_TWO_MISSING = 74.9;
 
+// "Bachelor's degree or equivalent experience": this many years count as the equivalent.
+export const DEGREE_EQUIVALENT_YEARS = 4;
+
 // Words that make a requirement need judgement beyond a term match ("production
 // Kubernetes", "led a team"): the index finds candidates, a judge decides.
 export const QUALIFIERS = /\b(production|prod|at scale|large[- ]scale|led|lead|leading|owned|ownership|architect(ed|ing)?)\b/i;

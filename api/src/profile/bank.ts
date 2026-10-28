@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { parse, stringify } from "yaml";
+import { parse, parseDocument, stringify } from "yaml";
 import { generate } from "../model/llm.ts";
 import { hasTerm } from "../scoring/terms.ts";
 import { SKILL_GROUPS, skillGroups, skillKey } from "../lists.ts";
@@ -62,9 +62,35 @@ export function dedupeSkills(b: Bank): number {
   return removed;
 }
 
-// Every save files skills in the right group, then removes repeats (the model can
-// misfile and repeat list items).
+// A role titled like a career break is one (the model that builds the bank files it as
+// a job). Returns the ids it marked.
+const BREAK_TITLE = /\b(career break|sabbatical)\b/i;
+export function markBreaks(b: Bank): string[] {
+  const marked = b.roles.filter((r) => r.kind !== "break" && BREAK_TITLE.test(r.title));
+  for (const r of marked) r.kind = "break";
+  return marked.map((r) => r.id);
+}
+
+// Marks one role as a career break: no company or location, no bullets, an optional
+// title the user gives ("Career break (family reasons)"). Dates stay as they are.
+export function markBreak(entryId: string, title?: string): { id: string; dates: string } {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const role = bank.roles.find((r) => r.id === entryId);
+  if (!role) throw new Error(`unknown role ${entryId}`);
+  if (role.bullets.length) throw new Error(`${entryId} has ${role.bullets.length} bullets; a career break has none`);
+  role.kind = "break";
+  if (title?.trim()) role.title = title.trim();
+  delete role.company;
+  delete role.location;
+  saveBank(bank);
+  return { id: role.id, dates: role.dates };
+}
+
+// Every save marks career breaks, files skills in the right group, then removes repeats
+// (the model can misfile and repeat list items).
 export function saveBank(b: Bank): void {
+  markBreaks(b);
   regroupSkills(b);
   dedupeSkills(b);
   writeYaml(bankPath(), BankSchema.parse(b));
@@ -87,6 +113,45 @@ export function loadSkillsExtra(): SkillsExtra {
 export function loadPreferences(): Preferences {
   if (!existsSync(preferencesPath())) throw new Error(`no preferences: ${preferencesPath()}`);
   return PreferencesSchema.parse(parse(readFileSync(preferencesPath(), "utf8")));
+}
+
+// Edits preferences.yaml in place, keeping its comments, and returns only what it added
+// (never the file's content). The result must still match the schema.
+function editPreferences(edit: (p: Preferences) => string[]): string[] {
+  if (!existsSync(preferencesPath())) throw new Error(`no preferences: ${preferencesPath()}`);
+  const doc = parseDocument(readFileSync(preferencesPath(), "utf8"));
+  const prefs = PreferencesSchema.parse(doc.toJS());
+  const added = edit(prefs);
+  if (added.length) {
+    doc.set("roles", prefs.roles);
+    doc.setIn(["seniority", "exclude"], prefs.seniority.exclude);
+    writeFileSync(preferencesPath(), doc.toString());
+  }
+  return added;
+}
+
+// A target role and its aliases ("SDE 3", "SDE III"); an alias already present is skipped.
+export function addRole(title: string, aliases: string[]): string[] {
+  return editPreferences((p) => {
+    const lower = (x: string) => x.trim().toLowerCase();
+    const known = new Set(p.roles.flatMap((r) => [r.title, ...r.aliases]).map(lower));
+    const names = [title, ...aliases].map((x) => x.trim()).filter((x) => x && !known.has(lower(x)));
+    if (!names.length) return [];
+    const role = p.roles.find((r) => lower(r.title) === lower(title));
+    if (role) role.aliases.push(...names);
+    else p.roles.push({ title: names[0], aliases: names.slice(1) });
+    return names;
+  });
+}
+
+// Title words that drop a posting ("staff", "solutions architect").
+export function excludeTitleWords(words: string[]): string[] {
+  return editPreferences((p) => {
+    const known = new Set(p.seniority.exclude.map((w) => w.trim().toLowerCase()));
+    const add = [...new Set(words.map((w) => w.trim().toLowerCase()))].filter((w) => w && !known.has(w));
+    p.seniority.exclude.push(...add);
+    return add;
+  });
 }
 
 export function saveSkillsExtra(s: SkillsExtra): void {

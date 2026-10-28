@@ -8,6 +8,7 @@ import {
   CAP_ONE_MISSING,
   CAP_TWO_MISSING,
   CREDIT,
+  DEGREE_EQUIVALENT_YEARS,
   MUST_KEYWORD_WEIGHT,
   MUST_MISSING_BELOW,
   PARTS,
@@ -16,6 +17,7 @@ import {
   TAILORED_BANDS
 } from "./config.ts";
 import type { Band, Part } from "./config.ts";
+import { softSkills } from "../lists.ts";
 import { hasTerm, norm, terms } from "./terms.ts";
 
 // Scoring per the m3-notes skill (engine-algorithm.md §2-3): an inverted index finds
@@ -26,8 +28,9 @@ import { hasTerm, norm, terms } from "./terms.ts";
 export type Label = keyof typeof CREDIT;
 export type Kind = "must" | "theme" | "nice" | "keyword";
 // Where a label came from: the index, the judge, the index without the judge it needed,
-// the role dates (years), the user (don't have / learnable), a literal keyword check, or nothing.
-export type LabelSource = "index" | "judge" | "index_no_judge" | "years" | "user" | "literal" | "none";
+// the role dates (years), the bank's education (degree), the user (don't have / learnable),
+// a literal keyword check, or nothing.
+export type LabelSource = "index" | "judge" | "index_no_judge" | "years" | "education" | "user" | "literal" | "none";
 
 export type ScoreItem = {
   requirement: string;
@@ -37,6 +40,9 @@ export type ScoreItem = {
   bullet_ids: string[];
   source: LabelSource;
   qualifier: boolean;
+  // A must-have that asks for a soft skill: scored as a theme (no cap), but tailoring
+  // still picks a bullet that shows it.
+  soft?: boolean;
 };
 
 // The judge's verdict on one requirement over the whole bank (see judge.ts).
@@ -66,6 +72,24 @@ export function yearsAsked(r: string): number {
   return Number(r.match(/(\d+)\s*\+?\s*(?:years|yrs)/i)?.[1] ?? 0);
 }
 
+// Degree level asked by a requirement (0 if it asks for none): "Bachelor's or Master's"
+// asks for the lower one.
+export function degreeAsked(r: string): number {
+  if (!/\b(degree|bachelor|master|ph\.?\s?d|doctorate)/i.test(r)) return 0;
+  if (/\bbachelor/i.test(r)) return 1;
+  if (/\bmaster/i.test(r)) return 2;
+  return /\b(ph\.?\s?d|doctorate)/i.test(r) ? 3 : 1;
+}
+
+// Highest degree level in the bank's education (0 if none).
+export function degreeHave(bank: Bank): number {
+  const level = (d: string) =>
+    /\b(ph\.?\s?d|doctor)/i.test(d) ? 3
+    : /\b(master|m\.?\s?tech|m\.?\s?sc|ms|mba|mca|m\.?\s?e)\b/i.test(d) ? 2
+    : /\b(bachelor|b\.?\s?tech|b\.?\s?sc|bs|ba|bca|b\.?\s?e|degree)\b/i.test(d) ? 1 : 0;
+  return Math.max(0, ...bank.education.map((e) => level(e.degree)));
+}
+
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 // One side of a date range ("Jan 2021", "03/2020", "2019", "Present") as months since year 0.
@@ -93,10 +117,11 @@ export function span(dates: string, now = new Date()): { start: number; end: num
   return start !== null && end !== null && end >= start ? { start, end } : null;
 }
 
-// Sum of role durations in years; unparseable dates are skipped.
+// Sum of role durations in years; unparseable dates and career breaks are skipped.
 export function totalYears(bank: Bank, now = new Date()): number {
   let months = 0;
   for (const role of bank.roles) {
+    if (role.kind === "break") continue;
     const parts = range(role.dates);
     if (parts.length !== 2) continue;
     const start = toMonths(parts[0], now);
@@ -195,6 +220,7 @@ export function scoreRequirements(
   const answers = extra.learnable.filter((a) => a.job_id === jobId);
   const learnable = new Set(answers.filter((a) => a.learnable).map((a) => norm(a.skill)));
   const years = totalYears(bank);
+  const soft = softSkills();
 
   // Best credit over the given bullets: supported_metric when the bullet has a number.
   const best = (ids: string[], base: "supported" | "partial") => {
@@ -215,6 +241,12 @@ export function scoreRequirements(
       ({ requirement: r, kind, label: l, credit: Math.round(credit * 1000) / 1000, bullet_ids: ids, source, qualifier });
     const asked = yearsAsked(r);
     if (asked > 0) return item(years >= asked ? "supported" : "not_demonstrated", years >= asked ? 1 : 0, [], "years");
+    // A degree is checked against education, never against bullets.
+    const degree = degreeAsked(r);
+    if (degree > 0) {
+      const ok = degreeHave(bank) >= degree || (/\bequivalent\b/i.test(r) && years >= DEGREE_EQUIVALENT_YEARS);
+      return item(ok ? "supported" : "not_demonstrated", ok ? 1 : 0, [], "education");
+    }
     if (dontHave.has(norm(r))) return item("not_demonstrated", 0, [], "user");
     const verdict = verdicts.get(r);
     const inList = listed.has(norm(r)) || terms(r, vocab).some((t) => listed.has(t));
@@ -237,12 +269,23 @@ export function scoreRequirements(
     if (inList) {
       return item("skill_list_only", CREDIT.skill_list_only, [], "index");
     }
+    // A soft skill shows in what a bullet says was done ("mentored" for communication):
+    // indirect, so partial until the judge rates it.
+    const shows = soft.shownBy(r);
+    const shownIn = shows ? bullets.filter((b) => shows.test(b.text)).map((b) => b.id) : [];
+    if (shownIn.length) {
+      const b = best(shownIn, "partial");
+      return item(b.label, b.credit, b.ids, "index");
+    }
     if (learnable.has(norm(r))) return item("learnable", 0, [], "user");
     return item("unknown", 0, [], "none");
   };
 
+  // A soft-skill must-have (soft-skills.yaml) counts as a theme: scored, but never a
+  // missing must-have that caps the score. Degrees stay must-haves.
+  const isSoft = (r: string) => degreeAsked(r) === 0 && soft.pattern.test(r);
   const items: ScoreItem[] = [
-    ...req.must_have.map((r) => label(r, "must")),
+    ...req.must_have.map((r) => (isSoft(r) ? { ...label(r, "theme"), soft: true } : label(r, "must"))),
     ...req.themes.map((r) => label(r, "theme")),
     ...req.nice_to_have.map((r) => label(r, "nice"))
   ];
@@ -293,9 +336,13 @@ export function scoreRequirements(
 
   // Ask about each missing skill not answered for this JD; show answers from other JDs.
   const answered = new Set(answers.map((a) => norm(a.skill)));
+  // A keyword is matched literally (as an ATS does), so "Agentic AI" misses a bank that
+  // says "AI Agents"; it is not a missing skill when the bank has it under a synonym.
+  const known = (k: string) => listed.has(norm(k)) || terms(k, vocab).some((t) => listed.has(t) || index.has(t));
   const skills = items
-    .filter((i) => (i.label === "unknown" || i.label === "not_demonstrated") && i.source !== "years" && i.source !== "user")
-    .filter((i) => looksLikeSkill(i.requirement))
+    .filter((i) => (i.label === "unknown" || i.label === "not_demonstrated") && !["years", "education", "user"].includes(i.source))
+    .filter((i) => !(i.kind === "keyword" && known(i.requirement)))
+    .filter((i) => looksLikeSkill(i.requirement) && !soft.pattern.test(i.requirement))
     .map((i) => norm(i.requirement))
     .filter((r) => !dontHave.has(r) && !answered.has(r));
   const ask_user = [...new Set(skills)].sort().map((skill) => ({

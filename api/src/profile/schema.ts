@@ -20,6 +20,9 @@ export const EntrySchema = z.object({
   company: z.string().optional(),
   location: z.string().optional(),
   dates: z.string(),
+  // A career break sits in the timeline (it explains the gap) but is not employment:
+  // it adds no years of experience and no tenure, and shows as one line without bullets.
+  kind: z.enum(['job', 'break']).optional(),
   bullets: z.array(BulletSchema),
 });
 

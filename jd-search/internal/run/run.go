@@ -99,6 +99,9 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 
 				for _, p := range posts {
 					ok, reason := filter.Match(prefs, p)
+					if ok && p.Describe != nil {
+						p, ok, reason = describe(ctx, prefs, p)
+					}
 					mu.Lock()
 					if !ok {
 						rep.Rejected[reason]++
@@ -144,6 +147,30 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 	wg.Wait()
 	sort.Strings(rep.Unreachable)
 	return rep
+}
+
+// describe fills a posting that passed the title filter, then checks the location again
+// if the list had none.
+func describe(ctx context.Context, prefs filter.Prefs, p sources.Posting) (sources.Posting, bool, string) {
+	hadLocation := p.Location != ""
+	d, err := p.Describe(ctx)
+	p.Describe = nil
+	if err != nil {
+		return p, false, "describe"
+	}
+	p.Description = d.Description
+	if p.PostedAt == "" {
+		p.PostedAt = d.PostedAt
+	}
+	if !hadLocation && d.Location != "" {
+		p.Location = d.Location
+		p.Remote = p.Remote || strings.Contains(strings.ToLower(d.Location), "remote")
+	}
+	if hadLocation || p.Location != "" {
+		ok, reason := filter.Match(prefs, p)
+		return p, ok, reason
+	}
+	return p, true, ""
 }
 
 func fetch(ctx context.Context, c *http.Client, co filter.Company) (string, []sources.Posting, error) {

@@ -7,6 +7,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   bank mark-break <role-id> [--title "Career break (reason)"]
   prefs role <title> [--aliases "a,b"]   (target job title for jd-search)
   prefs exclude <word> [<word> ...]       (title words that drop a posting)
+  prefs company <name> --slug <slug> --ats auto|greenhouse|lever|ashby|workday|smartrecruiters|careers
   skill add <name> --evidence "<where used>"
   skill no <name>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
@@ -47,6 +48,12 @@ async function main(argv: string[]): Promise<unknown> {
       break;
     case "prefs":
       if (sub === "role") return t.prefsRoleAdd(need(rest[0], "title"), (flag(rest, "aliases") ?? "").split(",").filter(Boolean));
+      if (sub === "company") {
+        const ats = need(flag(rest, "ats"), "--ats");
+        const known = ["auto", "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "careers"] as const;
+        if (!(known as readonly string[]).includes(ats)) throw new Error(`--ats: ${known.join("|")}`);
+        return t.prefsCompany(need(rest[0], "company name"), need(flag(rest, "slug"), "--slug"), ats as (typeof known)[number]);
+      }
       if (sub === "exclude") return t.prefsExclude(rest.length ? rest : [need(undefined, "word")]);
       break;
     case "skill":

@@ -64,7 +64,9 @@ func Match(p Prefs, post sources.Posting) (bool, string) {
 			return false, "seniority"
 		}
 	}
-	if !locationMatches(p, post) {
+	// A crawled posting may list no location; it is checked again once described.
+	unknown := post.Location == "" && post.Describe != nil
+	if !unknown && !locationMatches(p, post) {
 		return false, "location"
 	}
 	return true, ""

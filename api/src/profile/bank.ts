@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { parse, parseDocument, stringify } from "yaml";
+import { isMap, isSeq, parse, parseDocument, stringify } from "yaml";
+import type { Document } from "yaml";
 import { generate } from "../model/llm.ts";
 import { hasTerm } from "../scoring/terms.ts";
 import { SKILL_GROUPS, skillGroups, skillKey } from "../lists.ts";
@@ -117,17 +118,40 @@ export function loadPreferences(): Preferences {
 
 // Edits preferences.yaml in place, keeping its comments, and returns only what it added
 // (never the file's content). The result must still match the schema.
-function editPreferences(edit: (p: Preferences) => string[]): string[] {
+function editPreferences(edit: (p: Preferences, doc: Document) => string[]): string[] {
   if (!existsSync(preferencesPath())) throw new Error(`no preferences: ${preferencesPath()}`);
   const doc = parseDocument(readFileSync(preferencesPath(), "utf8"));
   const prefs = PreferencesSchema.parse(doc.toJS());
-  const added = edit(prefs);
+  const added = edit(prefs, doc);
   if (added.length) {
     doc.set("roles", prefs.roles);
     doc.setIn(["seniority", "exclude"], prefs.seniority.exclude);
+    PreferencesSchema.parse(doc.toJS());
     writeFileSync(preferencesPath(), doc.toString());
   }
   return added;
+}
+
+export type Ats = Preferences["companies"]["include"][number]["ats"];
+
+// Sets a company's board slug and ATS, or adds the company. Edits that one entry in place
+// (comments elsewhere in the list stay). Returns what changed.
+export function setCompany(name: string, slug: string, ats: Ats): string[] {
+  return editPreferences((p, doc) => {
+    const list = doc.getIn(["companies", "include"]);
+    if (!isSeq(list)) throw new Error("preferences: companies.include is not a list");
+    const i = p.companies.include.findIndex((c) => c.name.toLowerCase() === name.trim().toLowerCase());
+    const item = i >= 0 ? list.items[i] : null;
+    if (i >= 0 && isMap(item)) {
+      const old = p.companies.include[i];
+      if (old.slug === slug && old.ats === ats) return [];
+      item.set("slug", slug);
+      item.set("ats", ats);
+      return [`${old.name}: ${old.ats}/${old.slug} -> ${ats}/${slug}`];
+    }
+    list.add(doc.createNode({ name: name.trim(), slug, ats }));
+    return [`${name.trim()}: added ${ats}/${slug}`];
+  });
 }
 
 // A target role and its aliases ("SDE 3", "SDE III"); an alias already present is skipped.

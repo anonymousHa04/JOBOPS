@@ -110,7 +110,8 @@ export const PreferencesSchema = z.object({
     include: z.array(z.object({
       name: z.string(),
       slug: z.string(),
-      ats: z.enum(['auto', 'greenhouse', 'lever', 'ashby']),
+      // careers: no job board API; jd-search crawls the slug (a careers page URL) in a browser.
+      ats: z.enum(['auto', 'greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'careers']),
     })),
     exclude: z.array(z.string()),
   }),

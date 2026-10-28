@@ -11,17 +11,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"jobops/jd-search/internal/filter"
 	"jobops/jd-search/internal/run"
+	"jobops/jd-search/internal/sources"
 )
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: jd-search run [--dry-run] [--workers N] | jd-search mcp")
 		os.Exit(2)
+	}
+	// The careers crawler; the default runs ../api/src/careers/crawl.ts from jd-search/.
+	if v := os.Getenv("JOBOPS_CRAWLER"); v != "" {
+		sources.CrawlerCmd = strings.Fields(v)
 	}
 	var err error
 	switch os.Args[1] {

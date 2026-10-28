@@ -1,5 +1,6 @@
-// Package sources fetches job postings from public job-board APIs
-// (Greenhouse, Lever, Ashby). Each company is addressed by its board slug.
+// Package sources fetches job postings from public job-board APIs (Greenhouse, Lever,
+// Ashby, Workday, SmartRecruiters) and, for companies with only a careers site, from a
+// browser crawler. Each company is addressed by its board slug.
 package sources
 
 import (
@@ -21,9 +22,18 @@ type Posting struct {
 	Location    string
 	URL         string
 	Description string
-	Source      string // greenhouse, lever, ashby
+	Source      string // greenhouse, lever, ashby, workday, smartrecruiters, careers
 	PostedAt    string // UTC, 2006-01-02T15:04:05Z, or ""
 	Remote      bool
+	// Describe fetches what the board's list leaves out; nil when the list has it all.
+	Describe func(ctx context.Context) (Details, error) `json:"-"`
+}
+
+// Details fills a posting after it passes the title filter. Empty fields are unknown.
+type Details struct {
+	Description string `json:"description"`
+	Location    string `json:"location"`
+	PostedAt    string `json:"posted_at"`
 }
 
 // ErrNotFound means the board does not exist for this slug.
@@ -67,6 +77,9 @@ func Detect(ctx context.Context, c *http.Client, slug, company string) (string, 
 	}
 	if empty != "" {
 		return empty, nil, nil
+	}
+	if errors.Is(lastErr, ErrNotFound) {
+		return "", nil, fmt.Errorf("%w: not on %s as %q; set its slug and ats with: prefs company", ErrNotFound, strings.Join(order, ", "), slug)
 	}
 	return "", nil, lastErr
 }

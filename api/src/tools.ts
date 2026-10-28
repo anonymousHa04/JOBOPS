@@ -16,12 +16,14 @@ import {
   addRole,
   excludeTitleWords,
   markBreak,
+  setCompany,
   retagBank,
   loadSkillsExtra,
   recordLearnable,
   resumeTextPath,
   saveBank
 } from "./profile/bank.ts";
+import type { Ats } from "./profile/bank.ts";
 import { loadRequirements, parseJob } from "./requirements/parse.ts";
 import { riskCheck } from "./scoring/risk.ts";
 import { judgeRequirements, loadVerdicts } from "./scoring/judge.ts";
@@ -102,6 +104,10 @@ export function bankMarkBreak(entryId: string, title?: string) {
 
 export function prefsRoleAdd(title: string, aliases: string[]) {
   return { added: addRole(title, aliases) };
+}
+
+export function prefsCompany(name: string, slug: string, ats: Ats) {
+  return { changed: setCompany(name, slug, ats) };
 }
 
 export function prefsExclude(words: string[]) {

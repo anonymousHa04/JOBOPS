@@ -110,6 +110,23 @@ export function setEducation(fields: { school?: string; degree?: string; dates?:
   return { id: edu.id, changed };
 }
 
+// Replaces the profile links (LinkedIn, GitHub, portfolio) with full URLs, in the order
+// given. Returns the count and hosts only.
+export function setLinks(urls: string[]): { links: number; hosts: string[] } {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const clean = urls.map((u) => u.trim()).filter(Boolean);
+  if (!clean.length) throw new Error("give at least one link");
+  for (const u of clean) {
+    let ok = false;
+    try { ok = /^https?:$/.test(new URL(u).protocol) && new URL(u).hostname.includes("."); } catch { ok = false; }
+    if (!ok) throw new Error(`not a full URL: ${u} (start it with https://)`);
+  }
+  bank.basics.links = clean;
+  saveBank(bank);
+  return { links: clean.length, hosts: clean.map((u) => new URL(u).hostname) };
+}
+
 // Every save cleans hidden characters, marks career breaks, files skills in the right group, then removes repeats
 // (the model can misfile and repeat list items).
 export function saveBank(b: Bank): void {
@@ -340,6 +357,18 @@ export function addBullet(
   });
   saveBank(bank);
   return id;
+}
+
+// Removes one bullet from the bank (a bullet replaced by better ones). Returns the id and
+// the entry it was in, never its text.
+export function removeBullet(id: string): { id: string; entry: string } {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const entry = [...bank.roles, ...bank.projects].find((e) => e.bullets.some((b) => b.id === id));
+  if (!entry) throw new Error(`no bullet ${id}`);
+  entry.bullets = entry.bullets.filter((b) => b.id !== id);
+  saveBank(bank);
+  return { id, entry: entry.id };
 }
 
 // Stops a risk question from being asked again.

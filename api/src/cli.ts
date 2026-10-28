@@ -5,6 +5,7 @@ import * as t from "./tools.ts";
 const USAGE = `usage: node api/src/cli.ts <command>
   bank build | check | retag | dedupe | approve | status
   bank mark-break <role-id> [--title "Career break (reason)"]
+  bank links <url> [<url> ...]   (profile links as full URLs, in display order)
   bank education [--school "<name>"] [--degree "<degree>"] [--dates "<from - to>"] [--id <education-id>]
   prefs role <title> [--aliases "a,b"]   (target job title for jd-search)
   prefs exclude <word> [<word> ...]       (title words that drop a posting)
@@ -14,6 +15,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   skill no <name>
   skill remove <name>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
+  bullet remove <bullet-id>
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
   models                  (which model each task uses, and whether its server is up)
@@ -53,6 +55,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "dedupe") return t.bankDedupeSkills();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
+      if (sub === "links") return t.bankLinks(rest);
       if (sub === "education") return t.bankEducation({ school: flag(rest, "school"), degree: flag(rest, "degree"), dates: flag(rest, "dates") }, flag(rest, "id"));
       if (sub === "mark-break") return t.bankMarkBreak(need(rest[0], "role id"), flag(rest, "title"));
       break;
@@ -77,6 +80,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "remove") return t.skillRemove(need(rest[0], "skill name"));
       break;
     case "bullet": {
+      if (sub === "remove") return t.bulletRemove(need(rest[0], "bullet id"));
       if (sub !== "add") break;
       const impact = flag(rest, "impact") ?? "medium";
       if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");

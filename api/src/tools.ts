@@ -6,6 +6,7 @@ import { openDb } from "./db.ts";
 import type { Db } from "./db.ts";
 import {
   addBullet,
+  removeBullet,
   addSkill,
   removeSkill,
   buildBank,
@@ -18,6 +19,7 @@ import {
   excludeTitleWords,
   markBreak,
   setEducation,
+  setLinks,
   setCompany,
   setMaxPages,
   retagBank,
@@ -118,6 +120,14 @@ export function bulletAdd(entryId: string, text: string, tags: string[], impact:
 
 export function bankMarkBreak(entryId: string, title?: string) {
   return markBreak(entryId, title);
+}
+
+export function bulletRemove(id: string) {
+  return removeBullet(id);
+}
+
+export function bankLinks(urls: string[]) {
+  return setLinks(urls);
 }
 
 export function bankEducation(fields: { school?: string; degree?: string; dates?: string }, id?: string) {

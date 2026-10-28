@@ -33,6 +33,9 @@ export const MUST_MISSING_BELOW = 0.5;
 export const CAP_ONE_MISSING = 84.9;
 export const CAP_TWO_MISSING = 74.9;
 
+// Skills shown on a tailored resume: JD matches first, then those its bullets show.
+export const MAX_SKILLS = 15;
+
 // "Bachelor's degree or equivalent experience": this many years count as the equivalent.
 export const DEGREE_EQUIVALENT_YEARS = 4;
 

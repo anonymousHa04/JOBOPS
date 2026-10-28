@@ -88,3 +88,20 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
     rmSync(work, { recursive: true, force: true });
   }
 }
+
+// Pages the record would render to (typst only, no parse-back), or null without typst.
+export function pageCount(record: ResumeRecord, bank: Bank, paper = "a4"): number | null {
+  const work = mkdtempSync(join(tmpdir(), "jobops-pages-"));
+  try {
+    copyFileSync(TEMPLATE, join(work, "resume.typ"));
+    writeFileSync(join(work, "data.json"), JSON.stringify(resumeData(record, bank, paper)));
+    const out = join(work, "resume.pdf");
+    const r = spawnSync("typst", ["compile", "--root", work, join(work, "resume.typ"), out], { encoding: "utf8" });
+    if (r.error || r.status !== 0) return null;
+    const info = spawnSync("pdfinfo", [out], { encoding: "utf8" });
+    const n = Number(info.stdout?.match(/Pages:\s+(\d+)/)?.[1]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}

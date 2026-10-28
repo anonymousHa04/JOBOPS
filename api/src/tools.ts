@@ -17,8 +17,9 @@ import {
   addRole,
   excludeTitleWords,
   markBreak,
-  setDegree,
+  setEducation,
   setCompany,
+  setMaxPages,
   retagBank,
   loadSkillsExtra,
   recordLearnable,
@@ -117,8 +118,8 @@ export function bankMarkBreak(entryId: string, title?: string) {
   return markBreak(entryId, title);
 }
 
-export function bankDegree(degree: string, id?: string) {
-  return setDegree(degree, id);
+export function bankEducation(fields: { school?: string; degree?: string; dates?: string }, id?: string) {
+  return setEducation(fields, id);
 }
 
 export function prefsRoleAdd(title: string, aliases: string[]) {
@@ -127,6 +128,10 @@ export function prefsRoleAdd(title: string, aliases: string[]) {
 
 export function prefsCompany(name: string, slug: string, ats: Ats) {
   return { changed: setCompany(name, slug, ats) };
+}
+
+export function prefsPages(pages: number) {
+  return { changed: setMaxPages(pages) };
 }
 
 export function prefsExclude(words: string[]) {

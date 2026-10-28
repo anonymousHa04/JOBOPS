@@ -89,17 +89,24 @@ export function markBreak(entryId: string, title?: string): { id: string; dates:
   return { id: role.id, dates: role.dates };
 }
 
-// Sets an education entry's degree text ("BTech in Mechanical Engineering"); the id may be
-// left out when there is one entry. Returns the id only, never the old text.
-export function setDegree(degree: string, id?: string): { id: string } {
+// Sets an education entry's school, degree, or dates; the id may be left out when there
+// is one entry. Returns the id and the fields changed, never the old text.
+export function setEducation(fields: { school?: string; degree?: string; dates?: string }, id?: string): { id: string; changed: string[] } {
   const bank = loadBank();
   if (!bank) throw new Error("no bank; run bank build first");
   const edu = id ? bank.education.find((e) => e.id === id) : bank.education.length === 1 ? bank.education[0] : undefined;
   if (!edu) throw new Error(id ? `unknown education ${id}` : `${bank.education.length} education entries; name one: ${bank.education.map((e) => e.id).join(", ")}`);
-  if (!degree.trim() || /[<>]/.test(degree)) throw new Error("give the degree text, e.g. \"BTech in Mechanical Engineering\"");
-  edu.degree = degree.trim();
+  const changed: string[] = [];
+  for (const k of ["school", "degree", "dates"] as const) {
+    const v = fields[k]?.trim();
+    if (v === undefined) continue;
+    if (!v || /[<>]/.test(v)) throw new Error(`give the ${k} text, e.g. --${k} "..."`);
+    edu[k] = v;
+    changed.push(k);
+  }
+  if (!changed.length) throw new Error("nothing to set: --school, --degree, or --dates");
   saveBank(bank);
-  return { id: edu.id };
+  return { id: edu.id, changed };
 }
 
 // Every save cleans hidden characters, marks career breaks, files skills in the right group, then removes repeats
@@ -195,6 +202,15 @@ export function addRole(title: string, aliases: string[]): string[] {
       roles.add(doc.createNode({ title: names[0], aliases: names.slice(1) }));
     }
     return names;
+  });
+}
+
+// The page limit for tailored resumes (tailoring.max_pages). Returns what changed.
+export function setMaxPages(pages: number): string[] {
+  return editPreferences((p, doc) => {
+    if (p.tailoring.max_pages === pages) return [];
+    doc.setIn(["tailoring", "max_pages"], pages);
+    return [`tailoring.max_pages: ${p.tailoring.max_pages ?? "unset"} -> ${pages}`];
   });
 }
 

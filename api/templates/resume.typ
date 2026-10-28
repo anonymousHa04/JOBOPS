@@ -16,14 +16,15 @@
 #set par(justify: false)
 #set list(indent: 0.6em, marker: [•])
 
-// Section title: small caps with a rule under it.
-#let section(title) = {
-  v(8pt)
-  text(weight: 700, size: 11pt, smallcaps(title))
-  v(-8pt)
-  line(length: 100%, stroke: 0.6pt)
-  v(-2pt)
-}
+// Section title: small caps with a rule under it. Sticky: it moves to the next page with
+// the content after it, so a page never ends on a heading (parsers then split the
+// section: a "Skills" title on page 1 with its list on page 2 read as no skills).
+#let section(title) = block(sticky: true, above: 8pt, below: 0pt)[
+  #text(weight: 700, size: 11pt, smallcaps(title))
+  #v(-8pt)
+  #line(length: 100%, stroke: 0.6pt)
+  #v(-2pt)
+]
 
 // Company first ("Acme, Bangalore"), then the title with its dates on the right, then
 // bullets. ATS parsers (Workday) anchor an entry on the line with its dates: lines above
@@ -79,15 +80,20 @@
   }
 }
 
+// Short sections never split across pages.
 #if data.education.len() > 0 {
-  section("Education")
-  for e in data.education {
-    entry(e.school, "", e.degree, e.dates)
-    if e.details.len() > 0 { bullets(e.details) }
-  }
+  block(breakable: false)[
+    #section("Education")
+    #for e in data.education {
+      entry(e.school, "", e.degree, e.dates)
+      if e.details.len() > 0 { bullets(e.details) }
+    }
+  ]
 }
 
 #if data.skills.len() > 0 {
-  section("Skills")
-  data.skills.join(", ")
+  block(breakable: false)[
+    #section("Skills")
+    #data.skills.join(", ")
+  ]
 }

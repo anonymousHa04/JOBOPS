@@ -34,6 +34,7 @@ History and reasons: `M3-NOTES.md`.
 | Learnable skills | Asked each time per JD; the answer is recorded with the JD and earlier answers are shown next time. Score credit 0 (engine-algorithm), but a learnable gap is not a blocker for a moderate fit (user) |
 | Risk questions | Option A: the engine stops and asks before any rewording; `--force` overrides |
 | Reuse vs adapt | Reuse when content equivalence ≥ 95 (any tailorable band), otherwise adapt; formula in engine-algorithm §5 |
+| Resume length | Up to 2 pages (user, 2026-10-28; preferences tailoring.max_pages), overriding one page up to 8 years; over the limit, the weakest bullets are dropped, never an entry's only one |
 | Equivalence formula | The §5 formula as written (union + 2, with a skills unit), not its worked examples (union + 1); confirmed by the user 2026-10-28 |
 | Unsupported must-haves | Flagged on every decision, including reuse |
 

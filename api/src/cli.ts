@@ -5,9 +5,10 @@ import * as t from "./tools.ts";
 const USAGE = `usage: node api/src/cli.ts <command>
   bank build | check | retag | dedupe | approve | status
   bank mark-break <role-id> [--title "Career break (reason)"]
-  bank degree "<degree text>" [--id <education-id>]
+  bank education [--school "<name>"] [--degree "<degree>"] [--dates "<from - to>"] [--id <education-id>]
   prefs role <title> [--aliases "a,b"]   (target job title for jd-search)
   prefs exclude <word> [<word> ...]       (title words that drop a posting)
+  prefs pages <1-3>                       (page limit for tailored resumes)
   prefs company <name> --slug <slug> --ats auto|greenhouse|lever|ashby|workday|smartrecruiters|careers
   skill add <name> --evidence "<where used>"
   skill no <name>
@@ -50,7 +51,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "dedupe") return t.bankDedupeSkills();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
-      if (sub === "degree") return t.bankDegree(need(rest[0], "degree text"), flag(rest, "id"));
+      if (sub === "education") return t.bankEducation({ school: flag(rest, "school"), degree: flag(rest, "degree"), dates: flag(rest, "dates") }, flag(rest, "id"));
       if (sub === "mark-break") return t.bankMarkBreak(need(rest[0], "role id"), flag(rest, "title"));
       break;
     case "prefs":
@@ -60,6 +61,11 @@ async function main(argv: string[]): Promise<unknown> {
         const known = ["auto", "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "careers"] as const;
         if (!(known as readonly string[]).includes(ats)) throw new Error(`--ats: ${known.join("|")}`);
         return t.prefsCompany(need(rest[0], "company name"), need(flag(rest, "slug"), "--slug"), ats as (typeof known)[number]);
+      }
+      if (sub === "pages") {
+        const n = Number(need(rest[0], "page count"));
+        if (![1, 2, 3].includes(n)) throw new Error("pages: 1, 2, or 3");
+        return t.prefsPages(n);
       }
       if (sub === "exclude") return t.prefsExclude(rest.length ? rest : [need(undefined, "word")]);
       break;

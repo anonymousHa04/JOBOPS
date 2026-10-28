@@ -50,7 +50,9 @@ export function checkOpenResume(parsed: OpenResumeParsed, data: ResumeData): Iss
     const [wantTitle, wantCompany] = company ? [e.title, company] : ["", e.title];
     // OpenResume finds titles by job words (engineer, manager): a career break's reason
     // ("Family relocation") is not one, so its title is not compared.
-    if (e.kind !== "break" && clean(g.jobTitle) !== clean(wantTitle)) add("entry_field", `${e.id}.title`);
+    // It also marks down any title with a digit (to tell titles from dates), so "Engineer 2"
+    // reads as no title; lint suggests "II" (title_has_number), the check skips it.
+    if (e.kind !== "break" && !/\d/.test(e.title) && clean(g.jobTitle) !== clean(wantTitle)) add("entry_field", `${e.id}.title`);
     if (clean(g.company) !== clean(wantCompany)) add("entry_field", `${e.id}.company`);
     if (clean(g.date) !== clean(e.dates)) add("entry_field", `${e.id}.dates`);
     if (g.descriptions.map(clean).join("\n") !== e.bullets.map(clean).join("\n")) add("entry_field", `${e.id}.bullets`);

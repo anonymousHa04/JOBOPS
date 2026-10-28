@@ -3,7 +3,9 @@ import type { Bank, Bullet, Preferences, SkillsExtra } from "../profile/schema.t
 import type { Requirements } from "../requirements/schema.ts";
 import { allBullets, bulletRecency, scoreRequirements } from "../scoring/score.ts";
 import type { Verdicts } from "../scoring/score.ts";
-import { norm, terms } from "../scoring/terms.ts";
+import { hasTerm, norm, terms } from "../scoring/terms.ts";
+import { softSkills } from "../lists.ts";
+import { MAX_SKILLS } from "../scoring/config.ts";
 
 // The ideal resume content for one JD (engine-algorithm.md §4, steps 2-4): chosen in
 // code, deterministically, from the bank. Rewording happens later and only where this
@@ -138,7 +140,9 @@ export function idealContent(
         reword: m.keywords.length ? { alias_only: m.aliasOnly, keywords: m.keywords } : null };
     });
 
-  // Skills: supported JD keywords in JD order, then the remaining existing skills.
+  // Skills: supported JD keywords in JD order, then the other skills the chosen bullets
+  // show, up to MAX_SKILLS; never soft skills (gaps-and-rejection-risks.md: skills trimmed
+  // to evidence; a long unevidenced list reads padded and ATS parsers drop it).
   // Nothing is added beyond the bank and user-confirmed skills.
   const existing = [...new Set([...Object.values(bank.skills).flat(),
     ...extra.skills.filter((s) => s.status === "have").map((s) => s.name)])];
@@ -150,7 +154,10 @@ export function idealContent(
     const c = norm(k);
     if (byCanon.has(c) && !skills.some((s) => norm(s) === c)) skills.push(k);
   }
-  for (const s of existing) if (!skills.some((x) => norm(x) === norm(s))) skills.push(s);
+  const shown = (skill: string) => chosen.some((b) => b.tags.some((t) => norm(t) === norm(skill)) || hasTerm(b.text, skill));
+  for (const s of existing) if (!skills.some((x) => norm(x) === norm(s)) && shown(s)) skills.push(s);
+  const soft = softSkills().pattern;
+  skills.splice(0, skills.length, ...skills.filter((s) => !soft.test(s)).slice(0, MAX_SKILLS));
 
   // Summary: the bank variant the JD asks for, as written (never reworded).
   const summary = bank.summaries.find((s) => s.variant === req.summary_variant) ?? bank.summaries[0];

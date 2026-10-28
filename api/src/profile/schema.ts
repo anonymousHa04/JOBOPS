@@ -119,6 +119,8 @@ export const PreferencesSchema = z.object({
     bullets_per_role: z.number().positive(),
     bullets_total: z.number().positive(),
     max_words: z.number().positive(),
+    // Page limit for a tailored resume; unset: one page up to 8 years of experience, else two.
+    max_pages: z.number().int().min(1).max(3).optional(),
   }),
 });
 

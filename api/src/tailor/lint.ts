@@ -88,6 +88,10 @@ export function lintRecord(record: ResumeRecord, bank: Bank, extra: SkillsExtra,
   for (const [entry, bs] of byEntry) if (bs.filter((b) => metricLed(b.text)).length > 2) add("metric_led_over_2", entry, "engine");
   // Links: profile entries must be full URLs, not labels like "LinkedIn".
   bank.basics.links.forEach((l, i) => { if (!/[a-z0-9-]+\.[a-z]{2,}\/\S+/i.test(l)) add("link_not_url", `link#${i + 1}`, "user"); });
+  // A level written as a digit ("Software Engineer 2") is read as no title by parsers that
+  // tell titles from dates by digits (OpenResume); "II" reads cleanly. The title is a fixed
+  // field, so this is the user's call.
+  for (const r of roles) if (/\b\d+\b/.test(r.title)) add("title_has_number", r.id, "user");
   out.push(...tenure(bank, opts.now));
   add("check_linkedin", "titles and dates match LinkedIn", "manual");
   return out;

@@ -3,7 +3,8 @@ import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import type { Requirements } from "../requirements/schema.ts";
 import { riskCheck } from "../scoring/risk.ts";
 import type { Risk } from "../scoring/risk.ts";
-import { needsJudge, scoreRequirements } from "../scoring/score.ts";
+import { needsJudge, scoreRequirements, totalYears } from "../scoring/score.ts";
+import { pageCount } from "../render/render.ts";
 import type { Verdicts } from "../scoring/score.ts";
 import { decide, pickStart } from "./decide.ts";
 import type { Decision, StoredRecord } from "./decide.ts";
@@ -126,6 +127,15 @@ export async function tailorJob(
     reworded = r.log;
   }
 
+  // Length: the user's tailoring.max_pages, else one page up to 8 years of experience and
+  // two after (gaps-and-rejection-risks.md). Over the limit, drop the last-ranked bullet of the entry with the most bullets (never
+  // an entry's only bullet) until it fits; each drop is logged in the record's changes.
+  if (d.decision !== "not_tailored") {
+    const fit = fitPages(content, bank, budget.max_pages ?? (totalYears(bank) <= 8 ? 1 : 2));
+    content = fit.content;
+    changes = [...changes, ...fit.dropped.map((b) => ({ bullet_id: b.id, from: b.text, to: null, reason: "dropped to fit the page limit" }))];
+  }
+
   // Evidence for each requirement the record covers, as scored on its own bullets.
   const ids = content.bullets.map((b) => b.id);
   const scored = scoreRequirements(req, bank, extra, ids, jobId, verdicts);
@@ -191,4 +201,26 @@ export function dryRunAll(
   }
   rows.sort((a, b) => b.score - a.score || a.job_id.localeCompare(b.job_id));
   return { rows, questions: [...questions.values()] };
+}
+
+// Drops bullets until the resume renders within maxPages (render.ts pageCount). Content
+// order inside an entry is by rank, so an entry's last bullet is its weakest.
+export function fitPages(content: ResumeContent, bank: Bank, maxPages: number): { content: ResumeContent; dropped: { id: string; text: string }[] } {
+  let bullets = [...content.bullets];
+  const dropped: { id: string; text: string }[] = [];
+  const record = (bs: typeof bullets) => ({ resume_id: "fit", content: { ...content, bullets: bs } }) as unknown as ResumeRecord;
+  for (;;) {
+    const pages = pageCount(record(bullets), bank);
+    if (pages === null || pages <= maxPages) break;
+    const per = new Map<string, number>();
+    for (const b of bullets) per.set(b.entry_id, (per.get(b.entry_id) ?? 0) + 1);
+    // The entry with the most bullets; on a tie, the older one (later in bank order).
+    const order = [...bank.roles, ...bank.projects].map((e) => e.id);
+    const target = [...per].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1] || order.indexOf(b[0]) - order.indexOf(a[0]))[0]?.[0];
+    if (!target) break;
+    const last = bullets.map((b) => b.entry_id).lastIndexOf(target);
+    dropped.push({ id: bullets[last].id, text: bullets[last].text });
+    bullets = bullets.filter((_, i) => i !== last);
+  }
+  return { content: { ...content, bullets }, dropped };
 }

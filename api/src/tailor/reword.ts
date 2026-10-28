@@ -2,6 +2,7 @@ import { z } from "zod";
 import { vocabulary } from "../profile/bank.ts";
 import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { generate } from "../model/llm.ts";
+import { forTask } from "../model/registry.ts";
 import { fill, loadPrompt } from "../model/prompts.ts";
 import type { Requirements } from "../requirements/schema.ts";
 import { allBullets } from "../scoring/score.ts";
@@ -16,7 +17,8 @@ import type { Budget, ResumeContent } from "./ideal.ts";
 // (ideal.ts), so the prompt gets a shortlist of one. Every answer goes through the
 // guard, which checks it against the bank's text. Logs carry ids and codes only.
 
-export const REWORD_MODEL = process.env.JOBOPS_REWORD_MODEL ?? "qwen2.5:14b";
+// The model rewording uses, for the record's meta (config/models.yaml, task "reword").
+export const rewordModel = () => forTask("reword").model;
 
 const OutSchema = z.object({
   summary_variant: z.string(),
@@ -86,7 +88,7 @@ export async function rewordContent(
     const result = await guardedReword(source.text, guard, async (codes) => {
       if (error) return null;
       const prompt = rewordPrompt(template, req, { id: b.id, text: b.text, tags: source.tags }, b.reword?.keywords ?? [], budget.max_words, codes);
-      const res = await generate({ model: REWORD_MODEL, prompt, schema: OutSchema, timeoutMs: 60000, baseUrl: opts.baseUrl });
+      const res = await generate({ task: "reword", prompt, schema: OutSchema, baseUrl: opts.baseUrl });
       if (!res.ok) { error = `${res.error}: ${res.detail}`; return null; }
       return res.value.include.find((i) => i.id === b.id)?.text.trim() ?? null;
     });

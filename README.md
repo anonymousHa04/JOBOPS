@@ -232,6 +232,8 @@ JobOps should use AI as a component of a reliable application, not as the source
 
 Generation and judgment are handled by different kinds of models. All of them run locally, so resumes and contacts stay on the machine.
 
+Each model call names its task; `api/config/models.yaml` says which model and server each task uses, with its timeout and answer limit (override in `profile/models.yaml`). Every command checks its model's server before starting and, if it is down, stops with the commands to switch (one large model fits in memory at a time). Each call adds one line to `data/model-calls.jsonl` (task, model, outcome, time, tokens; never prompt or answer text); `models stats` summarizes it.
+
 | Task | Model | Notes |
 |---|---|---|
 | Extract requirements from job posts into JSON | Local LLM (`qwen2.5:7b`) via llama.cpp | Output forced to a schema and validated before saving |
@@ -296,10 +298,10 @@ The original plan emphasized small, testable deliverables. The sequence below re
 
 ### Milestone 4 — Local LLM integration
 
-- Generalize the model-provider interface from Milestone 3.
-- Move remaining extraction and judgment steps onto it.
-- Validate structured responses.
-- Handle timeouts, malformed output, and model unavailability.
+- Generalize the model-provider interface from Milestone 3: one registry (`api/config/models.yaml`) for every task's model, server, timeout, and answer limit.
+- Move remaining extraction and judgment steps onto it: JD parsing, the judge, the bank build, retagging, and rewording all call by task.
+- Validate structured responses: schema-forced output, Zod validation, one retry that names the failing fields.
+- Handle timeouts, malformed output, and model unavailability: a preflight check before every model command, batches that stop at the first server failure, and a call log of outcomes and timing.
 
 ### Milestone 5 — Background agent workflow
 

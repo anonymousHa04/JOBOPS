@@ -1,5 +1,6 @@
 import type { Db } from "../db.ts";
 import { generate } from "../model/llm.ts";
+import { forTask } from "../model/registry.ts";
 import { fill, loadPrompt } from "../model/prompts.ts";
 import { loadBank } from "../profile/bank.ts";
 import { RequirementsSchema, StoredRequirementsSchema } from "./schema.ts";
@@ -45,9 +46,9 @@ export async function parseJob(db: Db, jobId: string): Promise<ParseSummary> {
 
   const variants = [...new Set(loadBank()?.summaries.map((s) => s.variant) ?? [])];
   const jdText = `${job.title}\n\n${job.description}`;
-  const model = process.env.JOBOPS_JD_MODEL ?? "qwen2.5:7b";
+  const model = forTask("jd_parse").model;
   const result = await generate({
-    model,
+    task: "jd_parse",
     prompt: fill(template, {
       "paste JD": jdText,
       "list your variants": variants.length ? variants.join(", ") : "general"

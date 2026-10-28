@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { isMap, isSeq, parse, parseDocument, stringify } from "yaml";
 import type { Document } from "yaml";
 import { generate } from "../model/llm.ts";
+import { forTask } from "../model/registry.ts";
 import { hasTerm } from "../scoring/terms.ts";
 import { SKILL_GROUPS, skillGroups, skillKey } from "../lists.ts";
 import { aiTellsIn, cleanText, hiddenChars } from "../tailor/writing.ts";
@@ -251,13 +252,11 @@ export async function buildBank(): Promise<{ ok: boolean; issues: string[] }> {
   if (loadBank()?.approved) throw new Error("bank is approved; refusing to rebuild it");
   const text = readFileSync(resumeTextPath(), "utf8");
   const { template, version } = loadPrompt("one-time-parser");
-  const model = process.env.JOBOPS_PARSE_MODEL ?? "qwen2.5:14b";
+  const model = forTask("bank_build").model;
   const result = await generate({
-    model,
+    task: "bank_build",
     prompt: fill(template, { "paste text": text }) + "\n" + JSON_NOTE,
-    schema: BuildSchema,
-    timeoutMs: 900000,
-    maxTokens: 8000
+    schema: BuildSchema
   });
   if (!result.ok) return { ok: false, issues: [`model: ${result.error} (${result.detail})`] };
   const bank: Bank = {
@@ -391,7 +390,6 @@ export async function retagBank(opts: { baseUrl?: string; model?: string } = {})
   const bank = loadBank();
   if (!bank) throw new Error("no bank; run bank build first");
   if (bank.approved) throw new Error("bank is approved; edit tags by hand");
-  const model = opts.model ?? process.env.JOBOPS_PARSE_MODEL ?? "qwen2.5:14b";
   const schema = z.object({ tags: z.array(z.string()).max(12) });
   const retagged: { id: string; before: number; after: number }[] = [];
   const still_short: string[] = [];
@@ -400,7 +398,7 @@ export async function retagBank(opts: { baseUrl?: string; model?: string } = {})
     if (b.tags.length >= 5) continue;
     if (!error) {
       const prompt = RETAG_PROMPT.replace("[bullet]", b.text).replace("[tags]", b.tags.join(", "));
-      const res = await generate({ model, prompt, schema, timeoutMs: 120000, maxTokens: 200, baseUrl: opts.baseUrl });
+      const res = await generate({ task: "retag", model: opts.model, prompt, schema, baseUrl: opts.baseUrl });
       if (!res.ok) error = `${res.error}: ${res.detail}`;
       else {
         const before = b.tags.length;

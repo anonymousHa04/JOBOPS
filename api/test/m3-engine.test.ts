@@ -29,6 +29,8 @@ import { dedupeSkills, loadBank, regroupSkills, retagBank, saveBank } from "../s
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 // Never the real profile: its overrides (profile/synonyms.yaml, ...) must not change results.
 process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-test-"));
+// Fake model calls are logged to a temp file, never data/model-calls.jsonl.
+process.env.JOBOPS_MODEL_LOG = join(process.env.JOBOPS_PROFILE_DIR, "model-calls.jsonl");
 
 const bullet = (id: string, text: string, tags: string[], impact: "high" | "medium" | "low" = "medium") =>
   ({ id, text, short: text.split(" ").slice(0, 5).join(" "), tags, impact, source: "resume" as const });

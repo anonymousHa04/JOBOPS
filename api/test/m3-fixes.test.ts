@@ -32,6 +32,8 @@ import { MAX_SKILLS } from "../src/scoring/config.ts";
 // preferences commands, the careers crawler's page reading, and `job add <url>`.
 // Fake resume and saved responses only: no real profile, no network, no browser.
 process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-fixes-"));
+// Fake model calls are logged to a temp file, never data/model-calls.jsonl.
+process.env.JOBOPS_MODEL_LOG = join(process.env.JOBOPS_PROFILE_DIR, "model-calls.jsonl");
 const tempProfile = () => (process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-fixes-")));
 
 const bullet = (id: string, text: string, tags: string[]) =>

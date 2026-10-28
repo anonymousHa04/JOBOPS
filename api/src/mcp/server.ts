@@ -154,6 +154,22 @@ server.registerTool(
 );
 
 server.registerTool(
+  "models",
+  { description: "Which local model each task uses (api/config/models.yaml), its timeout and answer limit, and whether its server is up." },
+  () => reply(() => t.models())
+);
+
+server.registerTool(
+  "model_stats",
+  {
+    description: "The model call log per task and model: calls, outcomes (ok, retry_ok, invalid_output, timeout, " +
+      "unavailable), average and p95 seconds, and tokens. Codes and numbers only.",
+    inputSchema: { since: z.string().optional().describe("ISO time; only calls after it") }
+  },
+  ({ since }) => reply(() => t.modelStats({ since }))
+);
+
+server.registerTool(
   "lint",
   {
     description: "Resume lint, tenure/gap checks for a record: findings as codes and ids, each marked " +

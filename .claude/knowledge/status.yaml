@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-10-28
-branch: milestone-4 (from dev; milestone-3 and m3-engine merged into dev)
+branch: dev (milestone-4 merged; milestone-3 and m3-engine merged)
 
 environment:
   - id: env-llama-cpp
@@ -186,4 +186,5 @@ milestone_3:
     what: local qwen2.5:14b with the humanizer rules (prompt + ai_tell_added guard); user decision 2026-10-28, closes the flag
 
 milestone_3_done: "2026-10-28: all README M3 items built and tested (81 TS tests + Go); first real adapt record (Okta Core Frontier) passes the three-reader parse-back; merged into dev"
+milestone_4_done: "2026-10-28: model registry (api/config/models.yaml), preflight on every model command, call log + models stats, retry names failing fields; 87 TS tests; merged into dev"
 decisions_needed: []

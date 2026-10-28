@@ -4,6 +4,7 @@ import type { Db } from "../db.ts";
 import { vocabulary } from "../profile/bank.ts";
 import type { Bank, Bullet, SkillsExtra } from "../profile/schema.ts";
 import { generate } from "../model/llm.ts";
+import { forTask } from "../model/registry.ts";
 import type { Requirements } from "../requirements/schema.ts";
 import { allBullets, bulletRecency, buildIndex, evidence, needsJudge, scoreRequirements } from "./score.ts";
 import { TAILORED_BANDS } from "./config.ts";
@@ -16,7 +17,8 @@ import { norm } from "./terms.ts";
 // call per requirement (a few at once), skipped when the job's decision is already settled, cached by requirement + prompt version + bank hash, so scoring a
 // stored record never calls the model again. Logs and results carry ids, never text.
 
-export const JUDGE_MODEL = process.env.JOBOPS_JUDGE_MODEL ?? "qwen2.5:7b";
+// The judge's model, stored with each cached verdict (config/models.yaml, task "judge").
+export const judgeModel = () => forTask("judge").model;
 const MAX_CANDIDATES = 6;
 
 const PROMPT = `You judge whether a candidate's resume bullets show one job requirement.
@@ -143,7 +145,7 @@ export async function judgeRequirements(
     } else {
       const prompt = PROMPT.replace("[requirement]", r)
         .replace("[bullets]", cands.map((b) => `${b.id} | ${b.text}`).join("\n"));
-      const res = await generate({ model: JUDGE_MODEL, prompt, schema: VerdictSchema, timeoutMs: 60000 });
+      const res = await generate({ task: "judge", prompt, schema: VerdictSchema });
       if (!res.ok) {
         stats.failed++;
         stats.error = `${res.error}: ${res.detail}`;
@@ -155,7 +157,7 @@ export async function judgeRequirements(
         ? { label: "not_demonstrated", bullet_ids: [] }
         : { label: res.value.label, bullet_ids: ids };
     }
-    put.run(cacheKey(r, hash), r, verdict.label, JSON.stringify(verdict.bullet_ids), JUDGE_MODEL,
+    put.run(cacheKey(r, hash), r, verdict.label, JSON.stringify(verdict.bullet_ids), judgeModel(),
       JUDGE_PROMPT_VERSION, hash, new Date().toISOString());
     verdicts.set(r, verdict);
     stats.judged++;

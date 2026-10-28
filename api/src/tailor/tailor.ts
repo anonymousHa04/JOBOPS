@@ -11,7 +11,7 @@ import type { Decision, StoredRecord } from "./decide.ts";
 import { idealContent } from "./ideal.ts";
 import type { Budget, ResumeContent } from "./ideal.ts";
 import { originalContent, toStored, writeRecord } from "./records.ts";
-import { REWORD_MODEL, rewordContent } from "./reword.ts";
+import { rewordContent, rewordModel } from "./reword.ts";
 import { lintRecord, sameCompany } from "./lint.ts";
 import type { Finding } from "./lint.ts";
 import { TAILORED_BANDS } from "../scoring/config.ts";
@@ -147,7 +147,7 @@ export async function tailorJob(
     jd_id: jobId, source_resume_id: plan.start?.resume_id ?? null, decision: d.decision, reason: d.reason,
     band: d.band, score: d.score, equivalence: d.equivalence, flags: d.flags,
     review_findings: [], changes, evidence_refs, content,
-    meta: reworded.length ? { model: REWORD_MODEL } : undefined
+    meta: reworded.length ? { model: rewordModel() } : undefined
   });
   const lint = d.decision === "not_tailored" ? [] : [...lintRecord(record, bank, extra), ...plan.same_company.warnings];
   return { ...base, decision: d.decision, resume_id: record.resume_id, path, created, reworded, lint, error };

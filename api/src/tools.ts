@@ -1,6 +1,6 @@
 // Operations shared by the CLI (cli.ts) and the MCP server (mcp/server.ts).
 // Results are ids, counts, scores, and questions: never resume or bullet text.
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { openDb } from "./db.ts";
 import type { Db } from "./db.ts";
@@ -29,7 +29,7 @@ import {
 import type { Ats } from "./profile/bank.ts";
 import { loadRequirements, parseJob } from "./requirements/parse.ts";
 import { riskCheck } from "./scoring/risk.ts";
-import { JUDGE_MODEL, judgeRequirements, judgeSettled, loadVerdicts, needsJudgeCount, openRequirements } from "./scoring/judge.ts";
+import { judgeRequirements, judgeSettled, loadVerdicts, needsJudgeCount, openRequirements } from "./scoring/judge.ts";
 import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
@@ -40,8 +40,8 @@ import type { Reported } from "./render/ats-report.ts";
 import { lintRecord } from "./tailor/lint.ts";
 import { fetchJob } from "./jobs/from-url.ts";
 import { createJobRepository } from "./jobs/repository.ts";
-import { modelUp } from "./model/llm.ts";
-import { REWORD_MODEL } from "./tailor/reword.ts";
+import { ensureModel, modelLogPath, modelUp, TASKS } from "./model/registry.ts";
+import type { CallRecord } from "./model/llm.ts";
 
 export function db(): Db {
   const path = process.env.DB_PATH ?? "data/jobops.db";
@@ -74,12 +74,14 @@ export function bankStatus() {
 }
 
 export async function bankBuild() {
+  await ensureModel("bank_build");
   const r = await buildBank();
   return { ...bankStatus(), ok: r.ok, issues: r.issues };
 }
 
 // Add tags to bullets with fewer than 5, only tags the bullet's text names (local model).
 export async function bankRetag() {
+  await ensureModel("retag");
   const r = await retagBank();
   return { ...r, issues: checkBank(requireBank(), readFileSync(resumeTextPath(), "utf8")).length };
 }
@@ -164,24 +166,40 @@ export function listJobs(d: Db, opts: { q?: string; limit?: number; unparsed?: b
   return d.prepare(sql).all(...args) as { id: string; company: string; title: string; location: string | null }[];
 }
 
-export function jdParse(d: Db, jobId: string) {
+export async function jdParse(d: Db, jobId: string) {
+  if (!loadRequirements(d, jobId)) await ensureModel("jd_parse");
   return parseJob(d, jobId);
 }
 
-// Parses every job that has no requirements yet, one model call at a time.
+// Parses every job that has no requirements yet, one model call at a time. Stops at the
+// first "server down" (the rest would fail the same way) and says how far it got.
 export async function jdParseAll(d: Db, limit: number) {
   const jobs = listJobs(d, { unparsed: true, limit });
+  if (jobs.length) await ensureModel("jd_parse", `${jobs.length} jobs to parse`);
   const done: string[] = [];
   const failed: { job_id: string; error: string }[] = [];
+  let stopped: string | null = null;
   for (const j of jobs) {
     try {
       await parseJob(d, j.id);
       done.push(j.id);
     } catch (err) {
-      failed.push({ job_id: j.id, error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      failed.push({ job_id: j.id, error: message });
+      if (/model unavailable/.test(message)) {
+        stopped = `the model server went down after ${done.length} of ${jobs.length}; start it and run the same command again`;
+        break;
+      }
     }
   }
-  return { parsed: done.length, failed };
+  return { parsed: done.length, failed, stopped };
+}
+
+// Requirements still waiting for the judge, and whether its answers can change anything.
+function judgeNeed(d: Db, req: NonNullable<ReturnType<typeof loadRequirements>>, bank: ReturnType<typeof requireBank>, extra: ReturnType<typeof loadSkillsExtra>) {
+  const open = openRequirements(d, req, bank, extra);
+  const settled = open.length ? judgeSettled(req, bank, extra, loadVerdicts(d, req, bank, extra), open) : null;
+  return { open: open.length, needed: open.length > 0 && !settled, settled };
 }
 
 // Score with the LLM judge for requirements the index cannot settle (cached verdicts
@@ -192,6 +210,8 @@ export async function score(d: Db, jobId: string, judge = true) {
   const bank = requireBank();
   const extra = loadSkillsExtra();
   if (!judge) return { ...scoreJob(d, jobId, loadVerdicts(d, req, bank, extra)), judge: "off (cached verdicts only)" };
+  const need = judgeNeed(d, req, bank, extra);
+  if (need.needed) await ensureModel("judge", `${need.open} requirements need the judge`);
   const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
   return { ...scoreJob(d, jobId, verdicts), judge: stats };
 }
@@ -217,7 +237,15 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   if (!bank.approved) throw new Error("approve the bank first: bank approve (after reviewing it)");
   const extra = loadSkillsExtra();
   const { records, checks } = loadRecords(d, bank);
+  // The judge (7B) and rewording (14B) need different servers, and only one fits in
+  // memory: judge first (cached), then check rewording's server before any work.
+  const need = judgeNeed(d, req, bank, extra);
+  if (need.needed) await ensureModel("judge", `${need.open} requirements need the judge before tailoring`);
   const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
+  const plan = tailorAll(d, { jobId }).rows[0];
+  if (plan?.decision === "adapt" && plan.to_reword > 0 && (!plan.blocked || opts.force)) {
+    await ensureModel("reword", `${plan.to_reword} bullets to reword (the judge's answers are saved; run tailor again after switching)`);
+  }
   const companyOf = companies(d);
   const result = await tailorJob(d, req, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
     { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf } });
@@ -303,9 +331,8 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
 
   // 2. Parse the JD.
   if (!loadRequirements(d, job.id)) {
-    const model = process.env.JOBOPS_JD_MODEL ?? "qwen2.5:7b";
-    const m = await modelUp(model);
-    if (!m.up) return stop("parse", m.role, `${model} is not running`);
+    const m = await modelUp("jd_parse");
+    if (!m.up) return stop("parse", m.spec.role, `${m.spec.model} is not running`);
     await parseJob(d, job.id);
     steps.push({ step: "parse", status: "done" });
   } else {
@@ -319,8 +346,8 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   const open = needsJudgeCount(d, req, bank, extra);
   const settled = open > 0 ? judgeSettled(req, bank, extra, loadVerdicts(d, req, bank, extra), openRequirements(d, req, bank, extra)) : null;
   if (open > 0 && !settled) {
-    const m = await modelUp(JUDGE_MODEL);
-    if (!m.up) return stop("judge", m.role, `${open} requirements need the judge; ${JUDGE_MODEL} is not running`);
+    const m = await modelUp("judge");
+    if (!m.up) return stop("judge", m.spec.role, `${open} requirements need the judge; ${m.spec.model} is not running`);
   }
   const scored = await score(d, job.id, open > 0);
   steps.push({ step: "judge", status: settled ? "skipped" : open > 0 ? "done" : "cached",
@@ -330,8 +357,8 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   // 4. Decide; reword only for adapt.
   const plan = tailorAll(d, { jobId: job.id }).rows[0];
   if (plan.decision === "adapt" && plan.to_reword > 0 && !plan.blocked) {
-    const m = await modelUp(REWORD_MODEL);
-    if (!m.up) return { ...stop("tailor", m.role, `${plan.to_reword} bullets to reword; ${REWORD_MODEL} is not running`), ...base, ...scoreOut, decision: plan.decision };
+    const m = await modelUp("reword");
+    if (!m.up) return { ...stop("tailor", m.spec.role, `${plan.to_reword} bullets to reword; ${m.spec.model} is not running`), ...base, ...scoreOut, decision: plan.decision };
   }
   const t = await tailor(d, job.id, { force: opts.force });
   if (!("created" in t)) throw new Error("tailor returned a dry run");
@@ -364,4 +391,40 @@ export async function ats(d: Db, opts: { resumeId?: string }) {
 // by hand after an upload test) with what it should show.
 export function atsCompare(file: string) {
   return compareReport(JSON.parse(readFileSync(file, "utf8")) as Reported);
+}
+
+// Which model each task uses and whether its server is up (config/models.yaml).
+export async function models() {
+  return Promise.all(TASKS.map(async (task) => {
+    const { up, spec } = await modelUp(task);
+    return { task, model: spec.model, role: spec.role, timeout_s: spec.timeoutMs / 1000, max_tokens: spec.maxTokens ?? null, up };
+  }));
+}
+
+// The model call log (data/model-calls.jsonl) per task: outcomes, timing, tokens.
+export function modelStats(opts: { since?: string } = {}) {
+  const path = modelLogPath();
+  const rows = existsSync(path)
+    ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as CallRecord).filter((r) => !opts.since || r.at >= opts.since)
+    : [];
+  const by = new Map<string, CallRecord[]>();
+  for (const r of rows) by.set(`${r.task} ${r.model}`, [...(by.get(`${r.task} ${r.model}`) ?? []), r]);
+  const pct = (xs: number[], p: number) => xs.length ? [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor((p / 100) * xs.length))] : 0;
+  return {
+    log: path,
+    calls: rows.length,
+    tasks: [...by].map(([key, rs]) => {
+      const [task, model] = key.split(" ");
+      const outcomes: Record<string, number> = {};
+      for (const r of rs) outcomes[r.outcome] = (outcomes[r.outcome] ?? 0) + 1;
+      const ms = rs.map((r) => r.ms);
+      return {
+        task, model, calls: rs.length, outcomes,
+        avg_s: Math.round(ms.reduce((a, b) => a + b, 0) / rs.length / 100) / 10,
+        p95_s: Math.round(pct(ms, 95) / 100) / 10,
+        prompt_tokens: rs.reduce((n, r) => n + (r.prompt_tokens ?? 0), 0),
+        completion_tokens: rs.reduce((n, r) => n + (r.completion_tokens ?? 0), 0)
+      };
+    })
+  };
 }

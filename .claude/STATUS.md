@@ -3,15 +3,15 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-10-28, after Milestone 3.
+Last updated: 2026-10-28, after Milestone 4.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
 
 ## Where things are
 
-- Branches: work happened on `m3-engine`; `dev` and `milestone-3` point at the same
-  commit. `main` holds only the early commits: the user keeps it untouched (never
+- Branches: `dev` is the development branch; each milestone is a sub-branch merged into
+  it (`milestone-3` with `m3-engine`, `milestone-4`). `main` holds only the early commits: the user keeps it untouched (never
   commit or merge to it unless asked).
 - Done:
   - **Milestone 1: working job API**; **Milestone 2: search and deduplication**.
@@ -20,22 +20,25 @@ Last updated: 2026-10-28, after Milestone 3.
     guarded rewording on the 14B, records, ATS-safe PDF with three-reader parse-back,
     lint. Plus: Workday/SmartRecruiters/careers-site search, `job add <url>`,
     career breaks, soft-skill and degree handling, hidden-text and AI-wording guards.
+  - **Milestone 4: local LLM integration**. One model registry
+    (`api/config/models.yaml`, override in `profile/models.yaml`, env vars win); every
+    model command checks its server first and stops with the llm.sh commands to switch;
+    call log `data/model-calls.jsonl` (codes and numbers only) with `models stats`;
+    the retry names the failing schema fields.
   - First real tailored resume: Okta Senior Software Engineer (Core Frontier),
     adapt, 77.5; its PDF passes all three readers.
-- Tests: 75 TypeScript (`npm test`) plus Go (`cd jd-search && go test ./...`).
+- Tests: 87 TypeScript (`npm test`) plus Go (`cd jd-search && go test ./...`).
 - Product models (llama.cpp, `.claude/bin/llm.sh`): general7 (JD parse, judge;
   3 slots), general14 (bank build, rewording). One heavy model at a time.
 
 ## Where to start next
 
-- Milestone 4 (README). Before planning it, ask the user what they want first.
+- Milestone 5 (README: background agent workflow). Ask the user what they want first.
 - Waiting on the user:
-  - approve tests for skills trimming, the page fit, and sticky headings, and for
-    the judge's skip and parallel calls;
   - lint items in their bank: profile links are labels not URLs, level digits
     in two titles ("II" parses better), a planned-work bullet, repeated opening verb.
 - Deferred by the user: review-aware tailoring (`profile/reviews/`), score
-  thresholds learned from outcomes (needs Milestone 7), a new rewording model.
+  thresholds learned from outcomes (needs Milestone 7).
 - Workday upload checks are manual (`ats compare <report.json>` against the fake
   resume): Google and Workday block automated sign-in, and Cowork was too slow and
   costly. The automatic check is the three local readers on every render.

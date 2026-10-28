@@ -16,6 +16,8 @@ const USAGE = `usage: node api/src/cli.ts <command>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
+  models                  (which model each task uses, and whether its server is up)
+  models stats [--since <ISO time>]   (the model call log: outcomes, timing, tokens per task)
   job add <url> [--company <name>] [--force] [--no-render]
                          (fetch one job by its link, then parse, judge, tailor, and render)
   jobs [--q <text>] [--limit N] [--unparsed]
@@ -90,6 +92,10 @@ async function main(argv: string[]): Promise<unknown> {
     case "risk":
       if (sub === "skip") return t.riskSkip(need(rest[0], "risk id"));
       return t.risk(t.db(), need(sub, "job id"));
+    case "models":
+      if (sub === "stats") return t.modelStats({ since: flag(rest, "since") });
+      if (!sub) return t.models();
+      break;
     case "job":
       if (sub === "add") {
         return t.jobAdd(t.db(), need(rest[0], "job link"),

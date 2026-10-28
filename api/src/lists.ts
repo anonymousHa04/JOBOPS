@@ -163,3 +163,15 @@ export function seniorSignals(): Map<string, RegExp> {
     return out;
   });
 }
+
+// The default and the user's copy of a config file, in that order.
+export const configFiles = (name: string) => [join(CONFIG, name), join(profileDir(), name)];
+
+// Both files read and combined (the user's second), cached until either changes.
+export function readMerged<T>(files: string[], schema: z.ZodType<T>, merge: (a: T, b: T) => T): T {
+  return cached(files, () => {
+    const parts = files.map((f) => read(f, schema)).filter((x): x is T => x !== null);
+    if (!parts.length) throw new Error(`missing ${files[0]}`);
+    return parts.reduce(merge);
+  });
+}

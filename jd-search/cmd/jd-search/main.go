@@ -41,7 +41,14 @@ func main() {
 // prefsPath finds preferences.yaml from the repo root or from jd-search/.
 func prefsPath() string {
 	if dir := os.Getenv("JOBOPS_PROFILE_DIR"); dir != "" {
-		return filepath.Join(dir, "preferences.yaml")
+		p := filepath.Join(dir, "preferences.yaml")
+		// A relative dir (from .env) is relative to the repo root; jd-search runs in jd-search/.
+		if _, err := os.Stat(p); err != nil && !filepath.IsAbs(dir) {
+			if alt := filepath.Join("..", p); fileExists(alt) {
+				return alt
+			}
+		}
+		return p
 	}
 	for _, dir := range []string{"profile", "../profile"} {
 		p := filepath.Join(dir, "preferences.yaml")
@@ -50,6 +57,11 @@ func prefsPath() string {
 		}
 	}
 	return "profile/preferences.yaml"
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func options(dryRun bool, workers int) run.Options {

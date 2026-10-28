@@ -285,14 +285,15 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Track source and ingestion timestamps.
 - Test duplicate and update behavior.
 
-### Milestone 3 — Candidate profile, matching, and resume selection
+### Milestone 3 — Candidate profile, matching, and resume selection (done, 2026-10-28)
 
-- Parse the resume once into a user-approved YAML experience bank; record skills the resume omits as user-confirmed extras.
-- Minimal local model provider (llama.cpp, schema-forced and validated output, timeouts), pulled forward from Milestone 4.
+- Parse the resume once into a user-approved YAML experience bank; record skills the resume omits as user-confirmed extras. Career breaks are part of the timeline but add no years or tenure.
+- Minimal local model provider (llama.cpp, schema-forced and validated output, timeouts, streamed answers), pulled forward from Milestone 4.
 - Extract job requirements into a validated structure.
-- Search public job-board APIs (Greenhouse, Lever, Ashby) by the user's preferences with a concurrent Go fetcher.
-- Score the bank against each JD deterministically: strengths, gaps, evidence, and questions about skills the bank lacks.
-- Resume selection engine: reuse, adapt, assemble, or flag gaps; one traceable YAML resume record per JD; rewrites may not add unsupported claims.
+- Search job boards by the user's preferences with a concurrent Go fetcher: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, and company careers sites through a browser crawler that honors robots.txt. `job add <url>` takes one job by its link through the whole flow.
+- Score the bank against each JD: strengths, gaps, evidence, and questions about skills the bank lacks. An inverted index settles what it can; a local LLM judge decides the rest. Degrees are checked against education; soft skills count as themes and never cap the score.
+- Resume selection engine: reuse an existing resume, adapt one, or mark the JD not tailored (years, or a poor fit); one traceable YAML resume record per JD. Rewrites pass a guard: no added numbers, terms, or scope, no AI-sounding wording, no hidden characters.
+- PDF from an ATS-tested template (company line first, dates beside the title), kept only when three local readers (pdftotext, pdf.js, OpenResume) read every field back. Layout verified on Workday with a fake resume. Resume lint flags gaps, tenure, and wording issues for the user.
 - Expose the tools as MCP servers (Node and Go).
 
 ### Milestone 4 — Local LLM integration

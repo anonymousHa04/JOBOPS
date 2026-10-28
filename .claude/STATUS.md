@@ -3,56 +3,42 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-10-25, after Milestone 2, the coder tooling, and the GitHub MCP server.
+Last updated: 2026-10-28, after Milestone 3.
 
-> **Current state (2026-10-26 on): `.claude/knowledge/status.yaml`.** It is the
-> structured, searchable record of what is done and left (agent system phases,
-> Milestone 3, decisions needed). This file is the older narrative handoff.
+> Structured record of what is done and left: `.claude/knowledge/status.yaml`.
+> Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
 
 ## Where things are
 
-- Branch: `dev` (work happens here; `main` holds only the first commit).
+- Branches: work happened on `m3-engine`; `dev` and `milestone-3` point at the same
+  commit. `main` holds only the early commits: the user keeps it untouched (never
+  commit or merge to it unless asked).
 - Done:
-  - **Milestone 1: working job API** (`6e00af5`). `POST /jobs`, `GET /jobs/:id`;
-    Fastify + Zod v4 + SQLite (better-sqlite3); TypeScript run directly by Node 24.
-  - **Milestone 2: search and deduplication** (`5f9e354`). `GET /jobs` with
-    filters and paging; dedup by source URL or content fingerprint (repeat → 200,
-    edited posting at a known URL → updated in place); LIKE wildcards escaped.
-  - **Coder tooling** (`b342025`, `aef5fad`, `6e0013e`). See "How work gets done".
-  - **Session handoff** (`0b4d462`, `2f824fd`) and **GitHub MCP server + judge
-    trial** (`9bb00d3`, merged from `try/laya-scout`).
-- Tests: 22 passing (`npm test`), typecheck clean (`npm run typecheck`).
-- Graph: `graphify-out/` updated after the tooling work (2026-10-25).
+  - **Milestone 1: working job API**; **Milestone 2: search and deduplication**.
+  - **Milestone 3: profile, matching, resume selection** (README for the scope).
+    Engine per the m3-notes skill: bank, scoring and judge, reuse/adapt/not_tailored,
+    guarded rewording on the 14B, records, ATS-safe PDF with three-reader parse-back,
+    lint. Plus: Workday/SmartRecruiters/careers-site search, `job add <url>`,
+    career breaks, soft-skill and degree handling, hidden-text and AI-wording guards.
+  - First real tailored resume: Okta Senior Software Engineer (Core Frontier),
+    adapt, 77.5; its PDF passes all three readers.
+- Tests: 75 TypeScript (`npm test`) plus Go (`cd jd-search && go test ./...`).
+- Product models (llama.cpp, `.claude/bin/llm.sh`): general7 (JD parse, judge;
+  3 slots), general14 (bank build, rewording). One heavy model at a time.
 
 ## Where to start next
 
-**Paused on 2026-10-25 by the user.** Milestone 3 needs data and some additional
-code/features the user is preparing first. On resume, ask what data and
-features they have before planning anything.
-
-**Deferred by the user (2026-10-27), do later:** resume-review-aware tailoring.
-`tailor` does not use `profile/reviews/` yet (records store `review_findings: []`).
-Plan: `review extract` on local qwen2.5:14b → `profile/reviews/findings.yaml`,
-user-approved, applied by `tailor`. Details: `.claude/knowledge/status.yaml`
-(`m3-review-findings`) and the m3-notes skill (`references/decisions.md`).
-
-**Milestone 3: candidate profile and matching** (README → Implementation roadmap):
-1. Load an approved resume/profile representation.
-2. Extract job requirements into a validated structure.
-3. Implement an initial deterministic matching baseline.
-4. Return strengths, gaps, and evidence rather than only a single score.
-
-Before writing the Milestone 3 plan, settle these with the user:
-- Where the resume/profile lives (`profile/resume.md` was planned) and its
-  format; add `profile/` to `.gitignore` (README: never commit resumes).
-- Requirement extraction for M3 is deterministic/keyword-based; the local LLM
-  arrives in Milestone 4 (README model roles). Confirm that split.
-- An embedding model (e.g. `nomic-embed-text`) is not installed; ask before
-  downloading. Laya is installed (`uv tool`, typed-decisions checkpoint). Zero-shot
-  it judged 7/17 repos correctly vs qwen2.5:7b's 12/17 (`.claude/bin/scout_eval.py`),
-  so it needs labeled data and fine-tuning/calibration before judging resume
-  evidence. Resume labels must come from the user or a local model, never a
-  cloud model (README privacy rules).
+- Milestone 4 (README). Before planning it, ask the user what they want first.
+- Waiting on the user:
+  - approve tests for skills trimming, the page fit, and sticky headings, and for
+    the judge's skip and parallel calls;
+  - lint items in their bank: profile links are labels not URLs, level digits
+    in two titles ("II" parses better), a planned-work bullet, repeated opening verb.
+- Deferred by the user: review-aware tailoring (`profile/reviews/`), score
+  thresholds learned from outcomes (needs Milestone 7), a new rewording model.
+- Workday upload checks are manual (`ats compare <report.json>` against the fake
+  resume): Google and Workday block automated sign-in, and Cowork was too slow and
+  costly. The automatic check is the three local readers on every render.
 
 ## How work gets done
 
@@ -78,9 +64,10 @@ Before writing the Milestone 3 plan, settle these with the user:
 
 ## Machine setup (outside the repo)
 
-- Ollama settings at login: `~/Library/LaunchAgents/com.user.ollama-env.plist`
-  (parallel 1, flash attention, q8_0 KV cache, max 3 models). It passes the
-  settings with `open --env`, because Ollama ignored launchd's copy.
+- Ollama is retired (2026-10-26): every model runs on llama.cpp from GGUF files
+  in `~/models/jobops/`, started with `.claude/bin/llm.sh`.
+- The careers crawler drives the installed Google Chrome (playwright-core); the
+  OpenResume reader runs from `.scout/openresume-runner` (git-ignored, AGPL).
 - aider and mini-swe-agent are `uv` tools; mini-swe-agent needs the `mcp`
   package (`uv tool install --with mcp mini-swe-agent`) and the text-based mode
   flags already in `run-mini.sh`.

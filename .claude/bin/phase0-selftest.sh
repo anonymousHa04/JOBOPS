@@ -20,7 +20,7 @@ cd "$wt"
 
 mkdir -p .agent-logs/main
 # A throwaway fix record for the promotion check (the real fixes.jsonl is never touched).
-printf '%s\n' '{"id":"st-string-to-number","status":"observed","title":"Self-test: string assigned to number","signature":"TS2322: Type .string. is not assignable to type .number.","terms":[],"files":[],"resolution":"Use a number literal.","evidence":"self-test seed"}' > .agent-logs/fixes.jsonl
+printf '%s\n' '{"id":"st-string-to-number","status":"observed","title":"Self-test: string assigned to number","signature":"TS2322: Type .string. is not assignable to type .number.","terms":[],"files":["api/src/selftest.ts"],"resolution":"Use a number literal.","evidence":"self-test seed"}' > .agent-logs/fixes.jsonl
 ok=0; bad=0
 reset() { git checkout -q -- . && git clean -fdq -e node_modules -e .agent-logs; }
 

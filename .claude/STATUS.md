@@ -62,7 +62,10 @@ Last updated: 2026-10-28, after Milestone 4.
   `gh` at start-up by `.claude/mcp/github.sh`). github-scout was removed; all
   GitHub searches use the MCP server (AGENTS.md rule 6). After an MCP call,
   reply only "passed" or the raw log.
-- Watch coders: `tmux attach -t jobops`. Logs: `.agent-logs/`.
+- Watch coders: `tmux attach -t jobops`. Logs: `.agent-logs/`. Heartbeat (run with
+  every coder run): `go run -C .claude/bin/heartbeat .` flags IDLE, STUCK and DEAD tasks.
+- `check.sh` covers only the TypeScript API and Go. Extension tasks use
+  `TEST_CMD="sh extension/tools/check-ext.sh <file>"` (AGENTS.md rule 7).
 - Token rules: `.claude/savingTokens.md`. Graph update once per milestone.
 
 ## Machine setup (outside the repo)

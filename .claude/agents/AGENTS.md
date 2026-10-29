@@ -116,6 +116,35 @@ for flaws the manager finds.
   `.claude/bin/run-coder.sh <task> .claude/specs/<task>.md <files to edit>`.
   Wait with `tmux wait-for <task>`. Output goes to `.agent-logs/<task>.log`; the
   user watches live with `tmux attach -t jobops`.
+- Run the heartbeat with every coder run (in the background, from the repo root):
+  `go run -C .claude/bin/heartbeat .` (every 15 s; `-once` for one check). It
+  reports each running task as WORKING, IDLE (2 min quiet), STUCK (aider waiting
+  at its ">" prompt, or 5 min quiet) or DEAD, and sends a macOS notification on
+  STUCK or DEAD. On STUCK or DEAD, stop the run and report; do not wait blind.
+- Do not edit tracked files while a coder runs. `autofix.sh` snapshots the tree
+  before each attempt and restores any tracked file changed outside the task's
+  files, so the manager's own edits are silently undone.
+- Every plan names the check that covers its files before it runs. `check.sh`
+  only covers the TypeScript API and Go, so a task on other files passes no
+  matter what it writes. For `extension/` tasks run `autofix.sh` per task with
+  `TEST_CMD="sh extension/tools/check-ext.sh <file>"` and `FIRST_RUNNER=aider`
+  (whole-file edits; mini-swe-agent's `sed` edits broke files on macOS). The
+  grader checks that required code is present, not that it is right, so read
+  the final extension files anyway; and write its checks to accept equivalent
+  code, or a correct fix escalates.
+- Lessons (`.claude/knowledge/fixes.jsonl`): after fixing an escalation, record it with
+  `feedback.py resolve` (terms specific to the failure, file globs, and `not_when` for known
+  look-alikes). A lesson reaches a coder only when its terms appear in the task text (context
+  pack) or its error signature matches AND its files or terms fit the task (repair round). Each
+  attempt records which lessons it got and why (`lessons`), and its timing. Two failed uses drop
+  a lesson to `hypothesis`. `feedback.py stats` reports first-try pass rate, fix rounds and
+  minutes per task, and fix-round results with versus without a lesson. Check retrieval changes
+  with `retrieve.py eval` (recall and lesson precision; forbidden look-alikes fail it) and
+  `python3 .claude/bin/test_lessons.py`.
+- Before every repair round the coder gets `.claude/agents/self-review.md` and its previous
+  diff; before escalation the local model writes a `self_review` into the escalation record.
+- The Bash tool runs zsh: never rely on unquoted word splitting (`set -- $t`) in
+  loops that start coders; it passed a wrong task name and left aider waiting.
 - Specs must not contain triple-backtick code fences (use indented blocks). A
   fence makes aider expect four-backtick fences, the 7B model answers with three,
   and the edit is silently dropped. The runner appends `RUN-CODER: NO EDIT

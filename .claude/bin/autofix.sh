@@ -42,6 +42,7 @@ runner_for() { # <files...>
 run() {
   r=$1; t=$2; s=$3; shift 3
   rm -f ".agent-logs/$t.done" ".agent-logs/$t.exit"
+  date +%s > ".agent-logs/$t.started"  # attempt timing (feedback.py attempt reads it)
   case "$r" in
     mini) "$bin/run-mini.sh" "$t" "$s" "$@" > /dev/null ;;
     fake) "$bin/run-fake.sh" "$t" "$s" "$@" > /dev/null ;;

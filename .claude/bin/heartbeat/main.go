@@ -9,7 +9,7 @@
 //
 // Usage (from the repo root):
 //
-//	go run ./.claude/bin/heartbeat [-interval 30s] [-port 8081] [-once] [-notify=false]
+//	go run -C .claude/bin/heartbeat . [-interval 15s] [-port 8081] [-once] [-notify=false]
 package main
 
 import (
@@ -236,7 +236,7 @@ func repoRoot() string {
 }
 
 func main() {
-	interval := flag.Duration("interval", 30*time.Second, "time between checks")
+	interval := flag.Duration("interval", 15*time.Second, "time between checks")
 	port := flag.Int("port", 8081, "llama.cpp coder server port")
 	once := flag.Bool("once", false, "check once and exit")
 	root := flag.String("root", "", "repo root (default: git top level)")

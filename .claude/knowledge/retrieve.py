@@ -369,21 +369,30 @@ STATUS_EVIDENCE = {"verified": "verified_fix", "regression-tested": "verified_fi
 STATUS_RANK = {"regression-tested": 0, "verified": 1, "observed": 2, "hypothesis": 3}
 
 
-def match_fixes(haystack, files):
-    hay = haystack.lower()
+def match_fixes(task_text, files):
+    """Lessons for a task. A lesson needs at least one of its terms in the task text itself
+    (not just in retrieved source, which mentions everything); a file-glob match only ranks it
+    higher. A lesson without terms needs a file match. `not_when` (a regex) excludes known
+    look-alikes. Returns (lesson, reasons)."""
+    hay = task_text.lower()
     hits = []
     for fx in load_fixes():
         if fx.get("status") in ("rejected", "outdated"):
             continue
+        try:
+            if fx.get("not_when") and re.search(fx["not_when"], task_text, re.I):
+                continue
+        except re.error:
+            pass
         by_term = [t for t in fx.get("terms", [])
                    if re.search(r"(?<![\w])%s(?![\w])" % re.escape(t.lower()), hay)]
         by_file = [g for g in fx.get("files", []) if any(fnmatch.fnmatch(f, g) for f in files)]
-        if by_term or by_file:
-            hits.append((fx, by_file + by_term, bool(by_file)))
-    # Fixes about the target files first, then by number of matching terms, then status.
-    hits.sort(key=lambda h: (not h[2], -len(h[1]), STATUS_RANK.get(h[0].get("status"), 9)))
-    hits = [(fx, why) for fx, why, _ in hits]
-    return hits
+        if by_term or (by_file and not fx.get("terms")):
+            hits.append((fx, by_term + by_file, bool(by_file)))
+    # Most matching terms first, then a file match, then status.
+    hits.sort(key=lambda h: (-len([w for w in h[1] if w in h[0].get("terms", [])]), not h[2],
+                             STATUS_RANK.get(h[0].get("status"), 9)))
+    return [(fx, why) for fx, why, _ in hits]
 
 
 # ---------------------------------------------------------------- context
@@ -573,15 +582,19 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
     pkg.add(s, "(validation)", 1, 1, "Validation: .claude/bin/check.sh <task> (typecheck, npm test, go vet/test)",
             "constraint", "task", "requirement", "how the result is checked", force=True)
 
-    # 7. Known fixes whose terms appear in the task or the retrieved source.
+    # 7. Known fixes whose terms appear in the task text (match_fixes).
     s = pkg.section("known_fixes")
-    hay = spec_text + "\n" + "\n".join(i["content"] for sec in pkg.sections for i in sec["items"])
-    for fx, why in match_fixes(hay, files)[:4]:
+    for rank, (fx, why) in enumerate(match_fixes(spec_text, files)[:4]):
         text = "[%s] %s\nResolution: %s" % (fx["status"], fx["title"], fx["resolution"])
         if fx.get("limitations"):
             text += "\nLimitations: " + fx["limitations"]
+        n = len(s["items"])
+        # The top 3 lessons are kept even when the budget is spent: short, and the one
+        # thing a past failure taught (they were dropped behind source excerpts before).
         pkg.add(s, ".claude/knowledge/fixes.jsonl", 0, 0, text, "fix", "fixes",
-                STATUS_EVIDENCE.get(fx["status"], "hypothesis"), "matched: " + ", ".join(why[:3]))
+                STATUS_EVIDENCE.get(fx["status"], "hypothesis"), "matched: " + ", ".join(why[:3]), force=rank < 3)
+        if len(s["items"]) > n:  # added (not dropped for the budget)
+            s["items"][-1]["fix_id"] = fx["id"]  # provenance: which lesson reached the coder
         pkg.seen.discard((".claude/knowledge/fixes.jsonl", 0, 0))  # several fixes share the file
 
     # 8. Playbook: the shared skill sections (.agents/skills/) that best match the
@@ -671,7 +684,7 @@ def cmd_context(ix, a):
 
 def cmd_eval(ix, a):
     cases = json.load(open(EVAL))
-    total_hit = total = 0
+    total_hit = total = total_supplied = total_unwanted = total_forbidden = 0
     rows = []
     for case in cases:
         pkg = build_context(ix, case["task"], case["files"], case.get("budget", a.budget), case.get("new", []))
@@ -683,8 +696,14 @@ def cmd_eval(ix, a):
         want_f = case.get("expect_fixes", [])
         hit_p = [p for p in want_p if p in paths]
         hit_s = [s for s in want_s if re.search(r"\b(export\s+)?(const|function|type|async function)\s+%s\b" % s, text)]
-        fix_titles = "\n".join(i["content"] for s in pkg["sections"] if s["name"] == "known_fixes" for i in s["items"])
+        supplied = [i["content"] for s in pkg["sections"] if s["name"] == "known_fixes" for i in s["items"]]
+        fix_titles = "\n".join(supplied)
         hit_f = [f for f in want_f if f in fix_titles]
+        # Precision: lessons supplied that the case did not ask for, and lessons it forbids
+        # (near-miss look-alikes that must never be supplied).
+        unwanted = [t for t in supplied if not any(w in t for w in want_f)]
+        forbidden = [f for f in case.get("expect_no_fixes", []) if f in fix_titles]
+        total_supplied += len(supplied); total_unwanted += len(unwanted); total_forbidden += len(forbidden)
         leaked = [p for p in paths if p.startswith(("profile/", "data/", "node_modules/", ".env"))]
         n = len(want_p) + len(want_s) + len(want_f)
         h = len(hit_p) + len(hit_s) + len(hit_f)
@@ -694,13 +713,19 @@ def cmd_eval(ix, a):
                      "semantic": sem["status"] if sem["status"] != "ok" else "+%d" % len(sem["items"]),
                      "budget_ok": pkg["used_tokens"] <= pkg["budget"] + 600, "leaked": leaked,
                      "missed": sorted(set(want_p) - set(hit_p)) + sorted(set(want_s) - set(hit_s)) +
-                               sorted(set(want_f) - set(hit_f))})
+                               sorted(set(want_f) - set(hit_f)),
+                     "fixes": "%d/%d" % (len(supplied) - len(unwanted), len(supplied)),
+                     "forbidden": forbidden})
     for r in rows:
-        print("%-24s recall %-6s tokens %-5d budget %-3s semantic %-8s leaked %s%s" % (
-            r["case"], r["recall"], r["tokens"], "ok" if r["budget_ok"] else "NO", r["semantic"],
-            r["leaked"] or "none", ("  missed: " + ", ".join(r["missed"])) if r["missed"] else ""))
+        print("%-24s recall %-6s fixes wanted %-5s tokens %-5d budget %-3s semantic %-8s leaked %s%s%s" % (
+            r["case"], r["recall"], r["fixes"], r["tokens"], "ok" if r["budget_ok"] else "NO", r["semantic"],
+            r["leaked"] or "none", ("  missed: " + ", ".join(r["missed"])) if r["missed"] else "",
+            ("  FORBIDDEN: " + ", ".join(r["forbidden"])) if r["forbidden"] else ""))
     print("overall recall: %d/%d (%.0f%%)" % (total_hit, total, 100.0 * total_hit / max(1, total)))
-    bad = any(r["leaked"] or not r["budget_ok"] for r in rows)
+    print("lesson precision: %d/%d supplied lessons were wanted (%.0f%%); forbidden supplied: %d" % (
+        total_supplied - total_unwanted, total_supplied, 100.0 * (total_supplied - total_unwanted) / max(1, total_supplied),
+        total_forbidden))
+    bad = any(r["leaked"] or not r["budget_ok"] or r["forbidden"] for r in rows)
     return 1 if bad else 0
 
 

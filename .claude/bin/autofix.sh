@@ -13,7 +13,7 @@
 #   the agent's own claim; a repair round is a fresh session with only the new
 #   evidence (errors, hints, matching known fixes), never the same prompt again;
 #   it stops on a repeated failure signature, an environment/validation/context
-#   failure, a timeout, or MAX_FIXES (default 1), and writes an escalation record.
+#   failure, a timeout, or MAX_FIXES (default 5, user 2026-10-29), and writes an escalation record.
 # Result: .agent-logs/<task>.result.json (+ <task>.escalation.json when not passed);
 #   one line per task in the main repo's .agent-logs/outcomes.jsonl.
 # Exit 0 = passed, 1 = anything else (the manager takes over).
@@ -23,7 +23,7 @@ task=$1; spec=$2; shift 2
 bin=$(cd "$(dirname "$0")" && pwd)
 cd "$(git rev-parse --show-toplevel)"
 mkdir -p .agent-logs
-max=${MAX_FIXES:-1}
+max=${MAX_FIXES:-5}
 limit=${CODER_TIMEOUT:-1200}
 attempts=".agent-logs/$task.attempts.jsonl"
 : > "$attempts"

@@ -182,7 +182,33 @@ test("soft skill: bullets that show it are partial evidence, and tailoring picks
   assert.deepEqual([comm.label, comm.bullet_ids.sort()], ["partial", ["cur-2", "old-1"]]); // "Presented", "Wrote"
   const ideal = idealContent(req({ must_have: ["Kubernetes", "Excellent communication skills"] }), bank, extra,
     { bullets_per_role: 1, bullets_total: 2, max_words: 25 });
-  assert.ok(ideal.bullets.some((b) => b.id === "cur-2"), "the communication bullet is chosen");
+  // One bullet per role: the hard must-have keeps its bullet (cur-1) and the soft one is
+  // shown by the other role's bullet ("Wrote"), instead of the soft one pushing out Kubernetes.
+  assert.deepEqual(ideal.bullets.map((b) => b.id), ["cur-1", "old-1"]);
+  assert.ok(ideal.bullets.some((b) => comm.bullet_ids.includes(b.id)), "a communication bullet is chosen");
+});
+
+test("selection: a soft must-have ranks as a theme, and ties go to measured evidence, not the id", () => {
+  // Okta-shaped: Node.js is the top must-have and several current-role bullets show it.
+  // The soft must-have is already covered; its second bullet must not outrank Node.js
+  // evidence, and among Node.js bullets the one with a measured result wins.
+  const b = (id: string, text: string, tags: string[]) => ({ ...bullet(id, text, tags), impact: "high" as const });
+  const okta: Bank = { ...structuredClone(bank), roles: [{
+    id: "cur", title: "Senior Engineer", company: "Acme", location: "Bangalore", dates: "Mar 2025 - Oct 2026",
+    bullets: [
+      b("cur-a-show", "Presented the roadmap to customers and the sales team", ["roadmap"]),
+      b("cur-b-agents", "Presented an AI agents demo to customers", ["ai agents"]),
+      b("cur-c-node", "Built a Node.js render service", ["node.js"]),
+      b("cur-d-nodeplain", "Moved jobs onto a Node.js queue", ["node.js"]),
+      b("cur-z-split", "Split a Node.js service into Go workers, cutting memory by 40%", ["node.js", "go"])
+    ]
+  }], projects: [] };
+  const r = req({ must_have: ["Node.js", "Excellent communication skills"] });
+  const ideal = idealContent(r, okta, extra, { bullets_per_role: 3, bullets_total: 3, max_words: 25 });
+  const ids = ideal.bullets.map((x) => x.id).sort();
+  assert.ok(ids.includes("cur-z-split"), "the measured Node.js bullet is chosen");
+  assert.ok(!ids.includes("cur-b-agents"), "a second soft-skill bullet does not outrank Node.js evidence");
+  assert.ok(ids.some((id) => id === "cur-a-show" || id === "cur-b-agents"), "the soft must-have is still shown");
 });
 
 // --- Skill questions ---

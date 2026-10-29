@@ -239,7 +239,7 @@ export function risk(d: Db, jobId: string) {
 // Tailor one JD (engine-algorithm.md §4): judge first (cached verdicts reused), then
 // decide, ask, reword, and write the record. Needs an approved bank. With dryRun, the
 // decision only: cached verdicts, no model calls, no files.
-export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryRun?: boolean } = {}) {
+export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryRun?: boolean; focus?: string[]; notes?: { bullet_id: string; note: string }[] } = {}) {
   if (opts.dryRun) return tailorAll(d, { jobId });
   const req = loadRequirements(d, jobId);
   if (!req) throw new Error("parse the JD first: jd parse <job_id>");
@@ -252,13 +252,19 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   const need = judgeNeed(d, req, bank, extra);
   if (need.needed) await ensureModel("judge", `${need.open} requirements need the judge before tailoring`);
   const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
+  const { focus, notes } = opts;
+  // Focus requirements (the chat's missed gaps) count as must-haves for this run only;
+  // wording kept, duplicates skipped case-insensitively.
+  const seen = new Set(req.must_have.map((m) => m.toLowerCase()));
+  const extraMust = (focus ?? []).filter((f) => !seen.has(f.toLowerCase()) && (seen.add(f.toLowerCase()), true));
+  const reqWithFocus = extraMust.length ? { ...req, must_have: [...req.must_have, ...extraMust] } : req;
   const plan = tailorAll(d, { jobId }).rows[0];
   if (plan?.decision === "adapt" && plan.to_reword > 0 && (!plan.blocked || opts.force)) {
     await ensureModel("reword", `${plan.to_reword} bullets to reword (the judge's answers are saved; run tailor again after switching)`);
   }
   const companyOf = companies(d);
-  const result = await tailorJob(d, req, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
-    { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf } });
+  const result = await tailorJob(d, reqWithFocus, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
+    { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf }, notes });
   return { ...result, judge: stats, edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id) };
 }
 

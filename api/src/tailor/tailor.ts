@@ -96,7 +96,7 @@ export async function tailorJob(
   extra: SkillsExtra,
   budget: Budget,
   verdicts: Verdicts,
-  opts: { force?: boolean; baseUrl?: string; companies?: Companies } = {}
+  opts: { force?: boolean; baseUrl?: string; companies?: Companies; notes?: { bullet_id: string; note: string }[] } = {}
 ): Promise<TailorResult> {
   const plan = planJob(req, jobId, records, bank, extra, budget, verdicts, opts.force, opts.companies);
   const d = plan.decision;
@@ -122,7 +122,7 @@ export async function tailorJob(
   let reworded: RewordLog[] = [];
   let error: string | null = null;
   if (d.decision === "adapt") {
-    const r = await rewordContent(plan.ideal, req, bank, extra, budget, { baseUrl: opts.baseUrl });
+    const r = await rewordContent(plan.ideal, req, bank, extra, budget, { baseUrl: opts.baseUrl }, opts.notes);
     ({ content, changes, error } = r);
     reworded = r.log;
   }

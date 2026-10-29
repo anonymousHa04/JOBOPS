@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JobOps</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <header class="header">
+        <h1>JobOps</h1>
+        <p class="subtitle">Job report from Claude or ChatGPT</p>
+    </header>
+
+    <main class="stack">
+        <div class="field">
+            <label class="field-label" for="jobSelect">Job</label>
+            <select id="jobSelect"></select>
+        </div>
+
+        <fieldset class="field">
+            <legend class="field-label">Send to</legend>
+            <div class="segmented">
+                <input type="radio" name="target" value="claude" id="targetClaude" checked>
+                <label for="targetClaude">Claude</label>
+                <input type="radio" name="target" value="chatgpt" id="targetChatgpt">
+                <label for="targetChatgpt">ChatGPT</label>
+            </div>
+        </fieldset>
+
+        <div class="actions">
+            <button id="getReport" class="btn btn-primary" type="button">Get report</button>
+            <button id="saveSelection" class="btn btn-secondary" type="button">Save selected text</button>
+        </div>
+
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+    </main>
+
+    <p class="note">Sends the job description, your gaps, and the tailored resume (no contact details).</p>
+
+    <script src="popup.js"></script>
+</body>
+</html>

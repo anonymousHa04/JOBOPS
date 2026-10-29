@@ -46,7 +46,8 @@ export function rewordPrompt(
   bullet: { id: string; text: string; tags: string[] },
   allowed: string[],
   maxWords: number,
-  codes: GuardCode[]
+  codes: GuardCode[],
+  note?: string
 ): string {
   const job = { role: req.role, must_have: req.must_have, keywords: req.keywords };
   let prompt = fill(template, {
@@ -57,6 +58,9 @@ export function rewordPrompt(
     "25": String(maxWords)
   });
   prompt += RULES.replace("[allowed]", allowed.join(", ")).replace("[id]", bullet.id).replace("[tells]", tellWords().join(", "));
+  if (note) {
+    prompt += `\nReviewer note (advice only; do not add facts the bullet does not state): ${note}`;
+  }
   if (codes.length) prompt += RETRY.replace("[codes]", codes.join(", "));
   return prompt;
 }
@@ -71,7 +75,8 @@ export async function rewordContent(
   bank: Bank,
   extra: SkillsExtra,
   budget: Budget,
-  opts: { baseUrl?: string } = {} // a different server (tests use a fake one)
+  opts: { baseUrl?: string } = {}, // a different server (tests use a fake one)
+  notes?: { bullet_id: string; note: string }[] // reviewer advice per bullet; the guard still applies
 ): Promise<{ content: ResumeContent; changes: ResumeRecord["changes"]; log: RewordLog[]; error: string | null }> {
   const { template } = loadPrompt("select-and-tailor");
   const vocab = new Set([...vocabulary(bank, extra), ...req.keywords].map(norm));
@@ -87,7 +92,8 @@ export async function rewordContent(
     const guard = { vocab, allowed: b.reword.keywords, maxWords: budget.max_words };
     const result = await guardedReword(source.text, guard, async (codes) => {
       if (error) return null;
-      const prompt = rewordPrompt(template, req, { id: b.id, text: b.text, tags: source.tags }, b.reword?.keywords ?? [], budget.max_words, codes);
+      const note = notes?.find(n => n.bullet_id === b.id)?.note;
+      const prompt = rewordPrompt(template, req, { id: b.id, text: b.text, tags: source.tags }, b.reword?.keywords ?? [], budget.max_words, codes, note);
       const res = await generate({ task: "reword", prompt, schema: OutSchema, baseUrl: opts.baseUrl });
       if (!res.ok) { error = `${res.error}: ${res.detail}`; return null; }
       return res.value.include.find((i) => i.id === b.id)?.text.trim() ?? null;

@@ -10,6 +10,10 @@ History and reasons: `M3-NOTES.md`.
 - Resume, bank, reviews, preferences, and tailored records live in `profile/`
   (git-ignored). Never put their content in code, tests, commits, logs, or prompts
   to a cloud model. Only local models (llama.cpp) and local tools read them.
+  One exception (user, 2026-10-29): the extension's chat prompt sends the job's tailored
+  record (summary, skills, role titles, companies, dates, selected bullets with ids,
+  education) to the user's own Claude/ChatGPT chat, never contact details. Facts the chat
+  adds from its memory are unverified (`from_memory`) until the user confirms them.
 - Never invent experience, numbers, scope, tools, employers, titles, or dates. Every
   bullet traces to a bank entry: `source: resume` (the original resume) or
   `source: user` with `evidence` (the user's own answer).

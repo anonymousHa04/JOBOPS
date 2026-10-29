@@ -5,7 +5,7 @@ import { allBullets, bulletRecency, scoreRequirements } from "../scoring/score.t
 import type { Verdicts } from "../scoring/score.ts";
 import { hasTerm, norm, terms } from "../scoring/terms.ts";
 import { softSkills } from "../lists.ts";
-import { MAX_SKILLS } from "../scoring/config.ts";
+import { CREDIT, MAX_SKILLS } from "../scoring/config.ts";
 
 // The ideal resume content for one JD (engine-algorithm.md §4, steps 2-4): chosen in
 // code, deterministically, from the bank. Rewording happens later and only where this
@@ -68,20 +68,27 @@ export function idealContent(
   // What each bullet is evidence for (supported or partial).
   const musts = new Map<string, Set<string>>();
   const themes = new Map<string, number>();
+  // Requirements that get one covering bullet each: must-haves and soft-skill must-haves.
+  const cover = new Map<string, Set<string>>();
   for (const i of scored.items) {
     if (i.credit <= 0 || i.kind === "keyword") continue;
     for (const id of i.bullet_ids) {
-      // A soft-skill must-have also gets one bullet that shows it.
-      if (i.kind === "must" || i.soft) musts.set(id, (musts.get(id) ?? new Set()).add(i.requirement));
+      if (i.kind === "must") musts.set(id, (musts.get(id) ?? new Set()).add(i.requirement));
+      // A soft-skill must-have is scored as a theme: it ranks as one theme (not also as a
+      // must-have), but still gets one bullet that shows it.
+      if (i.kind === "must" || i.soft) cover.set(id, (cover.get(id) ?? new Set()).add(i.requirement));
       if (i.kind === "theme") themes.set(id, (themes.get(id) ?? 0) + 1);
     }
   }
-  // Rank: must-have evidence, then themes, then impact, then recency, then id.
+  // A bullet's own evidence credit (§3): a measured result earns supported_metric, times
+  // its recency. Breaks ties before the id does.
+  const credit = (b: Bullet) => (/\d/.test(b.text) ? CREDIT.supported_metric : CREDIT.supported) * (rec.get(b.id) ?? 1);
+  // Rank: must-have evidence, then themes, then impact, then evidence credit, then id.
   const rank = [...bullets].sort((a, b) =>
     (musts.get(b.id)?.size ?? 0) - (musts.get(a.id)?.size ?? 0) ||
     (themes.get(b.id) ?? 0) - (themes.get(a.id) ?? 0) ||
     IMPACT[b.impact] - IMPACT[a.impact] ||
-    (rec.get(b.id) ?? 1) - (rec.get(a.id) ?? 1) ||
+    credit(b) - credit(a) ||
     a.id.localeCompare(b.id)
   );
 
@@ -104,7 +111,7 @@ export function idealContent(
   // 1. Cover every must-have with its best bullet; 2. fill by rank.
   const covered = new Set<string>();
   for (const b of rank) {
-    const adds = [...(musts.get(b.id) ?? [])].filter((r) => !covered.has(r));
+    const adds = [...(cover.get(b.id) ?? [])].filter((r) => !covered.has(r));
     if (adds.length && fits(b)) { take(b); adds.forEach((r) => covered.add(r)); }
   }
   for (const b of rank) if (fits(b)) take(b);

@@ -82,7 +82,10 @@ check("repair: round 2 was a fresh repair with the matching fix", r["attempts"][
 spec = open(os.path.join(L, "st-repair-succeeds-fix1.spec.md")).read()
 check("repair spec carries errors + known fix, not the old prompt", "Errors to fix" in spec and "Self-test: string assigned" in spec)
 fx = [json.loads(l) for l in open(os.path.join(L, "fixes.jsonl"))][0]
-check("fix promoted observed -> verified with evidence", fx["status"] == "verified" and "st-repair-succeeds" in fx["evidence"], fx["status"])
+# One lesson file for all scenarios: verified by repair-succeeds, then supplied and failed in
+# repeated-failure and retry-limit, so two failed uses demote it to hypothesis.
+check("fix promoted with evidence when it helped", "st-repair-succeeds: supplied in st-repair-succeeds-fix1, attempt passed" in fx["evidence"], fx["evidence"][-160:])
+check("two failed uses demote the fix to hypothesis", fx["status"] == "hypothesis" and fx.get("applications") == {"supplied": 3, "passed": 1, "failed": 2}, "%s %s" % (fx["status"], fx.get("applications")))
 check("no escalation record for a passed task", r["escalation"] is None and not os.path.exists(os.path.join(L, "st-repair-succeeds.escalation.json")))
 r = res("repeated-failure")
 check("repeated signature stops early (2 of 4 allowed attempts)", r["attempts_count"] == 2 and "repeated failure signature" in (r["reason"] or ""), r["reason"])

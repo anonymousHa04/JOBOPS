@@ -56,10 +56,11 @@ import json, os, subprocess, sys
 a, b = json.load(open(sys.argv[1])), json.load(open(sys.argv[2]))
 allowed = set(sys.argv[3:])
 for p in sorted(x for x in set(a) | set(b) if a.get(x) != b.get(x) and x not in allowed):
-    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", p], capture_output=True).returncode == 0
+    tracked = subprocess.run(["git", "cat-file", "-e", f"HEAD:{p}"], capture_output=True).returncode == 0
     if p not in a and tracked:
         subprocess.run(["git", "checkout", "--", p], check=False); print("RESTORED " + p)
-    elif p not in a and os.path.isfile(p):
+    elif p not in a and not tracked:
+        subprocess.run(["git", "rm", "-q", "--cached", "--", p], check=False)
         os.remove(p); print("DELETED " + p)
         d = os.path.dirname(p)
         while d and not os.listdir(d):

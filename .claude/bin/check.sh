@@ -35,6 +35,18 @@ elif [ -z "$t_fail" ] || [ -z "$t_pass" ]; then test_status=failed; test_reason=
 elif [ "$t_fail" != 0 ]; then test_status=failed; test_reason="$t_fail failing"
 fi
 
+# Extension: when files directly in extension/ (.js, .html) changed, run its grader on those files
+# (extension/tools/check-ext.sh). tsc and npm test never look at extension/, so this is its check.
+ext_status=not_run; ext_rc=""; ext_out=""; ext_files=""
+if [ -f extension/tools/check-ext.sh ]; then
+  ext_files=$(git status --porcelain -- extension/ | sed 's/^...//' | grep -E '^extension/[^/]+\.(js|html)$' | sed 's#^extension/##' | tr '\n' ' ')
+fi
+if [ -n "$ext_files" ]; then
+  # shellcheck disable=SC2086
+  ext_out=$(sh extension/tools/check-ext.sh $ext_files 2>&1); ext_rc=$?
+  ext_status=passed; [ "$ext_rc" -ne 0 ] && ext_status=failed
+fi
+
 # Go: vet and test, by exit status.
 go_status=not_run; go_rc=""; gocheck=""
 if [ -f jd-search/go.mod ]; then
@@ -43,17 +55,18 @@ if [ -f jd-search/go.mod ]; then
 fi
 
 status=passed
-for s in "$flags_status" "$tsc_status" "$test_status" "$go_status"; do
+for s in "$flags_status" "$tsc_status" "$test_status" "$ext_status" "$go_status"; do
   [ "$s" = failed ] && status=failed
 done
 
 { echo "== flags"; echo "$flags"; echo "== typecheck (exit $tsc_rc)"; echo "$tsc"
-  echo "== tests (exit $test_rc)"; echo "$tests"; echo "== go (exit ${go_rc:-n/a})"; echo "$gocheck"; } > "$full"
+  echo "== tests (exit $test_rc)"; echo "$tests"; echo "== extension (exit ${ext_rc:-n/a}) $ext_files"; echo "$ext_out"
+  echo "== go (exit ${go_rc:-n/a})"; echo "$gocheck"; } > "$full"
 
 TASK=$task STATUS=$status FLAGS=$flags FLAGS_STATUS=$flags_status \
 TSC_STATUS=$tsc_status TSC_RC=$tsc_rc TSC_N=$tsc_n \
 TEST_STATUS=$test_status TEST_RC=$test_rc T_PASS=${t_pass:-} T_FAIL=${t_fail:-} TEST_REASON=$test_reason \
-GO_STATUS=$go_status GO_RC=${go_rc:-} python3 -c '
+EXT_STATUS=$ext_status EXT_RC=${ext_rc:-} GO_STATUS=$go_status GO_RC=${go_rc:-} python3 -c '
 import json, os
 e = os.environ
 num = lambda v: int(v) if v.strip().lstrip("-").isdigit() else None
@@ -64,6 +77,7 @@ print(json.dumps({
     "typecheck": {"status": e["TSC_STATUS"], "exit": num(e["TSC_RC"]), "errors": num(e["TSC_N"])},
     "tests": {"status": e["TEST_STATUS"], "exit": num(e["TEST_RC"]), "pass": num(e["T_PASS"]),
               "fail": num(e["T_FAIL"]), "reason": e["TEST_REASON"] or None},
+    "extension": {"status": e["EXT_STATUS"], "exit": num(e["EXT_RC"])},
     "go": {"status": e["GO_STATUS"], "exit": num(e["GO_RC"])},
   }}, indent=2))' > "$json"
 
@@ -80,6 +94,7 @@ if [ "$tsc_status" = failed ]; then
   [ "$tsc_n" -eq 0 ] && printf '%s\n' "$tsc" | tail -3
 fi
 echo "tests: ${t_pass:-?} passed, ${t_fail:-?} failed${test_reason:+ ($test_reason)}"
+[ "$ext_status" = failed ] && printf '%s\n' "$ext_out" | grep -E '^FAIL:' | head -10
 [ "$go_status" = failed ] && printf '%s\n' "$gocheck" | grep -E 'FAIL|\.go:[0-9]+' | head -10
 printf '%s\n%s\n' "$tsc" "$tests" | "$bin/hints.sh" | head -5
 printf '%s\n' "$tests" \

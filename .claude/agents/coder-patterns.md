@@ -53,3 +53,15 @@ Collected from real coder mistakes in Milestone 3. Follow them exactly.
 2. Every name the spec says to export is exported.
 3. No imports outside the list above; relative imports end in .ts.
 4. No "any"; parameters have types.
+
+## Tests
+- Tests use Node's runner only: import { test } from "node:test"; import assert from
+  "node:assert/strict". Never vitest, jest, or mocha (not installed).
+- Test files live in api/test/ and import source with "../src/<path>.ts".
+- No model calls in tests: test pure functions, or use the fixture style the spec names
+  (a temp JOBOPS_PROFILE_DIR, openDb(":memory:"), buildApp({ db }) and app.inject).
+- Build test data with ./fixtures.ts (bank, setup, addRecord, postReport, ext): never write
+  a Bank, record or requirements object by hand.
+- Asserts that say what they got: assert.equal(a, b) and assert.deepEqual(a, b), never
+  assert(a === b); assert.ok(cond, "what was expected") for includes/startsWith.
+- No comments that describe your edit ("// Added import ...").

@@ -9,7 +9,13 @@
 //
 // Usage (from the repo root):
 //
-//	go run -C .claude/bin/heartbeat . [-interval 15s] [-port 8081] [-once] [-notify=false]
+//	go run -C .claude/bin/heartbeat . [-interval 15s] [-port 8081] [-once] [-notify=false] [-until-alert]
+//
+// With -until-alert it exits with code 3 the first time a task is STUCK or DEAD
+// while its autofix.sh pipeline still runs, after printing one line:
+// "ALERT <attempt> <STATE>: <reason>". A STUCK or DEAD task whose autofix.sh is
+// gone (a run the manager stopped) is printed but does not alert.
+// .claude/bin/watch-coders.sh wraps this mode for the manager.
 package main
 
 import (
@@ -177,9 +183,23 @@ func running(logs string, windows map[string]bool, now time.Time) []string {
 	return names
 }
 
-// check looks at every running task once and returns one line per task.
-func check(logs string, tasks map[string]*task, busy bool, windows map[string]bool, now time.Time) []string {
+var fixSuffix = regexp.MustCompile(`-fix[0-9]+$`)
+
+// baseName: the task an attempt belongs to (<task>-fixN -> <task>).
+func baseName(attempt string) string { return fixSuffix.ReplaceAllString(attempt, "") }
+
+// pipelineRunning reports whether an autofix.sh process for the task exists.
+// A variable so tests can replace it.
+var pipelineRunning = func(base string) bool {
+	pat := `autofix\.sh ` + regexp.QuoteMeta(base) + `( |$)`
+	return exec.Command("pgrep", "-f", pat).Run() == nil
+}
+
+// check looks at every running task once and returns one line per task, plus
+// an alert line for the first STUCK or DEAD task whose pipeline still runs.
+func check(logs string, tasks map[string]*task, busy bool, windows map[string]bool, now time.Time) ([]string, string) {
 	var out []string
+	alert := ""
 	for _, name := range running(logs, windows, now) {
 		logPath := filepath.Join(logs, name+".log")
 		st, err := os.Stat(logPath)
@@ -196,8 +216,13 @@ func check(logs string, tasks map[string]*task, busy bool, windows map[string]bo
 			t.lastActive = now
 		}
 		if !seen {
-			// First sight: date activity from the log's own write time.
+			// First sight: date activity from the log's own write time, or from the attempt's
+			// .started file when newer. Until aider writes, <attempt>.log can be an old run's log,
+			// and a new attempt was called STUCK seconds after it started (2026-10-30).
 			t.lastActive = st.ModTime()
+			if s, err := os.Stat(filepath.Join(logs, name+".started")); err == nil && s.ModTime().After(t.lastActive) {
+				t.lastActive = s.ModTime()
+			}
 			if busy {
 				t.lastActive = now
 			}
@@ -211,8 +236,11 @@ func check(logs string, tasks map[string]*task, busy bool, windows map[string]bo
 		}
 		t.state = state
 		out = append(out, fmt.Sprintf("%s %-28s %-7s  %s", now.Format("15:04:05"), name, state, why))
+		if alert == "" && (state == "STUCK" || state == "DEAD") && pipelineRunning(baseName(name)) {
+			alert = fmt.Sprintf("ALERT %s %s: %s", name, state, why)
+		}
 	}
-	return out
+	return out, alert
 }
 
 var notifyOn = true
@@ -240,6 +268,7 @@ func main() {
 	port := flag.Int("port", 8081, "llama.cpp coder server port")
 	once := flag.Bool("once", false, "check once and exit")
 	root := flag.String("root", "", "repo root (default: git top level)")
+	untilAlert := flag.Bool("until-alert", false, "exit 3 when a task is STUCK or DEAD and its autofix.sh still runs")
 	flag.BoolVar(&notifyOn, "notify", true, "macOS notification when a task becomes STUCK or DEAD")
 	flag.Parse()
 	if *root == "" {
@@ -248,12 +277,16 @@ func main() {
 	logs := filepath.Join(*root, ".agent-logs")
 	tasks := map[string]*task{}
 	for {
-		lines := check(logs, tasks, modelBusy(*port), tmuxWindows(), time.Now())
+		lines, alert := check(logs, tasks, modelBusy(*port), tmuxWindows(), time.Now())
 		if len(lines) == 0 {
 			fmt.Println(time.Now().Format("15:04:05"), "no coder task running")
 		}
 		for _, l := range lines {
 			fmt.Println(l)
+		}
+		if *untilAlert && alert != "" {
+			fmt.Println(alert)
+			os.Exit(3)
 		}
 		if *once {
 			return

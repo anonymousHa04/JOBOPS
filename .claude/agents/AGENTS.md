@@ -90,7 +90,7 @@ for flaws the manager finds.
   `.claude/specs/plan-<milestone>.md` (format in `.claude/bin/run-plan.sh`), then
   run `.claude/bin/run-plan.sh .claude/specs/plan-<milestone>.md`. Each task goes
   through `autofix.sh`: coder → `check.sh` (typecheck + tests, compact report) →
-  automatic fix rounds (up to `MAX_FIXES`, default 5 since 2026-10-29, the user's choice, so lessons and self-review get real use; a repeated failure signature still stops early). Each coder run is limited
+  automatic fix rounds (up to `MAX_FIXES`, default 2 since 2026-10-29, the user's choice: each round gets the self-review and matching lessons; a repeated failure signature still stops early). The extension's report loop is separate: up to 5 attempts in one chat. Each coder run is limited
   to `CODER_TIMEOUT` seconds (default 1200, i.e. 20 minutes); a timeout stops
   the coder at once.
 - Runner split by task: if any target file is new or empty, aider writes it
@@ -121,6 +121,7 @@ for flaws the manager finds.
   reports each running task as WORKING, IDLE (2 min quiet), STUCK (aider waiting
   at its ">" prompt, or 5 min quiet) or DEAD, and sends a macOS notification on
   STUCK or DEAD. On STUCK or DEAD, stop the run and report; do not wait blind.
+  The manager runs `.claude/bin/watch-coders.sh` in the background with every coder run; it exits 3 and prints the alert, stages and log tail the moment a task is STUCK or DEAD while its autofix.sh still runs.
 - Do not edit tracked files while a coder runs. `autofix.sh` snapshots the tree
   before each attempt and restores any tracked file changed outside the task's
   files, so the manager's own edits are silently undone.

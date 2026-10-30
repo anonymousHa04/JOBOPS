@@ -143,6 +143,11 @@ def errors_of(attempt):
             errs.append({"file": m.group(1), "line": int(m.group(2)), "code": m.group(4), "message": m.group(5)})
     tests = []
     out = section(log, "tests")
+    # Graders (extension/tools/check-ext.sh, Python unittest) report one "FAIL: ..." or
+    # "ERROR: ..." line per problem; without these the self-review and repair spec saw no cause.
+    for line in (out + "\n" + section(log, "extension")).splitlines():
+        if re.match(r"^(FAIL|ERROR): ", line.strip()):
+            tests.append(line.strip()[:200])
     if "failing tests:" in out:
         for line in out.split("failing tests:", 1)[1].splitlines():
             m = TEST_FAIL.match(line)
@@ -210,7 +215,7 @@ def self_review_line(text):
     return {"self_review": hits[-1][:300]} if hits else {}
 
 
-def diff_of(files, limit=150):
+def diff_of(files, limit=60):
     """The previous attempt's change to the task files: git diff for tracked files, the whole
     file for new ones. Cut to `limit` lines so the repair spec fits the model window."""
     out = []
@@ -219,7 +224,8 @@ def diff_of(files, limit=150):
         if tracked:
             out.append(subprocess.run(["git", "diff", "--", f], capture_output=True, text=True).stdout.rstrip())
         elif os.path.exists(f):
-            out.append("new file " + f + "\n" + "\n".join("+" + l for l in read(f).splitlines()))
+            # A new file is already in the chat as the file to edit: do not send it twice.
+            out.append("new file %s (%d lines): its current content is the file shown to you above." % (f, len(read(f).splitlines())))
         else:
             out.append("(missing) " + f)
     lines = "\n".join(x for x in out if x).splitlines()
@@ -365,6 +371,9 @@ def cmd_repair_spec(task, attempt, orig_spec, out, files):
     matched = matching_fixes(errs_text + "\n" + "\n".join(last["flags"]), files, read(orig_spec))[:4]
     fixes = [fx for fx, _ in matched]
     hints = os.popen("printf '%%s' %s | %s/hints.sh" % (json.dumps(errs_text).replace("$", "\\$"), HERE)).read().strip()
+    owners = export_owners(errs_text)
+    if owners:
+        hints = (hints + "\n" if hints else "") + owners
     claim = last["agent_claim"]
     ind = lambda s: "\n".join("    " + l for l in s.splitlines())
     lines = [
@@ -386,7 +395,11 @@ def cmd_repair_spec(task, attempt, orig_spec, out, files):
     if claim.get("found"):
         lines += ["## Your previous report (a claim; the check above is what counts)",
                   ind(json.dumps({k: v for k, v in claim.items() if k not in ("source", "found")}, indent=1)), ""]
-    lines += ["## Original task", read(orig_spec)]
+    # The manager's review of the previous try was for this try's first attempt, which already
+    # applied it. Left in, a small model re-applies it as the newest instruction and ignores the
+    # errors above (fx-a try 2 rewrote the file unchanged, 2026-10-30).
+    task_text = read(orig_spec).split("\n## Manager review of your last try")[0]
+    lines += ["## Original task", task_text]
     with open(out, "w") as f:
         f.write("\n".join(lines) + "\n")
     nxt = "%s-fix%d" % (task, n)
@@ -609,6 +622,46 @@ def cmd_stats(logs_dir):
         if fx.get("applications"):
             print("  record %-32s %s %s" % (fx["id"], fx["status"], fx["applications"]))
 
+
+
+# "Module X has no exported member N" (TS2305/TS2724): say which file does export N and give the
+# import line to copy. A generic "use the API map" hint left loop-06b importing followUpPrompt from
+# loop.ts for two fix rounds although the pack showed it in reports.ts (2026-10-30).
+NODE_HOMES = {**{n: "node:fs" for n in ("readFileSync", "writeFileSync", "existsSync", "mkdirSync", "mkdtempSync",
+                                         "appendFileSync", "rmSync", "unlinkSync", "readdirSync", "statSync")},
+              **{n: "node:path" for n in ("join", "dirname", "basename", "resolve", "relative", "extname")},
+              "tmpdir": "node:os", "homedir": "node:os"}
+
+
+def export_owners(errs_text):
+    out = []
+    # TS2459 is the same mistake when the module uses the name without exporting it: loop-09 put
+    # Report and Finding on one import from review.ts and swapped them each fix round (2026-10-30).
+    found = re.findall(r"^\s*(\S+?\.ts)\(\d+\): error TS(?:2305|2724): Module '\"([^\"]+)\"' has no exported member '(\w+)'", errs_text, re.M)
+    found += re.findall(r"^\s*(\S+?\.ts)\(\d+\): error TS2459: Module '\"([^\"]+)\"' declares '(\w+)' locally, but it is not exported", errs_text, re.M)
+    if found:
+        out.append("FIX: one import line per module. Move only the name below to its own import line; keep the other names where they are.")
+    for f, mod, name in found:
+        if name in NODE_HOMES:
+            out.append("FIX: %s is not in %s. Import it from its own module: import { %s } from \"%s\";" % (name, mod, name, NODE_HOMES[name]))
+            continue
+        # --untracked: a new module (review.ts) is not committed yet; without it the only hit was
+        # another Finding in tailor/lint.ts, and loop-09 imported the wrong type (2026-10-30).
+        hits = subprocess.run(["git", "grep", "--untracked", "-lE", r"^export (async )?(function|const|let|type|interface|class) %s([^A-Za-z0-9_]|$)" % name, "--", "api/"],
+                              capture_output=True, text=True).stdout.split()
+        rel_of = lambda h: (lambda r: r if r.startswith(".") else "./" + r)(os.path.relpath(h, os.path.dirname(f)))
+        # Several owners: the module this file already imports from comes first.
+        try:
+            src = open(f).read()
+        except OSError:
+            src = ""
+        hits.sort(key=lambda h: '"%s"' % rel_of(h) not in src)
+        for i, h in enumerate(hits[:2]):
+            out.append("FIX: %s is not in %s. %s %s: import { %s } from \"%s\"; (use import type if it is a type)"
+                       % (name, mod, "It is exported by" if i == 0 else "Another, different %s is in" % name, h, name, rel_of(h)))
+        if not hits:
+            out.append("FIX: no file in api/ exports %s. Do not import it; check the spec for the right name." % name)
+    return "\n".join(dict.fromkeys(out))
 
 def main(argv):
     if len(argv) < 2:

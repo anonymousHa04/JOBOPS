@@ -38,7 +38,7 @@ import urllib.request
 import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIXES = os.path.join(HERE, "fixes.jsonl")
+FIXES = os.environ.get("FIXES_FILE") or os.path.join(HERE, "fixes.jsonl")  # FIXES_FILE: graders test a copy
 EVAL = os.path.join(HERE, "eval.json")
 
 # .claude/skills/ mirrors .agents/skills/ (the shared copy agents use), so only one is indexed.
@@ -81,6 +81,22 @@ STOP = set("""the and for with that this from into only each then when must shou
 was were not you your any all can use used uses one two new file files task code return returns
 string number boolean array object true false null undefined export import const function type
 default spec edit change make add""".split())
+
+
+KEEP_ANY_AREA = (".claude/knowledge/fixes.jsonl", ".agents/skills/", ".claude/skills/")
+
+
+def area_of(path):
+    """The part of the repo a file belongs to: its first folder (api, extension, .claude, jd-search)."""
+    return path.split("/", 1)[0]
+
+
+DOC_MIN_COSINE = 0.55  # Markdown chunks below this similarity are not worth their tokens
+DOC_MAX = 2
+DECISIONS_MAX = 2
+DECISIONS_BUDGET = 500
+API_BUDGET = 1200    # tokens for the module export lists (module_exports section)
+MAX_DEF_LINES = 60   # full definitions longer than this are left to their export line
 
 
 def tokens(text):
@@ -400,9 +416,17 @@ def match_fixes(task_text, files):
 class Package:
     """Collects items in priority order within a token budget."""
 
-    def __init__(self, budget):
+    def __init__(self, budget, areas=(), allow=()):
         self.budget, self.used = budget, 0
         self.sections, self.dropped, self.seen = [], [], set()
+        # The task's areas (extension, api, .claude, jd-search): files from other areas are left out
+        # unless the spec names them (allow). An extension task got 3k tokens of api/src on 2026-10-29.
+        self.areas, self.allow = set(areas), set(allow)
+
+    def off_area(self, path):
+        if not self.areas or path in self.allow or "/" not in path or path.startswith(KEEP_ANY_AREA):
+            return False
+        return area_of(path) not in self.areas
 
     def section(self, name):
         s = {"name": name, "status": "empty", "items": []}
@@ -410,6 +434,10 @@ class Package:
         return s
 
     def add(self, sec, path, start, end, text, kind, method, evidence, why, score=None, force=False):
+        if self.off_area(path):
+            self.dropped.append({"section": sec["name"], "path": path, "start": start, "end": end,
+                                 "tokens": tokens(text), "reason": "other area"})
+            return False
         key = (path, start, end)
         if key in self.seen or any(p == path and a <= start and end <= b for p, a, b in self.seen if (p, a, b) != key):
             return False
@@ -468,9 +496,40 @@ def snippet(ix, path, line, around=2):
     return a, b, "\n".join(ls[a - 1:b])
 
 
+def decision_sections(ix, spec_text):
+    """The decisions digest by "## " section: the privacy/honesty section always, then up to
+    DECISIONS_MAX sections closest to the task (Qdrant; keyword overlap if it is down), within
+    DECISIONS_BUDGET tokens. Returns (start, end, text, why) with 1-based line numbers."""
+    ls = ix.lines[DECISIONS]
+    heads = [i for i, l in enumerate(ls) if l.startswith("## ")] + [len(ls)]
+    secs = [(heads[k] + 1, heads[k + 1], "\n".join(ls[heads[k]:heads[k + 1]]).rstrip()) for k in range(len(heads) - 1)]
+    always = [x for x in secs if "privacy" in x[2].split("\n")[0].lower()]
+    rest = [x for x in secs if x not in always]
+    try:
+        hits = [c for c, sc in semantic_search(ix, spec_text, limit=20) if c["path"] == DECISIONS]
+        order = [x for c in hits for x in rest if x[0] <= c["start"] <= x[1]]
+        how = "closest to the task (Qdrant)"
+    except Exception:
+        words = {w.lower() for w in WORD.findall(spec_text) if len(w) >= 4}
+        order = sorted(rest, key=lambda x: -len(words & {w.lower() for w in WORD.findall(x[2])}))
+        how = "keyword overlap (Qdrant unavailable)"
+    out, used = [], 0
+    for x in always + list(dict.fromkeys(order))[:DECISIONS_MAX]:
+        if x in always or used + tokens(x[2]) <= DECISIONS_BUDGET:
+            used += tokens(x[2])
+            out.append((x[0], x[1], x[2], "agreed decisions: " + ("privacy (always)" if x in always else how)))
+    return out
+
+
 def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
     """retrieve_context(task, repository, limits) -> package dict."""
-    pkg = Package(budget)
+    # Retrieve for the task itself, not the plan's shared rules that run-plan copies above it:
+    # their words ("Plan", "Task", "fix round", "same chat") pulled unrelated code and lessons into
+    # every task's pack (2026-10-30).
+    if "\n## This task" in spec_text:
+        spec_text = spec_text.split("\n## This task", 1)[1]
+    named = set(PATH_REF.findall(spec_text))
+    pkg = Package(budget, {area_of(f) for f in files}, named)
     new_files = set(new_files or [])
     targets = [f for f in files if f in ix.lines and f not in new_files and "\n".join(ix.lines[f]).strip()]
     for f in files:
@@ -479,8 +538,11 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
 
     # 1. Task: always included.
     s = pkg.section("task")
-    pkg.add(s, "(task spec)", 1, spec_text.count("\n") + 1, spec_text, "task", "task", "requirement",
-            "the task itself", force=True)
+    # The coder already gets the spec as its message: only a pointer here, not a second copy
+    # (2026-10-29: the copy cost 0.7k tokens per attempt and 2.3k per fix round). Retrieval
+    # below still works from the full spec text.
+    pkg.add(s, "(task spec)", 1, 1, "The task is your message above; it comes first and wins over this context.",
+            "task", "task", "requirement", "pointer to the task", force=True)
 
     # 2. Hard constraints: edit boundary and the dependency list (source facts).
     s = pkg.section("constraints")
@@ -497,33 +559,107 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
 
     # 2b. Decisions digest: every agreed product decision, always included in full for
     #     product code (api/, jd-search/), so a local coder cannot miss one.
+    #     Split by section (2026-10-29: the whole file had grown to ~1.7k tokens): the privacy and
+    #     honesty rules always, plus up to 2 sections closest to the task through Qdrant.
     s = pkg.section("decisions")
     if any(f.startswith(("api/", "jd-search/")) for f in files) and DECISIONS in ix.lines:
-        ls = ix.lines[DECISIONS]
-        pkg.add(s, DECISIONS, 1, len(ls), "\n".join(ls), "doc", "task", "requirement",
-                "agreed decisions (always included for product code)", force=True)
+        for start, end, text, why in decision_sections(ix, spec_text):
+            pkg.add(s, DECISIONS, start, end, text, "doc", "task", "requirement", why, force=True)
 
     # 3. Exact references: target files, paths and exported symbols named in the spec.
     s = pkg.section("targets_and_references")
+    # The coder already has each target open as the file it edits (aider adds it to the chat;
+    # mini reads it), so the pack points to it instead of repeating it: fx-b's 168-line target
+    # filled 2500 of a 3000-token pack (2026-10-30).
     for f in targets:
-        pkg.add(s, f, 1, len(ix.lines[f]), "\n".join(ix.lines[f]), kind_of(f), "exact", "source_fact",
-                "target file (current content)")
+        pkg.add(s, f, 1, len(ix.lines[f]), "(the file you edit: its current content is open in the chat, %d lines)" % len(ix.lines[f]),
+                kind_of(f), "exact", "source_fact", "target file", force=True)
     for f in new_files:
         pkg.add(s, f, 0, 0, "(new file: does not exist yet)", "source", "exact", "source_fact", "target file", force=True)
     ref_paths = [p for p in dict.fromkeys(PATH_REF.findall(spec_text)) if p in ix.lines and p not in files]
+    # Relative module paths in the spec ("./reports.ts", "../tools.ts"), resolved from each target's folder.
+    for f in files:
+        for rel in re.findall(r"(?<![\w/])\.\.?/[\w./-]+\.ts\b", spec_text):
+            p = os.path.normpath(os.path.join(os.path.dirname(f), rel))
+            if p in ix.lines and p not in files and p not in ref_paths:
+                ref_paths.append(p)
     spec_words = set(WORD.findall(spec_text))
     ref_symbols = [w for w in sorted(spec_words) if w in ix.exports and code_like(w, spec_text)]
+
+    # Exports of every module the task touches, one line each, kept first and within the budget:
+    # where each name lives and its signature (a new file had none of this and guessed imports,
+    # 2026-10-29). Full definitions below are only for short symbols.
+    s_api = pkg.section("module_exports")
+    touched = [d for f in targets for d, _ in ix.deps.get(f, [])]
+    touched += [c["path"] for n in ref_symbols for c in ix.symbol_chunks(n)] + ref_paths
+    api_tokens = 0
+    # Names a spec-named function imports (e.g. gaps() uses loadBank, loadVerdicts): a coder that
+    # follows "as gaps() does" needs their signatures too, one line each.
+    helper_lines = {}
     for name in ref_symbols:
         for c in ix.symbol_chunks(name):
-            if c["path"] in files:
-                continue
+            for dep, names in ix.deps.get(c["path"], []):
+                for n in names:
+                    if re.search(r"\b%s\b" % re.escape(n), c["text"]):
+                        for c2 in ix.symbol_chunks(n, dep):
+                            line = re.sub(r"\s*(\{|=)\s*$", "", c2["text"].split("\n")[0])[:160]
+                            helper_lines.setdefault(dep, []).append(line)
+    for dep, lines in helper_lines.items():
+        text = "\n".join(dict.fromkeys(lines))
+        if dep not in files and api_tokens + tokens(text) <= API_BUDGET:
+            api_tokens += tokens(text)
+            pkg.add(s_api, dep, 0, 0, text, "source", "structural", "source_fact",
+                    "imported by functions the task names (%s)" % dep)
+            pkg.seen.discard((dep, 0, 0))
+    for m in dict.fromkeys(touched):
+        # Test helpers (api/test/fixtures.ts) count: a test task builds its data with them, and
+        # without their signatures loop-09 hand-built fake banks that failed tsc (2026-10-30).
+        helper = m.startswith("api/test/") and ".test." not in m
+        if m in files or (kind_of(m) != "source" and not helper) or not m.endswith(".ts"):
+            continue
+        api = module_api(ix, m)
+        # A big module (bank.ts: 27 exports) is cut to the names the task mentions, when it
+        # mentions any: fx-a needed saveBank only and the rest pushed its move source out (2026-10-30).
+        lines = api.split("\n")
+        if len(lines) > 12:
+            keep = [l for l in lines if (d := TS_DECL.match(l)) and d.group(4) in spec_words]
+            if keep:
+                api = "\n".join(keep)
+        if api and api_tokens + tokens(api) <= API_BUDGET:
+            api_tokens += tokens(api)
+            pkg.add(s_api, m, 0, 0, api, "source", "structural", "source_fact", "exports of %s" % m, force=True)
+    for name in ref_symbols:
+        for c in ix.symbol_chunks(name):
+            if c["path"] in files or c["end"] - c["start"] > MAX_DEF_LINES:
+                continue  # long bodies cost too much; the export line above gives the signature
             pkg.add(s, c["path"], c["start"], c["end"], c["text"], c["kind"], "exact", "source_fact",
                     "defines %s (named in the task)" % name)
     for p in ref_paths:
         ls = ix.lines[p]
-        if len(ls) <= 60:
-            pkg.add(s, p, 1, len(ls), "\n".join(ls), kind_of(p), "exact", evidence_of(p, kind_of(p)),
-                    "path named in the task")
+        # The declarations of a named file that the task names too (exported or not: "move its
+        # bullet, bank, setup"), after the file's imports. fx-a got only lines 1-60 of
+        # extension-routes.test.ts while the code to move was at 64-165 (2026-10-30).
+        named = [c for c in ix.chunks if c["path"] == p and c["start"] > 1
+                 and (m := TS_DECL.match(c["text"])) and len(m.group(4)) >= 3 and m.group(4) in spec_words]
+        if named and len(ls) > 60:
+            imp = 0
+            while imp < len(ls) and (ls[imp].startswith(("import ", "//")) or not ls[imp].strip()):
+                imp += 1
+            pkg.add(s, p, 1, imp, "\n".join(ls[:imp]), kind_of(p), "exact", evidence_of(p, kind_of(p)),
+                    "imports of %s (path named in the task)" % p)
+            for c in named:
+                pkg.add(s, p, c["start"], c["end"], c["text"], kind_of(p), "exact", evidence_of(p, kind_of(p)),
+                        "%s, declared in %s (both named in the task)" % (TS_DECL.match(c["text"]).group(4), p))
+            continue
+        # A long named file (e.g. "fixture style of api/test/extension-routes.test.ts") gets its
+        # first 60 lines: imports and setup, which is what the task points to. It used to get nothing.
+        # Long source files are left to their module_exports lines: a spec naming "../src/db.ts" for
+        # an import spent 600 tokens of fx-a's pack on db.ts internals (2026-10-30).
+        if kind_of(p) == "source" and len(ls) > 60:
+            continue
+        n = min(len(ls), 60)
+        pkg.add(s, p, 1, n, "\n".join(ls[:n]), kind_of(p), "exact", evidence_of(p, kind_of(p)),
+                "path named in the task" + ("" if n == len(ls) else " (first %d of %d lines)" % (n, len(ls))))
 
     # 4. Dependencies of the targets: definitions of every imported name,
     #    plus same-file symbols those definitions use (one level).
@@ -545,17 +681,6 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
             for c2 in same_file_closure(ix, c):
                 pkg.add(s, c2["path"], c2["start"], c2["end"], c2["text"], c2["kind"], "structural",
                         "source_fact", "used by %s" % name)
-    # Public surface of every module the task touches, so unnamed helpers
-    # (loadPrompt next to fill, loadBank next to vocabulary) are visible.
-    modules = [d for f in targets for d, _ in ix.deps.get(f, [])]
-    modules += [c["path"] for n in ref_symbols for c in ix.symbol_chunks(n)]
-    for m in dict.fromkeys(modules):
-        if m in files or kind_of(m) != "source":
-            continue
-        api = module_api(ix, m)
-        if api:
-            pkg.add(s, m, 0, 0, api, "source", "structural", "source_fact", "exports of %s" % m)
-            pkg.seen.discard((m, 0, 0))
 
     # 5. Consumers of the targets: usage lines of each imported name.
     s = pkg.section("consumers")
@@ -636,12 +761,22 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
     else:
         s["status"] = "disabled"
 
-    # 11. Docs: exact search over requirements and project docs.
+    # 11. Docs (Markdown): through Qdrant, by meaning, at most 2 chunks and only close ones
+    #     (user, 2026-10-29: "if using md files use qdrant"; keyword search pulled 600+ tokens of
+    #     loosely related README/milestone text into an extension task). BM25 only when Qdrant is down.
     s = pkg.section("docs")
-    words = [w for w in WORD.findall(spec_text) if len(w) >= 4]
-    for c, score in ix.search(words, limit=4, kinds=("doc",)):
-        pkg.add(s, c["path"], c["start"], c["end"], c["text"], "doc", "exact", evidence_of(c["path"], "doc"),
-                "exact search (BM25)", score=score)
+    try:
+        hits = [(c, sc) for c, sc in semantic_search(ix, spec_text, limit=12)
+                if c["kind"] == "doc" and sc >= DOC_MIN_COSINE][:DOC_MAX]
+        method, why = "semantic", "similar in meaning (cosine %.2f)"
+    except Exception as e:
+        s["error"] = "qdrant: %s: %s; fell back to keyword search" % (type(e).__name__, e)
+        words = [w for w in WORD.findall(spec_text) if len(w) >= 4]
+        hits = ix.search(words, limit=DOC_MAX, kinds=("doc",))
+        method, why = "exact", "exact search (BM25), Qdrant unavailable (%.2f)"
+    for c, score in hits:
+        pkg.add(s, c["path"], c["start"], c["end"], c["text"], "doc", method, evidence_of(c["path"], "doc"),
+                why % score, score=score)
 
     return {"budget": budget, "used_tokens": pkg.used, "files": files, "new_files": sorted(new_files),
             "sections": pkg.sections, "dropped": pkg.dropped}

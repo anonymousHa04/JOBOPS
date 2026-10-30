@@ -60,6 +60,20 @@ class Matching(unittest.TestCase):
         self.assertEqual(feedback.matching_fixes(errs, ["a.ts"], "some task"), [])
 
 
+class GraderFailures(unittest.TestCase):
+    def test_grader_fail_lines_reach_the_feedback_loop(self):
+        # check-ext.sh / unittest report "FAIL: ..." lines; they must count as failures with a cause.
+        os.makedirs(".agent-logs", exist_ok=True)
+        with open(".agent-logs/gf-test.check.log", "w") as f:
+            f.write("== flags\n== typecheck (exit 0)\n== tests (exit 1)\n"
+                    "FAIL: background.js must stop after round 5\nℹ pass 17\nℹ fail 1\n== go (exit 0)\n")
+        try:
+            errs, tests = feedback.errors_of("gf-test")
+            self.assertIn("FAIL: background.js must stop after round 5", tests)
+        finally:
+            os.remove(".agent-logs/gf-test.check.log")
+
+
 class Demotion(unittest.TestCase):
     def test_two_failed_uses_drop_a_lesson_to_hypothesis(self):
         write_fixes(dict(PARAM, status="verified"))

@@ -253,11 +253,7 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   if (need.needed) await ensureModel("judge", `${need.open} requirements need the judge before tailoring`);
   const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
   const { focus, notes } = opts;
-  // Focus requirements (the chat's missed gaps) count as must-haves for this run only;
-  // wording kept, duplicates skipped case-insensitively.
-  const seen = new Set(req.must_have.map((m) => m.toLowerCase()));
-  const extraMust = (focus ?? []).filter((f) => !seen.has(f.toLowerCase()) && (seen.add(f.toLowerCase()), true));
-  const reqWithFocus = extraMust.length ? { ...req, must_have: [...req.must_have, ...extraMust] } : req;
+  const reqWithFocus = withFocus(req, focus);
   const plan = tailorAll(d, { jobId }).rows[0];
   if (plan?.decision === "adapt" && plan.to_reword > 0 && (!plan.blocked || opts.force)) {
     await ensureModel("reword", `${plan.to_reword} bullets to reword (the judge's answers are saved; run tailor again after switching)`);
@@ -266,6 +262,12 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   const result = await tailorJob(d, reqWithFocus, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
     { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf }, notes });
   return { ...result, judge: stats, edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id) };
+}
+
+export function withFocus<T extends { must_have: string[] }>(req: T, focus: string[] = []): T {
+  const seen = new Set(req.must_have.map((m) => m.toLowerCase()));
+  const extraMust = (focus ?? []).filter((f) => !seen.has(f.toLowerCase()) && (seen.add(f.toLowerCase()), true));
+  return extraMust.length ? { ...req, must_have: [...req.must_have, ...extraMust] } : req;
 }
 
 // Job id -> company, for the same-company rule.

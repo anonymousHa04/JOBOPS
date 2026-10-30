@@ -55,13 +55,17 @@ fi
 
 # 5. background.js and popup.js fixes.
 if owns background.js; then
-has background.js "updatedId === tabId" "only the chat tab's load counts"
-grep -qE 'tabs\.update\([^)]*newUrl' background.js && ok || bad "background.js must send an existing chat tab to CHAT[target].newUrl with chrome.tabs.update"
+# The chat-session helpers live in chats.js (loaded by background.js with importScripts).
+grep -qF 'importScripts("chats.js")' background.js && ok || bad "background.js must load chats.js with importScripts(\"chats.js\")"
+has chats.js "updatedId === tabId" "only the chat tab's load counts"
+# An existing chat tab goes to the job's saved chat, else to a new chat (CHAT[target].newUrl).
+grep -q 'CHAT\[target\]\.newUrl' background.js && grep -qE 'tabs\.update\(tab\.id' background.js && ok || bad "background.js must send an existing chat tab to the job's saved chat or CHAT[target].newUrl with chrome.tabs.update"
 [ "$(grep -cE '^async function saveReport' background.js)" = 1 ] && ok || bad "background.js must define saveReport once, at the top level"
 [ "$(grep -c 'saveReport(' background.js)" -ge 3 ] && ok || bad "background.js must call saveReport from both the answer and saveSelection branches"
 # Report loop (plan-report-loop.md, loop-04): one chat per job and site, up to 5 rounds.
-has background.js '"chats"' "remember one chat URL per job and site in chrome.storage.local \"chats\""
+has chats.js '"chats"' "remember one chat URL per job and site in chrome.storage.local \"chats\""
 has background.js "/x/fix/" "after each saved answer, ask the API to fix and get the next prompt"
+has background.js '"asking"' "status step \"asking\" when the next attempt's prompt is sent"
 has background.js '"fixing"' "status step \"fixing\" while the local models work"
 has background.js '"done"' "final status step \"done\""
 grep -qE '(round|r) *< *5' background.js && ok || bad "background.js must stop after round 5"
@@ -72,7 +76,7 @@ has popup.js "status.step" "show step/error/path, not the whole object"
 has popup.js "chrome.storage.local.get" "show the saved status when the popup opens"
 has popup.js "chrome.runtime.lastError" "handle a failed background reply"
 has popup.js "did not answer" "message for an undefined reply"
-grep -q 'Round ' popup.js && grep -q '/5' popup.js && ok || bad "popup.js must show \"Round <n>/5\" while the loop runs"
+grep -q 'Attempt ' popup.js && grep -q '/5' popup.js && ok || bad "popup.js must show \"Attempt <n>/5\" while the loop runs"
 has popup.js "needs_facts" "the done line says how many gaps need the user's facts"
 fi
 

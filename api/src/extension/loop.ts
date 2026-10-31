@@ -5,6 +5,7 @@ import type { Db } from "../db.ts";
 import { tailor } from "../tools.ts";
 import { gaps, latestRecord } from "./reports.ts";
 import type { Report } from "./reports.ts";
+import { reviewReport } from "./review.ts";
 
 export type FixResult = {
   round: number;
@@ -13,21 +14,49 @@ export type FixResult = {
   added: string[];
   removed: string[];
   reworded: string[];
-  needs_facts: string[]; // focus requirements still not shown: they need the user's facts
+  needs_facts: string[];
   error: string | null;
+  review: {
+    valid: number;
+    wrong: number;
+    unclear: number;
+    causes: Record<string, number>;
+  };
 };
 
-export async function fixRound(db: Db, jobId: string, round: number, report: Report): Promise<FixResult> {
+export async function fixRound(db: Db, jobId: string, round: number, report: Report, retailor: typeof tailor = tailor): Promise<FixResult> {
   const before = latestRecord(db, jobId);
-  const focus = [
-    ...(report.missed_gaps ?? []).map((g) => g.requirement),
-    ...report.gaps.filter((g) => g.advice === "frame").map((g) => g.gap)
-  ];
-  const notes = report.bullet_notes ?? [];
-  const none = { round, changed: false, resume_id: before?.resume_id ?? null, added: [], removed: [], reworded: [], needs_facts: [] };
+  const findings = reviewReport(db, jobId, round, report);
+
+  const validFindings = findings.filter(f => f.verdict === "valid");
+  const focus = validFindings
+    .filter(f => f.kind === "missed_gap")
+    .map(f => f.item);
+  const notes = validFindings
+    .filter(f => f.kind === "bullet_note")
+    .map(f => ({ bullet_id: f.item, note: "" }));
+
+  const none = {
+    round,
+    changed: false,
+    resume_id: before?.resume_id ?? null,
+    added: [],
+    removed: [],
+    reworded: [],
+    needs_facts: [],
+    review: {
+      valid: validFindings.filter(f => f.verdict === "valid").length,
+      wrong: findings.filter(f => f.verdict === "wrong").length,
+      unclear: findings.filter(f => f.verdict === "unclear").length,
+      causes: findings.reduce((acc, f) => {
+        acc[f.cause] = (acc[f.cause] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)
+    }
+  };
 
   try {
-    await tailor(db, jobId, { force: true, focus, notes });
+    await retailor(db, jobId, { force: true, focus, notes });
   } catch (err) {
     return { ...none, error: err instanceof Error ? err.message : String(err) };
   }
@@ -43,6 +72,15 @@ export async function fixRound(db: Db, jobId: string, round: number, report: Rep
   const open = new Set([...g.must, ...g.nice].map((r) => r.toLowerCase()));
   const needs_facts = focus.filter((r) => open.has(r.toLowerCase()));
 
-  return { round, changed: added.length + removed.length + reworded.length > 0, resume_id: after?.resume_id ?? null,
-    added, removed, reworded, needs_facts, error: null };
+  return {
+    round,
+    changed: added.length + removed.length + reworded.length > 0,
+    resume_id: after?.resume_id ?? null,
+    added,
+    removed,
+    reworded,
+    needs_facts,
+    error: null,
+    review: none.review
+  };
 }

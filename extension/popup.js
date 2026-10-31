@@ -87,7 +87,16 @@ function showStatus(status) {
         document.getElementById('status').innerText = '';
         return;
     }
-    let statusText = `Status: ${status.step}`;
+    let statusText = '';
+    if (status.round) {
+        if (status.step === 'done') {
+            statusText = `Done after ${status.round} attempts; ${status.needs_facts} gaps need your facts`;
+        } else {
+            statusText = `Attempt ${status.round}/5: ${status.step}`;
+        }
+    } else {
+        statusText = `Status: ${status.step}`;
+    }
     if (status.error) {
         statusText += ` - Error: ${status.error}`;
     } else if (status.path) {

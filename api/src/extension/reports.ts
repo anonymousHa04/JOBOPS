@@ -56,7 +56,7 @@ function job(db: Db, jobId: string): JobRow {
 
 // The resume that would be sent for this job: its latest tailoring record, or null.
 export function latestRecord(db: Db, jobId: string): ResumeRecord | null {
-  const row = db.prepare("SELECT path FROM resume_records WHERE jd_id = ? ORDER BY created_at DESC LIMIT 1").get(jobId) as
+  const row = db.prepare("SELECT path FROM resume_records WHERE jd_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(jobId) as
     { path: string } | undefined;
   if (!row || !existsSync(row.path)) return null;
   const r = ResumeRecordSchema.safeParse(parse(readFileSync(row.path, "utf8")));

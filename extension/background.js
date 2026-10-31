@@ -1,3 +1,5 @@
+importScripts("chats.js"); // waitForComplete, savedChat, rememberChat, rememberChatWhenCreated
+
 const API = "http://127.0.0.1:3000";
 const CHAT = {
   claude: { match: "https://claude.ai/*", newUrl: "https://claude.ai/new" },
@@ -9,81 +11,25 @@ async function setStatus(fields) {
   await chrome.storage.local.set({ status });
 }
 
-async function waitForComplete(tabId) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve(null);
-    }, 30000);
-
-    const listener = (updatedId, changeInfo) => {
-      if (updatedId === tabId && changeInfo.status === "complete") {
-        chrome.tabs.onUpdated.removeListener(listener);
-        clearTimeout(timeout);
-        resolve(null);
-      }
-    };
-
-    chrome.tabs.onUpdated.addListener(listener);
-
-    chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError) {
-        reject(chrome.runtime.lastError);
-      } else if (tab.status === "complete") {
-        chrome.tabs.onUpdated.removeListener(listener);
-        clearTimeout(timeout);
-        resolve(null);
-      }
-    });
-  });
-}
-
-// One conversation per job and chat site: chrome.storage.local "chats" = { [jobId]: { [target]: url } }.
-// The first report for a job opens a new chat; later ones for the same job go back to it.
-async function savedChat(jobId, target) {
-  const { chats = {} } = await chrome.storage.local.get("chats");
-  return chats[jobId]?.[target] ?? null;
-}
-
-// The conversation id in a chat URL: claude.ai/chat/<id> or chatgpt.com/c/<id>; null for the new-chat page.
-const chatId = (url) => (url ?? "").match(/\/(?:chat|c)\/([0-9a-f-]{8,})/)?.[1] ?? null;
-
-async function rememberChat(jobId, target, url) {
-  const id = chatId(url);
-  if (!id) return false;
-  const { chats = {} } = await chrome.storage.local.get("chats");
-  chats[jobId] = { ...chats[jobId], [target]: url.split("?")[0] };
-  await chrome.storage.local.set({ chats });
-  return true;
-}
-
-// Right after the prompt is sent, the new chat gets its id in the URL: save it then, so a
-// failed or slow answer does not lose the conversation (it used to be saved only on answer).
-async function rememberChatWhenCreated(tabId, jobId, target) {
-  for (let i = 0; i < 30; i++) {
-    const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab || await rememberChat(jobId, target, tab.url)) return;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-}
-
-async function saveReport(jobId, target, text) {
+async function saveReport(jobId, target, text, round) {
   try {
     const response = await fetch(`${API}/x/reports/${encodeURIComponent(jobId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: target, text })
+      body: JSON.stringify({ source: target, text, round })
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       const error = body.detail || body.error || `status ${response.status}`;
       await setStatus({ jobId, target, step: "failed", error });
-      return;
+      return false;
     }
     const { path } = await response.json();
     await setStatus({ jobId, target, step: "saved", path });
+    return true;
   } catch (err) {
     await setStatus({ jobId, target, step: "failed", error: String(err) });
+    return false;
   }
 }
 
@@ -143,6 +89,9 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
       await setStatus({ jobId, target, step: "waiting" });
       await rememberChatWhenCreated(tab.id, jobId, target);
+
+      // Initialize the loop state
+      await chrome.storage.local.set({ loop: { jobId, target, round: 1 } });
     } catch (err) {
       await setStatus({ jobId, target, step: "failed", error: String(err) });
     }
@@ -163,7 +112,39 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     } else {
       await setStatus({ jobId, target, step: "saving" });
       if (sender.tab) await rememberChat(jobId, target, (await chrome.tabs.get(sender.tab.id)).url);
-      await saveReport(jobId, target, text);
+
+      const { round } = await chrome.storage.local.get("loop");
+      const ok = await saveReport(jobId, target, text, round);
+
+      if (ok && round < 5) {
+        await setStatus({ jobId, target, step: "fixing", round });
+        try {
+          const fixResponse = await fetch(`${API}/x/fix/${encodeURIComponent(jobId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ round, source: target })
+          });
+          if (!fixResponse.ok) {
+            const body = await fixResponse.json().catch(() => ({}));
+            const error = body.detail || body.error || `status ${fixResponse.status}`;
+            await setStatus({ jobId, target, step: "failed", error });
+            return;
+          }
+          const { fix, prompt } = await fixResponse.json();
+          if (prompt) {
+            round += 1;
+            await chrome.storage.local.set({ loop: { jobId, target, round } });
+            await setStatus({ jobId, target, step: "asking", round });
+            await chrome.tabs.sendMessage(sender.tab.id, { type: "ask", prompt, jobId, target });
+          } else {
+            await setStatus({ jobId, target, step: "done", round, needs_facts: fix.needs_facts.length });
+          }
+        } catch (err) {
+          await setStatus({ jobId, target, step: "failed", error: String(err) });
+        }
+      } else {
+        await setStatus({ jobId, target, step: "done", round, needs_facts: 0 });
+      }
     }
   } else if (message.type === "saveSelection") {
     const { jobId, target } = message;

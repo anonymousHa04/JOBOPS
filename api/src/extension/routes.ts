@@ -61,7 +61,7 @@ export function extensionRoutes(app: FastifyInstance, db: Db): void {
     `SELECT j.id AS job_id, j.company, j.title, r.score, r.band, r.decision
        FROM jobs j
        LEFT JOIN resume_records r ON r.resume_id =
-         (SELECT resume_id FROM resume_records WHERE jd_id = j.id ORDER BY created_at DESC LIMIT 1)
+         (SELECT resume_id FROM resume_records WHERE jd_id = j.id ORDER BY created_at DESC, rowid DESC LIMIT 1)
       WHERE EXISTS (SELECT 1 FROM job_requirements q WHERE q.job_id = j.id)
       ORDER BY r.score IS NULL, r.score DESC, j.last_seen_at DESC
       LIMIT 40`
@@ -116,6 +116,9 @@ export function extensionRoutes(app: FastifyInstance, db: Db): void {
       const { round, source } = body.data;
       const report = loadReport(request.params.jobId, source);
       if (!report) return reply.status(404).send({ error: "not_found", detail: `no saved ${source} report for this job` });
+      if (round === 5) {
+        return reply.send({ fix: null, prompt: null });
+      }
       const fix = await fixRound(db, request.params.jobId, round, report);
       const prompt = fix.changed && round < 5 ? followUpPrompt(db, request.params.jobId, round + 1, fix, 5) : null;
       return reply.send({ fix, prompt });

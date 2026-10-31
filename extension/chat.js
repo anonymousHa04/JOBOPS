@@ -15,6 +15,7 @@ async function handleAsk(prompt, jobId, target) {
         const answerSelector = getAnswerSelector(target);
 
         const before = countAnswers(answerSelector);
+        markSeenAnswers(answerSelector);
         await findAndFocusInput(inputSelector, prompt);
         await waitForSendButton(sendButtonSelector);
         await clickSendButton(sendButtonSelector);
@@ -64,6 +65,18 @@ function getAnswerSelector(target) {
         return ["[data-content-search-unit-key$=':assistant']"];
     }
     throw new Error("Unknown target");
+}
+
+// Long chats keep only the latest messages on the page, so the answer count can stay the same
+// when a new answer arrives (2026-10-29: a follow-up timed out). Mark the answers present before
+// sending; a last answer without the mark is the new one.
+function markSeenAnswers(selectors) {
+    document.querySelectorAll(selectors.join(", ")).forEach((el) => el.setAttribute("data-jobops-seen", "1"));
+}
+
+function newAnswerArrived(selectors, before) {
+    const last = Array.from(document.querySelectorAll(selectors.join(", "))).at(-1);
+    return countAnswers(selectors) > before || (last != null && !last.hasAttribute("data-jobops-seen"));
 }
 
 function countAnswers(selectors) {
@@ -139,8 +152,8 @@ async function waitForAnswer(answerSelectors, answeringIndicatorSelector, before
                 return;
             }
 
-            let answerCount = countAnswers(answerSelectors);
-            if (answerCount <= before) {
+            // Nothing new yet (count <= before and the last answer is one we marked): keep waiting.
+            if (!newAnswerArrived(answerSelectors, before)) {
                 return;
             }
 

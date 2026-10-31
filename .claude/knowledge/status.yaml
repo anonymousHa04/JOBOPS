@@ -187,4 +187,5 @@ milestone_3:
 
 milestone_3_done: "2026-10-28: all README M3 items built and tested (81 TS tests + Go); first real adapt record (Okta Core Frontier) passes the three-reader parse-back; merged into dev"
 milestone_4_done: "2026-10-28: model registry (api/config/models.yaml), preflight on every model command, call log + models stats, retry names failing fields; 87 TS tests; merged into dev"
+after_milestone_4: "2026-10-31: Chrome extension report + report loop (5 rounds, local review, fix rounds) merged into dev with milestone-4; 109 TS tests; dev pushed; coder KV stays q8_0"
 decisions_needed: []

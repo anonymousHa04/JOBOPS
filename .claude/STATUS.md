@@ -3,7 +3,7 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-10-28, after Milestone 4.
+Last updated: 2026-10-31, Milestone 4 closed (milestone-4 merged into dev, dev pushed).
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -25,9 +25,13 @@ Last updated: 2026-10-28, after Milestone 4.
     model command checks its server first and stops with the llm.sh commands to switch;
     call log `data/model-calls.jsonl` (codes and numbers only) with `models stats`;
     the retry names the failing schema fields.
+  - **Chrome extension** (`extension/`): asks Claude or ChatGPT for a report on the tailored
+    resume (never contact details), one chat per job and site.
+  - **Report loop**: the chat's report is reviewed locally, fix rounds re-select or reword
+    bullets through the guard, up to 5 rounds in the same chat (POST /x/fix; round 5 stops).
   - First real tailored resume: Okta Senior Software Engineer (Core Frontier),
     adapt, 77.5; its PDF passes all three readers.
-- Tests: 87 TypeScript (`npm test`) plus Go (`cd jd-search && go test ./...`).
+- Tests: 109 TypeScript (`npm test`) plus Go (`cd jd-search && go test ./...`).
 - Product models (llama.cpp, `.claude/bin/llm.sh`): general7 (JD parse, judge;
   3 slots), general14 (bank build, rewording). One heavy model at a time.
 
@@ -78,6 +82,9 @@ Last updated: 2026-10-28, after Milestone 4.
   package (`uv tool install --with mcp mini-swe-agent`) and the text-based mode
   flags already in `run-mini.sh`.
 - 16 GB RAM: run one 14B at a time; never alongside another model.
+- Coder KV cache stays Q8_0 on the Homebrew llama.cpp (user, 2026-10-31). A KV-cache
+  benchmark (Q4_0, TurboQuant TBQ3_0/TBQ4_0) was run and then deleted on request; any
+  later experiment starts from scratch. The TurboQuant build is still at `~/llama-turboquant`.
 
 ## Known issues and lessons
 

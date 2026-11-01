@@ -47,12 +47,17 @@ if [ -n "$ext_files" ]; then
   ext_status=passed; [ "$ext_rc" -ne 0 ] && ext_status=failed
 fi
 
-# Go: vet and test, by exit status.
+# Go: vet and test each module (jd-search, queue) by exit status; a module without go.mod is skipped.
 go_status=not_run; go_rc=""; gocheck=""
-if [ -f jd-search/go.mod ]; then
-  gocheck=$(cd jd-search && go vet ./... 2>&1 && go test ./... 2>&1); go_rc=$?
-  go_status=passed; [ "$go_rc" -ne 0 ] && go_status=failed
-fi
+for mod in jd-search queue; do
+  [ -f "$mod/go.mod" ] || continue
+  out=$(cd "$mod" && go vet ./... 2>&1 && go test ./... 2>&1); rc=$?
+  gocheck="$gocheck== $mod (exit $rc)
+$out
+"
+  [ "$go_status" = not_run ] && go_status=passed && go_rc=0
+  [ "$rc" -ne 0 ] && go_status=failed && go_rc=$rc
+done
 
 status=passed
 for s in "$flags_status" "$tsc_status" "$test_status" "$ext_status" "$go_status"; do

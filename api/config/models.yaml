@@ -9,6 +9,11 @@
 #
 # tasks: model, timeout_s (no answer by then: a "timeout"), and max_tokens (stops a runaway
 # answer that repeats list items instead of waiting out the timeout).
+#
+# api_key_env: name of the env var holding the server's API key.
+# remote_start: what the user must do to start that server when it runs on another machine.
+# general7 normally runs on the laptop (LLM_GENERAL7_URL in .env) and must never be loaded on
+# the Mac next to general14.
 
 models:
   qwen2.5:7b:
@@ -16,6 +21,8 @@ models:
     role: general7
     url_env: LLM_GENERAL7_URL
     url: http://127.0.0.1:8084/v1
+    api_key_env: LLM_GENERAL7_KEY
+    remote_start: 'start C:\llama\start-server.cmd on the laptop, then check: curl http://10.10.10.1:8084/health'
   qwen2.5:14b:
     alias: qwen2.5-14b
     role: general14
@@ -44,7 +51,7 @@ tasks:
   reword:       # one bullet toward a JD's wording (humanizer rules, guarded)
     model: qwen2.5:14b
     env: JOBOPS_REWORD_MODEL
-    timeout_s: 60
+    timeout_s: 120
   report_normalize:   # a chat's job report (browser extension) tidied into the report shape
     model: qwen2.5:7b
     timeout_s: 180

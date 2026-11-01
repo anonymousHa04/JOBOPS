@@ -1,8 +1,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { forTask, modelLogPath } from "./registry.ts";
-import type { Task } from "./registry.ts";
+import { authHeaders, forTask, modelLogPath } from "./registry.ts";
+import type { Task, TaskSpec } from "./registry.ts";
 
 // Local model provider: llama.cpp's OpenAI-compatible server (.claude/bin/llm.sh). Each
 // call names its task; the registry (config/models.yaml) gives the model, server,
@@ -55,7 +55,7 @@ export async function generate<T>(opts: {
   // One retry on invalid output; timeouts and connection errors are final.
   let retryPaths: string | null = null;
   for (let i = 0; i < 2; i++) {
-    const a: Attempt<T> = await attempt(baseUrl, body(retryPaths), opts.schema, spec.timeoutMs, spec.role);
+    const a: Attempt<T> = await attempt(baseUrl, body(retryPaths), opts.schema, spec.timeoutMs, spec);
     usage.prompt_tokens = (usage.prompt_tokens ?? 0) + (a.usage.prompt_tokens ?? 0);
     usage.completion_tokens = (usage.completion_tokens ?? 0) + (a.usage.completion_tokens ?? 0);
     if (a.ok) return done({ ok: true, value: a.value, model: spec.model, durationMs: Date.now() - start }, i === 0 ? "ok" : "retry_ok", i + 1);
@@ -65,13 +65,13 @@ export async function generate<T>(opts: {
   return done({ ok: false, error: "invalid_output", detail: retryPaths ?? "" }, "invalid_output", 2);
 }
 
-async function attempt<T>(baseUrl: string, body: string, schema: z.ZodType<T>, timeoutMs: number, role: string): Promise<Attempt<T>> {
+async function attempt<T>(baseUrl: string, body: string, schema: z.ZodType<T>, timeoutMs: number, spec: TaskSpec): Promise<Attempt<T>> {
   const none: Usage = {};
   let res: Response;
   try {
     res = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders(spec) },
       body,
       signal: AbortSignal.timeout(timeoutMs)
     });
@@ -80,7 +80,11 @@ async function attempt<T>(baseUrl: string, body: string, schema: z.ZodType<T>, t
     if (name === "TimeoutError" || name === "AbortError") {
       return { ok: false, error: "timeout", detail: `no answer in ${timeoutMs} ms`, usage: none };
     }
-    return { ok: false, error: "unavailable", detail: `${err instanceof Error ? err.message : String(err)} (start it with: .claude/bin/llm.sh start ${role})`, usage: none };
+    return { ok: false, error: "unavailable", detail: `${err instanceof Error ? err.message : String(err)} (start it with: ${spec.remoteStart ?? `.claude/bin/llm.sh start ${spec.role}`})`, usage: none };
+  }
+  // Never the key itself: only the name of the setting that should hold it.
+  if (res.status === 401 || res.status === 403) {
+    return { ok: false, error: "unavailable", detail: `status ${res.status}: wrong or missing API key (${spec.apiKeyEnv ?? "no key set"})`, usage: none };
   }
   if (!res.ok) return { ok: false, error: "unavailable", detail: `status ${res.status}`, usage: none };
 

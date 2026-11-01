@@ -15,6 +15,9 @@
 #   general7   8084  qwen2.5:7b          product: JD parsing, requirement judge; LLM_GENERAL7_SLOTS
 #                    parallel slots (default 3) sharing one 16k context (-kvu), so the
 #                    judge runs that many calls at once (JOBOPS_JUDGE_PARALLEL)
+#                    Normally general7 runs on the laptop (C:\llama\start-server.cmd,
+#                    http://10.10.10.1:8084/v1, LLM_GENERAL7_URL and LLM_GENERAL7_KEY in
+#                    .env); start it here only when general14 is not loaded.
 #   general14  8085  qwen2.5:14b         product: one-time bank build, rewording
 # Heavy roles (coder, general7, general14) are exclusive: on a 16 GB Mac two of
 # them swap, so starting one while another runs is refused (LLM_ALLOW_BOTH=1 overrides).

@@ -38,7 +38,8 @@ func (s *Store) StartBatch(limit int, parseVersion string) (int64, error) {
 }
 
 // queueJobs runs when a batch's fetch task ends: it takes up to the batch's limit of jobs,
-// newest first, skipping finished jobs and jobs already queued in a running batch. Failed
+// newest first, skipping finished jobs, jobs already queued in a running batch, and jobs the
+// last preference check rejected (job_filter; a job never checked is taken). Failed
 // tasks are queued again; a new job gets a parse task.
 func (s *Store) queueJobs(tx *sql.Tx, batchID int64) (int, error) {
 	var limit int
@@ -47,7 +48,8 @@ func (s *Store) queueJobs(tx *sql.Tx, batchID int64) (int, error) {
 		return 0, fmt.Errorf("queue jobs: %w", err)
 	}
 	// Read the ids first: one connection, so no statement runs while rows are open.
-	rows, err := tx.Query(`SELECT id FROM jobs ORDER BY first_seen_at DESC`)
+	rows, err := tx.Query(`SELECT id FROM jobs WHERE id NOT IN (SELECT job_id FROM job_filter WHERE ok = 0)
+		ORDER BY first_seen_at DESC`)
 	if err != nil {
 		return 0, fmt.Errorf("queue jobs: %w", err)
 	}

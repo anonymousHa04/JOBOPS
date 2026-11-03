@@ -53,6 +53,10 @@ func Open(path string) (*Store, error) {
 			UNIQUE (job_id, stage, prompt_version)
 		);
 		CREATE INDEX IF NOT EXISTS queue_tasks_ready ON queue_tasks (stage, state, retry_at);
+		-- The last preference check of each stored job (jd-search check, run by every fetch step).
+		CREATE TABLE IF NOT EXISTS job_filter (
+			job_id TEXT PRIMARY KEY, ok INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL
+		);
 	`); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}

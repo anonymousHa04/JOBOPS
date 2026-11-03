@@ -1,6 +1,8 @@
 // jd-search finds job posts that match profile/preferences.yaml.
 //
 //	jd-search run [--dry-run] [--workers N]   one search, prints the report
+//	jd-search check                           stored jobs (JSON array on stdin) against the
+//	                                          preferences; prints [{id, ok, reason}]
 //	jd-search mcp                             MCP server on stdio
 package main
 
@@ -9,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +25,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jd-search run [--dry-run] [--workers N] | jd-search mcp")
+		fmt.Fprintln(os.Stderr, "usage: jd-search run [--dry-run] [--workers N] | jd-search check | jd-search mcp")
 		os.Exit(2)
 	}
 	// The careers crawler; the default runs ../api/src/careers/crawl.ts from jd-search/.
@@ -33,6 +36,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = cmdRun(os.Args[2:])
+	case "check":
+		err = cmdCheck(os.Stdin, os.Stdout)
 	case "mcp":
 		err = cmdMCP()
 	default:
@@ -89,6 +94,32 @@ func cmdRun(args []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(rep)
+}
+
+// Verdict is one stored job's result from cmdCheck.
+type Verdict struct {
+	ID     string `json:"id"`
+	OK     bool   `json:"ok"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// cmdCheck checks stored jobs against the current preferences (no network): the queue runs it
+// before every batch so a job saved by an older search is skipped once the preferences exclude it.
+func cmdCheck(in io.Reader, out io.Writer) error {
+	prefs, err := filter.Load(prefsPath())
+	if err != nil {
+		return err
+	}
+	var jobs []filter.Stored
+	if err := json.NewDecoder(in).Decode(&jobs); err != nil {
+		return fmt.Errorf("check: read jobs: %w", err)
+	}
+	verdicts := make([]Verdict, 0, len(jobs))
+	for _, j := range jobs {
+		ok, reason := filter.CheckStored(prefs, j)
+		verdicts = append(verdicts, Verdict{ID: j.ID, OK: ok, Reason: reason})
+	}
+	return json.NewEncoder(out).Encode(verdicts)
 }
 
 type searchIn struct {

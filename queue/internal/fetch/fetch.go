@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"jobops/queue/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,58 @@ type Summary struct {
 	Matched    int `json:"matched"`
 	Created    int `json:"created"`
 	Duplicates int `json:"duplicates"`
+	// Stored jobs the preference check skipped (filled by the queue, not by jd-search).
+	Skipped map[string]int `json:"skipped,omitempty"`
+}
+
+// Checker checks stored jobs against the current preferences.
+type Checker func(ctx context.Context, jobs []store.JobText) ([]store.Verdict, error)
+
+// JDCheck runs `jd-search check` (no network): jobs as a JSON array on stdin, verdicts on stdout.
+func JDCheck(repoRoot string) Checker {
+	return func(ctx context.Context, jobs []store.JobText) ([]store.Verdict, error) {
+		if jobs == nil {
+			jobs = []store.JobText{}
+		}
+		in, err := json.Marshal(jobs)
+		if err != nil {
+			return nil, fmt.Errorf("jd-search check: %w", err)
+		}
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		var stdout, stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, "go", "run", "./cmd/jd-search", "check")
+		cmd.Dir = filepath.Join(repoRoot, "jd-search")
+		cmd.Env = os.Environ()
+		cmd.Stdin = bytes.NewReader(in)
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			tail := stderr.String()
+			if len(tail) > 300 {
+				tail = tail[len(tail)-300:]
+			}
+			return nil, fmt.Errorf("jd-search check: %w: %s", err, tail)
+		}
+		var out []store.Verdict
+		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+			return nil, fmt.Errorf("jd-search check output: %w", err)
+		}
+		return out, nil
+	}
+}
+
+// Recheck checks every stored job a batch could take and saves the verdicts; it returns the
+// skipped counts by reason.
+func Recheck(ctx context.Context, s *store.Store, check Checker) (map[string]int, error) {
+	jobs, err := s.FilterCandidates()
+	if err != nil {
+		return nil, err
+	}
+	verdicts, err := check(ctx, jobs)
+	if err != nil {
+		return nil, err
+	}
+	return s.SaveVerdicts(verdicts)
 }
 
 func JDSearch(repoRoot string) Runner {

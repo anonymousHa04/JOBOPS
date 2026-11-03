@@ -48,7 +48,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go expireLoop(ctx, s)
-	go fetchLoop(ctx, s, fetch.JDSearch(root))
+	go fetchLoop(ctx, s, fetch.JDSearch(root), fetch.JDCheck(root))
 
 	srv := &http.Server{Addr: *addr, Handler: api.Handler(s), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -81,8 +81,11 @@ func expireLoop(ctx context.Context, s *store.Store) {
 	}
 }
 
-// Fetch tasks run here, each in its own goroutine (no limit).
-func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner) {
+// Fetch tasks run here, each in its own goroutine (no limit): the search, then the preference
+// check of every stored job a batch could take (a job saved by an older search is skipped once
+// the preferences exclude it). A failed check fails the fetch task (code check_failed); the
+// batch then uses the last saved verdicts.
+func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetch.Checker) {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {
@@ -110,12 +113,21 @@ func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner) {
 					log.Printf("batch %d task %d fetch failed", task.BatchID, task.ID)
 					return
 				}
+				skipped, err := fetch.Recheck(ctx, s, check)
+				if err != nil {
+					if ferr := s.Fail(task.ID, "check_failed", err.Error()); ferr != nil {
+						log.Printf("batch %d task %d fetch: %v", task.BatchID, task.ID, ferr)
+					}
+					log.Printf("batch %d task %d preference check failed: %v", task.BatchID, task.ID, err)
+					return
+				}
+				sum.Skipped = skipped
 				b, _ := json.Marshal(sum)
 				if derr := s.Done(task.ID, b); derr != nil {
 					log.Printf("batch %d task %d fetch: %v", task.BatchID, task.ID, derr)
 					return
 				}
-				log.Printf("batch %d task %d fetch done (matched %d, new %d)", task.BatchID, task.ID, sum.Matched, sum.Created)
+				log.Printf("batch %d task %d fetch done (matched %d, new %d, skipped %v)", task.BatchID, task.ID, sum.Matched, sum.Created, sum.Skipped)
 			}(task)
 		}
 	}

@@ -70,7 +70,12 @@ The laptop's shell is PowerShell: use `;` between commands, not `&`.
 
 ## Run a batch
 
-One terminal each:
+One command brings everything up (laptop check, Docker and Qdrant, general14 instead of the
+coder, and tmux windows api, queue, worker-laptop, worker-mac); it never starts a batch:
+
+    .claude/bin/batch-up.sh
+
+Or by hand, one terminal each:
 
     # 1. API (jd-search posts new jobs to it)
     node api/src/server.ts

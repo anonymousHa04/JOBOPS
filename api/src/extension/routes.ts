@@ -7,6 +7,8 @@ import { z } from "zod";
 import type { Db } from "../db.ts";
 import { chatFollowUp, chatPrompt, followUpPrompt, listReports, loadReport, saveReport, SOURCES } from "./reports.ts";
 import { fixRound } from "./loop.ts";
+import { latestRecord } from "./reports.ts";
+import { engineScore, loadLoop, makeCurrent, saveLoop, setChatScore, startLoop, summary } from "./rounds.ts";
 
 export function extensionOrigin(origin: string | undefined): boolean {
   if (!origin) return false;
@@ -107,8 +109,9 @@ export function extensionRoutes(app: FastifyInstance, db: Db): void {
 
   app.get<{ Params: { jobId: string } }>("/x/reports/:jobId", async (request, reply) => reply.send({ reports: listReports(request.params.jobId) }));
 
-  // Report loop: fix locally from the saved report of this round, and give the next prompt
-  // (null when nothing changed or after round 5).
+  // Report loop: fix locally from the saved report of this round and re-score the new resume.
+  // The engine score decides: the loop goes on only while it rises (at most 5 rounds), and the
+  // best version stays the job's current resume. The chat's fit_score is recorded beside it.
   app.post<{ Params: { jobId: string }; Body: unknown }>("/x/fix/:jobId", async (request, reply) => {
     const body = FixBody.safeParse(request.body);
     if (!body.success) return reply.status(400).send({ error: "validation_error", issues: body.error.issues.map((i) => i.path.join(".")) });
@@ -116,12 +119,38 @@ export function extensionRoutes(app: FastifyInstance, db: Db): void {
       const { round, source } = body.data;
       const report = loadReport(request.params.jobId, source);
       if (!report) return reply.status(404).send({ error: "not_found", detail: `no saved ${source} report for this job` });
+      const jobId = request.params.jobId;
+      const saved = loadLoop(jobId, source);
+      if (round === 5 && !saved) return reply.send({ fix: null, prompt: null });
+      const loop = round === 1 || !saved ? startLoop(db, jobId, source) : saved;
+      const shown = latestRecord(db, jobId);
+      if (shown) setChatScore(loop, shown.resume_id, report.fit_score);
+      const finish = (stopped: "no_gain" | "round_limit" | "error") => {
+        loop.stopped = stopped;
+        if (loop.best) makeCurrent(db, loop.best.resume_id);
+        saveLoop(loop);
+      };
       if (round === 5) {
-        return reply.send({ fix: null, prompt: null });
+        finish("round_limit");
+        return reply.send({ fix: null, prompt: null, loop: summary(loop) });
       }
-      const fix = await fixRound(db, request.params.jobId, round, report);
-      const prompt = fix.changed && round < 5 ? followUpPrompt(db, request.params.jobId, round + 1, fix, 5) : null;
-      return reply.send({ fix, prompt });
+      const fix = await fixRound(db, jobId, round, report);
+      const after = fix.error ? null : latestRecord(db, jobId);
+      if (!after) {
+        finish("error");
+        return reply.send({ fix, prompt: null, loop: summary(loop) });
+      }
+      const entry = { version: round, resume_id: after.resume_id, engine_score: engineScore(db, jobId, after), chat_score: null, needs_facts: fix.needs_facts };
+      loop.versions.push(entry);
+      let prompt: string | null = null;
+      if (!loop.best || entry.engine_score > loop.best.engine_score) {
+        loop.best = { version: entry.version, resume_id: entry.resume_id, engine_score: entry.engine_score };
+        saveLoop(loop);
+        prompt = followUpPrompt(db, jobId, round + 1, fix, 5);
+      } else {
+        finish("no_gain");
+      }
+      return reply.send({ fix, prompt, loop: summary(loop) });
     } catch (err) {
       return fail(reply, err);
     }

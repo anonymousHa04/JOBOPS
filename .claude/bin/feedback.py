@@ -12,7 +12,10 @@ Called by autofix.sh. Works only from recorded evidence in .agent-logs/:
         Write a fresh repair spec from the evidence (new information, not the
         same prompt again). Records which known fixes were supplied.
   feedback.py resolve  <escalation.json> --id ID --resolution TEXT [--title T]
-                       [--signature REGEX] [--terms a,b] [--files glob,glob] [--existing]
+                       [--root-cause TEXT --repro TEST] [--signature REGEX] [--terms a,b]
+                       [--files glob,glob] [--existing]
+        Without --root-cause and --repro the lesson is an observation (kept, never handed to a
+        coder); with both it is a hypothesis (handed to coders), verified once a run given it passes.
         Close an escalation after the manager fixed it: write (or, with --existing,
         link) a fix record so the next agent gets it in its context package, its
         repair spec, and aider's lint hints; mark the escalation resolved.
@@ -273,20 +276,69 @@ def categorize(verdict, reason, timed_out, files, errs, tests, flags, context_st
     return "unknown", "no rule matched"
 
 
+def gate_category(gate, files):
+    """Category from the edit gate's first failed check (check.sh does not run after a failed gate)."""
+    failed = [c for c in gate.get("checks", []) if c["status"] == "failed"]
+    first = failed[0] if failed else {"check": "", "detail": ""}
+    name, detail = first["check"], first.get("detail", "")
+    scope = next((c for c in failed if c["check"].startswith("4 ")), None)
+    if scope:
+        stray = scope["detail"].split(":", 1)[-1].replace(",", " ").split()
+        if any(f.endswith(t) and f != t for f in stray for t in files):
+            return "environment", "the tool wrote the target to a wrong path (e.g. a doubled directory)"
+        return "instruction_violation", "changed files outside the task"
+    if name.startswith(("1 ", "2 ")):
+        return "model_limitation", "no change produced (edit gate: %s)" % detail[:100]
+    if name.startswith("7 "):
+        return "incorrect_implementation", "imports a dependency that does not exist: " + detail[:100]
+    return "incorrect_implementation", "edit gate: %s: %s" % (name, detail[:100])
+
+
+# The seven failure classes (user, 2026-11-03). The edit gate sets EDIT_FAILURE or
+# DEPENDENCY_FAILURE itself (FAILURE_CLASS); the rest come from the category. INFRA_FAILURE and
+# SPEC_FAILURE are not the coder's doing and are left out of its pass rate.
+CLASSES = ("CODE_FAILURE", "EDIT_FAILURE", "CONTEXT_FAILURE", "DEPENDENCY_FAILURE", "INFRA_FAILURE",
+           "TEST_FAILURE", "SPEC_FAILURE")
+NOT_THE_CODER = ("INFRA_FAILURE", "SPEC_FAILURE")
+
+
+def failure_class(category, reason, files, flags):
+    reason = reason or ""
+    if any("PATCH REJECTED" in f for f in flags) or "no task file changed" in reason or "outside the task" in reason:
+        return "EDIT_FAILURE"
+    if category in ("environment", "unreliable_validation"):
+        return "INFRA_FAILURE"
+    if category == "missing_context":
+        return "CONTEXT_FAILURE"
+    if category in ("instruction_violation",) or (category == "model_limitation"):
+        return "EDIT_FAILURE"
+    if category == "incorrect_implementation" and any(re.search(r"(\.test\.ts|_test\.go)$", f) for f in files):
+        return "TEST_FAILURE"
+    if category in ("incorrect_implementation", "regression"):
+        return "CODE_FAILURE"
+    return "CODE_FAILURE"
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_attempt(task, attempt, runner, verdict, reason, timed_out, files):
     errs, tests = errors_of(attempt)
-    flags = re.findall(r"^RUN-(?:CODER|MINI): .*$", read(os.path.join(LOGS, attempt + ".log")), re.M)
+    flags = re.findall(r"^RUN-(?:CODER|MINI|PATCH): .*$", read(os.path.join(LOGS, attempt + ".log")), re.M)
     ctx_status = read(os.path.join(LOGS, attempt + ".context.status"), "none").strip() or "none"
     check = load_json(os.path.join(LOGS, attempt + ".check.json"))
     ex = read(os.path.join(LOGS, attempt + ".exit"), "unknown").strip() or "unknown"
     extra = "" if (errs or tests or verdict == "passed") else (reason or verdict)
     sig, parts = signature(errs, tests, extra) if verdict != "passed" else (None, [])
+    gate = load_json(os.path.join(LOGS, attempt + ".gate.json"))
     if verdict == "passed":
         category, basis = None, None
+    elif gate and gate.get("status") == "failed":
+        category, basis = gate_category(gate, files)
     else:
         category, basis = categorize(verdict, reason, timed_out == "1", files, errs, tests, flags, ctx_status, check)
+    fclass = None if verdict == "passed" else (
+        os.environ.get("FAILURE_CLASS") if os.environ.get("FAILURE_CLASS") in CLASSES
+        else failure_class(category, reason, files, flags))
     ctx = load_json(os.path.join(LOGS, attempt + ".context.json"), {}) or {}
     supplied = load_json(os.path.join(LOGS, attempt + ".fixes-supplied.json"), []) or []
     # Timing: autofix writes <attempt>.started (epoch seconds) when the coder starts.
@@ -307,7 +359,7 @@ def cmd_attempt(task, attempt, runner, verdict, reason, timed_out, files):
         "flags": flags[:6], "errors": [dict(e, message=e["message"][:160]) for e in errs[:15]],
         "failing_tests": tests[:10], "error_count": len(errs),
         "signature": sig, "signature_parts": parts[:15],
-        "category": category, "category_basis": basis,
+        "category": category, "category_basis": basis, "failure_class": fclass,
         "agent_claim": agent_claim(attempt, runner), "files": list(files),
         "started_at": start_dt.isoformat(timespec="seconds") if start_dt else None,
         "ended_at": ended.isoformat(timespec="seconds"),
@@ -316,7 +368,7 @@ def cmd_attempt(task, attempt, runner, verdict, reason, timed_out, files):
     }
     with open(os.path.join(LOGS, task + ".attempts.jsonl"), "a") as f:
         f.write(json.dumps(rec) + "\n")
-    print(json.dumps({"category": category, "signature": sig, "errors": len(errs)}))
+    print(json.dumps({"category": category, "failure_class": fclass, "signature": sig, "errors": len(errs)}))
 
 
 def cmd_decide(task, max_fixes):
@@ -334,6 +386,19 @@ def cmd_decide(task, max_fixes):
     return "repair"
 
 
+def suppliable(fx):
+    """Promotion rule (user, 2026-11-03): a lesson reaches a coder only once it is a hypothesis
+    (a clear root cause, a specific corrective action, a reproducible test case) or verified (a
+    later coder run that was given it passed). An observation (a manual fix only) is kept as a
+    trace and never handed to a coder."""
+    st = fx.get("status")
+    if st in ("verified", "regression-tested"):
+        return True
+    if st == "hypothesis":
+        return all((fx.get(k) or "").strip() for k in ("root_cause", "resolution", "repro_test"))
+    return False
+
+
 def matching_fixes(errs_text, files=(), task_text=""):
     """Lessons for a repair round. The error signature must match the check's errors AND the
     lesson must fit the task: one of its file globs matches a task file, or one of its terms
@@ -343,7 +408,7 @@ def matching_fixes(errs_text, files=(), task_text=""):
     hay = errs_text + "\n" + task_text
     hits = []
     for fx in load_fixes():
-        if fx.get("status") in ("rejected", "outdated") or not fx.get("signature"):
+        if not suppliable(fx) or not fx.get("signature"):
             continue
         try:
             if not re.search(fx["signature"], errs_text):
@@ -356,7 +421,7 @@ def matching_fixes(errs_text, files=(), task_text=""):
         by_term = [t for t in fx.get("terms", []) if re.search(r"(?<![\w])%s(?![\w])" % re.escape(t), hay, re.I)]
         if by_file or by_term:
             hits.append((fx, ["signature"] + ["file:" + g for g in by_file] + ["term:" + t for t in by_term]))
-    order = {"regression-tested": 0, "verified": 1, "observed": 2, "hypothesis": 3}
+    order = {"regression-tested": 0, "verified": 1, "hypothesis": 2}
     return sorted(hits, key=lambda h: order.get(h[0].get("status"), 9))
 
 
@@ -424,6 +489,21 @@ def _promote(task, atts, status):
     by_id = {fx["id"]: fx for fx in fixes}
     changed = []
     for i, a in enumerate(atts):
+        # A first attempt given a hypothesis through the context pack (matched by task terms) that
+        # passes is the later successful run the promotion rule asks for.
+        pack = (a.get("lessons") or {}).get("context_pack") or []
+        if i == 0 and pack and a["verdict"] == "passed":
+            for fid in pack:
+                fx = by_id.get(fid)
+                if not fx:
+                    continue
+                apps = fx.setdefault("applications", {"supplied": 0, "passed": 0, "failed": 0})
+                apps["supplied"] += 1
+                apps["passed"] += 1
+                if fx.get("status") == "hypothesis":
+                    fx["status"] = "verified"
+                    changed.append({"id": fid, "to": "verified", "note": "context pack, first try passed"})
+                fx["evidence"] = (fx.get("evidence", "") + " | %s: in the context pack, first attempt passed (%s)." % (task, now()[:10])).strip(" |")
         if not a.get("fixes_supplied") or i == 0:
             continue
         prev = atts[i - 1]
@@ -440,7 +520,7 @@ def _promote(task, atts, status):
             apps["supplied"] += 1
             if a["verdict"] == "passed" and matched:
                 apps["passed"] += 1
-                if fx.get("status") in ("observed", "hypothesis"):
+                if fx.get("status") == "hypothesis":
                     fx["status"] = "verified"
                     changed.append({"id": fid, "to": "verified"})
                 else:
@@ -450,7 +530,7 @@ def _promote(task, atts, status):
                 apps["failed"] += 1
                 fx["evidence"] = (fx.get("evidence", "") + " | %s: supplied in %s, did not resolve (%s)." % (task, a["attempt"], now()[:10])).strip(" |")
                 # Two failed uses: no longer trusted as proven; it ranks last until it helps again.
-                if apps["failed"] >= 2 and fx.get("status") in ("observed", "verified"):
+                if apps["failed"] >= 2 and fx.get("status") == "verified":
                     fx["status"] = "hypothesis"
                     changed.append({"id": fid, "to": "hypothesis", "note": "failed twice"})
                 else:
@@ -510,12 +590,14 @@ def cmd_finish(task, status, reason):
         "attempts_count": len(atts), "repair_rounds": max(0, len(atts) - 1),
         "first_attempt_passed": bool(atts) and atts[0]["verdict"] == "passed",
         "category": None if status == "passed" else last.get("category"),
+        "failure_class": None if status == "passed" else last.get("failure_class"),
         "fixes_updated": promoted, "escalation": None, "attempts": atts,
     }
     if status != "passed":
         esc = {
             "task": task, "created": now(), "status": status, "reason": reason,
             "category": last.get("category"), "category_basis": last.get("category_basis"),
+            "failure_class": last.get("failure_class"),
             "what_was_tried": [{"attempt": a["attempt"], "runner": a["runner"], "strategy": a["strategy"],
                                 "verdict": a["verdict"], "errors": a["error_count"], "signature": a["signature"],
                                 "fixes_supplied": a["fixes_supplied"]} for a in atts],
@@ -534,13 +616,13 @@ def cmd_finish(task, status, reason):
         os.makedirs(MAIN_LOGS, exist_ok=True)
         with open(os.path.join(MAIN_LOGS, "escalations.jsonl"), "a") as f:
             f.write(json.dumps({"task": task, "created": esc["created"], "category": esc["category"],
-                                "reason": reason, "file": os.path.abspath(path)}) + "\n")
+                                "failure_class": esc["failure_class"], "reason": reason, "file": os.path.abspath(path)}) + "\n")
     with open(os.path.join(LOGS, task + ".result.json"), "w") as f:
         json.dump(result, f, indent=2)
     os.makedirs(MAIN_LOGS, exist_ok=True)
     with open(os.path.join(MAIN_LOGS, "outcomes.jsonl"), "a") as f:
         f.write(json.dumps({k: result[k] for k in ("task", "status", "reason", "finished", "attempts_count",
-                                                    "repair_rounds", "first_attempt_passed", "category")} |
+                                                    "repair_rounds", "first_attempt_passed", "category", "failure_class")} |
                            {"tree": os.getcwd(), "context_tokens": [a.get("context_tokens") for a in atts],
                             "errors_per_attempt": [a["error_count"] for a in atts]}) + "\n")
     print(json.dumps({"status": status, "escalation": result["escalation"], "fixes_updated": promoted}))
@@ -570,13 +652,18 @@ def _resolve(path, opts):
         if not sig and esc.get("last_errors"):
             e = esc["last_errors"][0]
             sig = re.escape("%s: %s" % (e["code"], normalize(e["message"]).split("'<type>'")[0]))[:160]
+        full = all(opts.get(k) for k in ("root-cause", "repro"))
         fixes.append({
-            "id": fid, "status": "observed", "title": opts.get("title") or ("Fix for " + esc["task"]),
+            "id": fid, "status": "hypothesis" if full else "observation",
+            "title": opts.get("title") or ("Fix for " + esc["task"]),
             "signature": sig or "", "terms": [t for t in opts.get("terms", "").split(",") if t],
             "files": [f for f in opts.get("files", "").split(",") if f],
-            "conditions": esc.get("category_basis") or "", "root_cause": "Manager diagnosis after escalation.",
-            "resolution": opts["resolution"], "evidence": "resolves " + link,
-            "limitations": "Observed; verified when a repair round given this fix passes.", "recorded": now()[:10]})
+            "conditions": esc.get("category_basis") or "", "failure_class": esc.get("failure_class"),
+            "root_cause": opts.get("root-cause", ""), "resolution": opts["resolution"],
+            "repro_test": opts.get("repro", ""), "evidence": "resolves " + link,
+            "limitations": ("Hypothesis: handed to coders; verified when a coder run given it passes." if full else
+                            "Observation: a manual fix only; not handed to coders until it has --root-cause and --repro."),
+            "recorded": now()[:10]})
     save_fixes(fixes)
     esc["resolved"] = {"at": now(), "by": "manager", "fix_id": fid}
     with open(path, "w") as f:
@@ -598,13 +685,27 @@ def cmd_stats(logs_dir):
     if not tasks:
         print("no attempt records in %s" % logs_dir)
         return
+    classes = {}
+    for a in tasks.values():
+        for x in a:
+            if x.get("failure_class"):
+                classes[x["failure_class"]] = classes.get(x["failure_class"], 0) + 1
+    # Tasks whose last attempt failed for a reason outside the coder do not count against it.
+    infra = [t for t, a in tasks.items() if a[-1].get("failure_class") in NOT_THE_CODER]
+    for t in infra:
+        tasks.pop(t)
     n = len(tasks)
+    if not n:
+        print("no coder-judged tasks (%d left out as infra/spec)" % len(infra))
+        return
     first = sum(1 for a in tasks.values() if a[0]["verdict"] == "passed")
     passed = sum(1 for a in tasks.values() if a[-1]["verdict"] == "passed")
     rounds = sum(len(a) - 1 for a in tasks.values())
     timed = [sum(x.get("duration_s") or 0 for x in a) for a in tasks.values() if all(x.get("duration_s") is not None for x in a)]
     print("tasks: %d | first-try pass: %d (%.0f%%) | passed in the end: %d | fix rounds per task: %.2f" % (
         n, first, 100.0 * first / n, passed, rounds / n))
+    print("left out (infra/spec failures, not the coder's): %d | failure classes over all attempts: %s" % (
+        len(infra), ", ".join("%s %d" % kv for kv in sorted(classes.items())) or "none recorded yet"))
     print("minutes per task: %s" % ("%.1f (over %d timed tasks)" % (sum(timed) / 60.0 / len(timed), len(timed)) if timed
                                     else "n/a (no timed attempts yet; timing started 2026-10-29)"))
     fix = [x for a in tasks.values() for x in a[1:]]

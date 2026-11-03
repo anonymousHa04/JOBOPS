@@ -34,6 +34,7 @@ export const ReportSchema = z.object({
   company_notes: z.array(line).max(8),
   questions_to_ask: z.array(line).max(6),
   // Only when the prompt carried the tailored resume.
+  fit_score: z.number().min(0).max(100).optional(),
   missed_gaps: z.array(z.object({ requirement: line, why: line })).max(8).optional(),
   already_covered: z.array(z.object({ gap: line, bullet_ids: z.array(z.string().trim().min(1).max(80)).max(6) })).max(8).optional(),
   bullet_notes: z.array(z.object({ bullet_id: z.string().trim().min(1).max(80), note: line })).max(10).optional(),
@@ -148,7 +149,8 @@ from_memory:                  # from your memory of me, NOT in the text above, a
 \`\`\``;
 
 // Extra fields asked for when the prompt carries the tailored resume.
-const SHAPE_RESUME = `missed_gaps:                  # JD requirements the gap list missed and the resume does not show, at most 6
+const SHAPE_RESUME = `fit_score: <0-100: how well the resume above fits this job, as a recruiter would judge it>
+missed_gaps:                  # JD requirements the gap list missed and the resume does not show, at most 6
   - requirement: <as worded in the JD>
     why: <one sentence>
 already_covered:              # listed gaps the resume does cover, at most 6

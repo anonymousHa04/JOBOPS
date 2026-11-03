@@ -130,14 +130,24 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
             await setStatus({ jobId, target, step: "failed", error });
             return;
           }
-          const { fix, prompt } = await fixResponse.json();
+          const { fix, prompt, loop } = await fixResponse.json();
           if (prompt) {
             round += 1;
             await chrome.storage.local.set({ loop: { jobId, target, round } });
             await setStatus({ jobId, target, step: "asking", round });
             await chrome.tabs.sendMessage(sender.tab.id, { type: "ask", prompt, jobId, target });
           } else {
-            await setStatus({ jobId, target, step: "done", round, needs_facts: fix.needs_facts.length });
+            // The loop summary (engine and chat score per round) comes only from a server that has it.
+            const status = { jobId, target, step: "done", round, needs_facts: fix ? fix.needs_facts.length : 0 };
+            if (loop) {
+              status.scores = loop.rounds.map(r => r.engine_score);
+              status.chat = loop.rounds.map(r => r.chat_score);
+              status.best = loop.best ? loop.best.engine_score : null;
+              status.stopped = loop.stopped;
+              const last = loop.rounds[loop.rounds.length - 1];
+              if (last) status.needs_facts = last.needs_facts.length;
+            }
+            await setStatus(status);
           }
         } catch (err) {
           await setStatus({ jobId, target, step: "failed", error: String(err) });

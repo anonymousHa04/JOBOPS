@@ -1,6 +1,6 @@
 ---
 name: coder
-description: Local coding agent. Writes and fixes JobOps code from a task spec written by the manager. Runs on a local model (llama.cpp) through aider or mini-swe-agent; never on a cloud model.
+description: Local coding agent. Writes and fixes JobOps code from a task spec written by the manager. Runs on a local model (llama.cpp) through aider (new files) or the patch runner (search/replace edits); never on a cloud model.
 model: openai/qwen2.5-coder-14b   # llama.cpp coder server, .claude/bin/llm.sh
 runner: aider
 ---

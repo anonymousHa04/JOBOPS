@@ -380,7 +380,7 @@ def load_fixes():
     return fixes
 
 
-STATUS_EVIDENCE = {"verified": "verified_fix", "regression-tested": "verified_fix", "observed": "hypothesis",
+STATUS_EVIDENCE = {"verified": "verified_fix", "regression-tested": "verified_fix", "observed": "hypothesis", "observation": "hypothesis",
                    "hypothesis": "hypothesis", "rejected": "outdated", "outdated": "outdated"}
 STATUS_RANK = {"regression-tested": 0, "verified": 1, "observed": 2, "hypothesis": 3}
 
@@ -709,7 +709,10 @@ def build_context(ix, spec_text, files, budget, new_files=None, semantic=True):
 
     # 7. Known fixes whose terms appear in the task text (match_fixes).
     s = pkg.section("known_fixes")
-    for rank, (fx, why) in enumerate(match_fixes(spec_text, files)[:4]):
+    # Only hypotheses (root cause, action, repro test) and verified lessons reach a coder (user, 2026-11-03).
+    ok = lambda fx: fx.get("status") in ("verified", "regression-tested") or (
+        fx.get("status") == "hypothesis" and all((fx.get(k) or "").strip() for k in ("root_cause", "resolution", "repro_test")))
+    for rank, (fx, why) in enumerate([h for h in match_fixes(spec_text, files) if ok(h[0])][:4]):
         text = "[%s] %s\nResolution: %s" % (fx["status"], fx["title"], fx["resolution"])
         if fx.get("limitations"):
             text += "\nLimitations: " + fx["limitations"]

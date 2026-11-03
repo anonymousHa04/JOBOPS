@@ -42,7 +42,8 @@ import type { Reported } from "./render/ats-report.ts";
 import { lintRecord } from "./tailor/lint.ts";
 import { fetchJob } from "./jobs/from-url.ts";
 import { createJobRepository } from "./jobs/repository.ts";
-import { ensureModel, modelLogPath, modelUp, TASKS } from "./model/registry.ts";
+import { ensureModel, modelLogPath, modelUp, switchCommands, TASKS } from "./model/registry.ts";
+import type { TaskSpec } from "./model/registry.ts";
 import type { CallRecord } from "./model/llm.ts";
 
 export function db(): Db {
@@ -330,9 +331,9 @@ type Step = { step: string; status: "done" | "cached" | "skipped" | "stopped"; d
 export async function jobAdd(d: Db, url: string, opts: { company?: string; force?: boolean; render?: boolean } = {}) {
   const steps: Step[] = [];
   const out = (extra: Record<string, unknown> = {}) => ({ url, steps, ...extra });
-  const stop = (step: string, role: string, why: string) => {
+  const stop = (step: string, spec: TaskSpec, why: string) => {
     steps.push({ step, status: "stopped", detail: why });
-    return out({ next: [`.claude/bin/llm.sh stop all`, `.claude/bin/llm.sh start ${role}`, `node api/src/cli.ts job add "${url}"`] });
+    return out({ next: [...switchCommands(spec), `node api/src/cli.ts job add "${url}"`] });
   };
 
   // 1. Fetch and store (the same link again finds the stored job).
@@ -350,7 +351,7 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   // 2. Parse the JD.
   if (!loadRequirements(d, job.id)) {
     const m = await modelUp("jd_parse");
-    if (!m.up) return stop("parse", m.spec.role, `${m.spec.model} is not running`);
+    if (!m.up) return stop("parse", m.spec, `${m.spec.model} is not running`);
     await parseJob(d, job.id);
     steps.push({ step: "parse", status: "done" });
   } else {
@@ -365,7 +366,7 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   const settled = open > 0 ? judgeSettled(req, bank, extra, loadVerdicts(d, req, bank, extra), openRequirements(d, req, bank, extra)) : null;
   if (open > 0 && !settled) {
     const m = await modelUp("judge");
-    if (!m.up) return stop("judge", m.spec.role, `${open} requirements need the judge; ${m.spec.model} is not running`);
+    if (!m.up) return stop("judge", m.spec, `${open} requirements need the judge; ${m.spec.model} is not running`);
   }
   const scored = await score(d, job.id, open > 0);
   steps.push({ step: "judge", status: settled ? "skipped" : open > 0 ? "done" : "cached",
@@ -376,7 +377,7 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   const plan = tailorAll(d, { jobId: job.id }).rows[0];
   if (plan.decision === "adapt" && plan.to_reword > 0 && !plan.blocked) {
     const m = await modelUp("reword");
-    if (!m.up) return { ...stop("tailor", m.spec.role, `${plan.to_reword} bullets to reword; ${m.spec.model} is not running`), ...base, ...scoreOut, decision: plan.decision };
+    if (!m.up) return { ...stop("tailor", m.spec, `${plan.to_reword} bullets to reword; ${m.spec.model} is not running`), ...base, ...scoreOut, decision: plan.decision };
   }
   const t = await tailor(d, job.id, { force: opts.force });
   if (!("created" in t)) throw new Error("tailor returned a dry run");

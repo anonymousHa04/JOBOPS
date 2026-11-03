@@ -3,8 +3,9 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-03, Milestone 5 committed on `milestone-5` and merged into `dev`, with the
-coder-gates tooling (`tooling/coder-gates`). How to run it: `RUNBOOK-M5.md`.
+Last updated: 2026-11-03, Milestone 5 done: merged into `dev` with the coder-gates tooling and
+the search filters (`search-filters`); all branches except main pushed. How to run it:
+`RUNBOOK-M5.md` (`.claude/bin/batch-up.sh` brings everything up).
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -47,8 +48,16 @@ coder-gates tooling (`tooling/coder-gates`). How to run it: `RUNBOOK-M5.md`.
       chat `fit_score` recorded (`profile/reports/<job>.<source>.loop.json`).
     - Live-checked on DB copies: repost reuse (no model call); a 3-job batch through the queue
       and the laptop worker (fetch 47 matched, 3 parsed and scored).
-- Tests: 126 TypeScript (`npm test`) plus Go (jd-search, and `queue/` with 8 store cases);
-  `check.sh` runs both Go modules.
+    - First real batches (user, 2026-11-03): 2 x 3 jobs fetched, parsed, scored, no failures; all
+      not_tailored (16-57). Showed loose title matching, so:
+    - Search filters (`search-filters`): seniority.include required (level III/3 counts; roles
+      with `any_level` exempt), `title_filter` languages (my_languages / other_languages), INR pay
+      below compensation.min skipped (keep_if_unlisted keeps posts without a salary). Stored jobs
+      are re-checked before every batch (`jd-search check` -> table `job_filter`, `batch status`
+      shows `skipped`): on the real data 44 of 121 candidates pass. preferences.yaml: Staff and
+      Solutions roles dropped (user). LeetCode Discuss left out (its terms forbid scraping).
+- Tests: 126 TypeScript (`npm test`) plus Go (jd-search filter cases; `queue/` store,
+  preference-check and an end-to-end `jd-search check` test); `check.sh` runs both Go modules.
 - Product models (llama.cpp): general7 (JD parse, judge; 3 slots) on the laptop, started by
   hand with `C:\llama\start-server.cmd` (never an auto-start task); general14 (bank build,
   rewording; 3 slots, -kvu) on the Mac via `.claude/bin/llm.sh`. Never load general7 on the
@@ -56,15 +65,16 @@ coder-gates tooling (`tooling/coder-gates`). How to run it: `RUNBOOK-M5.md`.
 
 ## Where to start next
 
-- Milestone 5 close-out: the first real `batch start` is the user's (batches start only by hand;
-  RUNBOOK-M5.md "Run a batch"). Graph not updated since 2026-11-01 (graphify --update, ask first).
+- Next: Milestone 6 (README: contact search and outreach). Batches start only by hand
+  (`batch start`); restart the queue server after pulling the search filters.
+- Leftover branches `mini/m5-h1-key-message`, `mini/m5-i4-parse-wiring`: old mini-runner
+  attempts, pushed but never merged (never delete branches).
 - Coder tooling (2026-11-03, `tooling/coder-gates`, AGENTS.md rule 7): ready.sh before dispatch,
   complexity route (patch runner for edits, aider for new files, refuses subsystems/multi-file),
   context bundle, 7-check edit gate, failure classes, one fix round for EDIT_FAILURE only, lessons
   observation -> hypothesis -> verified. Measured: TS edits 0/2 -> 1/2 passed, 15.4 -> ~3 min;
   Go new files still fail (unused imports, NULL columns); the user chose to keep the design as is,
   so keep Go tasks small or write them as manager.
-- Then Milestone 6 (README: contact search and outreach).
 - Waiting on the user:
   - lint items in their bank: profile links are labels not URLs, level digits
     in two titles ("II" parses better), a planned-work bullet, repeated opening verb.

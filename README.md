@@ -303,7 +303,7 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Validate structured responses: schema-forced output, Zod validation, one retry that names the failing fields.
 - Handle timeouts, malformed output, and model unavailability: a preflight check before every model command, batches that stop at the first server failure, and a call log of outcomes and timing.
 
-### Milestone 5 — Background agent workflow (built, 2026-11-03)
+### Milestone 5 — Background agent workflow (done, 2026-11-03)
 
 - Build the Go scheduler/queue; Node workers pull and run its tasks: `queue/` (Go, SQLite tables `queue_batches` and `queue_tasks` in `data/jobops.db`), one queue per stage (fetch, parse, score, tailor). `worker laptop` runs parse and score, `worker mac` runs tailor.
 - Queue evaluation tasks: `batch start [--limit N]` (1–100, default 100) searches the job boards, then takes up to N jobs, newest first, skipping finished ones. Each job moves to its next stage as soon as its task ends; tailor only for reuse or adapt.
@@ -313,7 +313,10 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Split models: JD parse and the judge run on a second machine (general7 on an RTX 3050 laptop, API key, `LLM_GENERAL7_URL` and `LLM_GENERAL7_KEY` in `.env`); the Mac keeps general14 for rewording. Parse and score share the laptop's 3 slots; tailor runs 3 at a time on the Mac.
 - JD prompt v2 (must-have rules, short items, one example) and Qdrant before parsing: a repost of a JD parsed before reuses that parse, and a keyword is renamed to its canonical name only when that name is in the JD (similar and contained, so siblings like PostgreSQL and MySQL never merge).
 - The extension's report loop must raise the score: each round is re-scored by the engine, the loop stops at the first round without a gain (at most 5), the best version stays current, and the chat's `fit_score` is recorded beside the engine score.
-- How to run it: [RUNBOOK-M5.md](RUNBOOK-M5.md).
+- Search filters from `profile/preferences.yaml`: a title needs a role title or alias, a `seniority.include` word or level (III, 3) unless the role has `any_level`, and no `seniority.exclude` word. A title that names a language the user does not work in (`title_filter`) is skipped. A stated INR salary below `compensation.min` is skipped, and posts without one are kept when `keep_if_unlisted` is set. LeetCode Discuss is left out: its terms forbid scraping, so jobs found there go in by hand with `job add <url>`.
+- Stored jobs are checked again before every batch (`jd-search check`), so a job saved by an older search is skipped once the preferences exclude it; `batch status <id>` shows the skips by reason.
+- First real batches: 6 jobs fetched, parsed and scored on the laptop, no failures.
+- How to run it: [RUNBOOK-M5.md](RUNBOOK-M5.md) (`.claude/bin/batch-up.sh` brings everything up).
 
 ### Milestone 6 — Contact search and outreach
 

@@ -1,6 +1,9 @@
 // JobOps command line: node api/src/cli.ts <command>. Prints JSON.
 import "./env.ts";
 import * as t from "./tools.ts";
+import { batch, batches, retryBatch, startBatch } from "./queue/client.ts";
+import { runWorker } from "./queue/worker.ts";
+import { loadPrompt } from "./model/prompts.ts";
 
 const USAGE = `usage: node api/src/cli.ts <command>
   bank build | check | retag | dedupe | approve | status
@@ -23,6 +26,11 @@ const USAGE = `usage: node api/src/cli.ts <command>
   job add <url> [--company <name>] [--force] [--no-render]
                          (fetch one job by its link, then parse, judge, tailor, and render)
   jobs [--q <text>] [--limit N] [--unparsed]
+  batch start [--limit N]   (N 1-100, default 100: fetch new jobs, then parse, score, tailor each)
+  batch status [id]         (all recent batches, or one with its failures)
+  batch retry <id>          (queue that batch's failed tasks again)
+  worker laptop|mac [--concurrency N]
+                         (laptop: parse and score on general7; mac: tailor on general14)
   jd parse <job_id>
   jd parse-all [--limit N]
   score <job_id> [--no-judge]
@@ -100,6 +108,17 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "stats") return t.modelStats({ since: flag(rest, "since") });
       if (!sub) return t.models();
       break;
+    case "batch":
+      if (sub === "start") {
+        const limit = Number(flag(rest, "limit") ?? 100);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("--limit must be 1 to 100");
+        return startBatch(limit, loadPrompt("parse-job-descripton").version);
+      }
+      if (sub === "status") return rest[0] ? batch(Number(rest[0])) : batches();
+      if (sub === "retry") return retryBatch(Number(need(rest[0], "batch id")));
+      break;
+    case "worker":
+      return runWorker(need(sub, "worker group"), { concurrency: flag(rest, "concurrency") ? Number(flag(rest, "concurrency")) : undefined });
     case "job":
       if (sub === "add") {
         return t.jobAdd(t.db(), need(rest[0], "job link"),

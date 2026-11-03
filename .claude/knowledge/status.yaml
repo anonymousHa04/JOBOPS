@@ -3,8 +3,8 @@
 # searched: retrieve.py semantic "what is left for the engine".
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
-updated: 2026-10-28
-branch: dev (milestone-4 merged; milestone-3 and m3-engine merged)
+updated: 2026-11-03
+branch: milestone-5 (from dev; phase A committed, phases H, I, B-F uncommitted for review)
 
 environment:
   - id: env-llama-cpp
@@ -188,4 +188,11 @@ milestone_3:
 milestone_3_done: "2026-10-28: all README M3 items built and tested (81 TS tests + Go); first real adapt record (Okta Core Frontier) passes the three-reader parse-back; merged into dev"
 milestone_4_done: "2026-10-28: model registry (api/config/models.yaml), preflight on every model command, call log + models stats, retry names failing fields; 87 TS tests; merged into dev"
 after_milestone_4: "2026-10-31: Chrome extension report + report loop (5 rounds, local review, fix rounds) merged into dev with milestone-4; 109 TS tests; dev pushed; coder KV stays q8_0"
+milestone_5_built: "2026-11-03 on milestone-5: phase 0 check.sh vets/tests queue/ (on dev); A general7 on the laptop with an API key, reword timeout 120 s (committed b254f72); H JD prompt v2 (laptop keyword overlap with Claude 0.37 -> 0.46) and a key-refused message; I Qdrant repost reuse (152 ms, no model call, live-checked) and canonical keyword names; B Go queue (queue/); C workers; D batch commands and /batches routes; E report loop raises the score (best version kept, fit_score recorded); F tests: 126 TS + 8 Go store cases; live batch on a DB copy: fetch 47 matched, 3 parsed and scored on the laptop. Uncommitted until the user says so."
+milestone_5_notes:
+  - "21 of 25 coder tasks escalated; the manager wrote most of B-F (lessons recorded in fixes.jsonl)"
+  - "aider scrapes http:// URLs in specs (hit the laptop without a key): write host/port/path; add --no-detect-urls to run-coder.sh on a tooling branch"
+  - "autofix.sh reverts any file changed outside the task during a run, new untracked files included"
+  - "after a restart: start Docker (Qdrant) before coder runs, or run-coder.sh stops with 'coder window gone'"
+  - "extension does not report round 5 (grader requires round < 5); only the chat's round-5 score is lost"
 decisions_needed: []

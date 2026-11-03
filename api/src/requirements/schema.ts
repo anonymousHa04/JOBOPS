@@ -18,7 +18,9 @@ export const StoredRequirementsSchema = RequirementsSchema.extend({
   model: z.string(),
   prompt_version: z.string(),
   created_at: z.string(),
-  dropped_keywords: z.array(z.string())
+  dropped_keywords: z.array(z.string()),
+  reused_from: z.string().optional(),
+  renamed_keywords: z.record(z.string(), z.string()).optional()
 });
 
 export type Requirements = z.infer<typeof RequirementsSchema>;

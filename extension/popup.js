@@ -90,7 +90,18 @@ function showStatus(status) {
     let statusText = '';
     if (status.round) {
         if (status.step === 'done') {
-            statusText = `Done after ${status.round} attempts; ${status.needs_facts} gaps need your facts`;
+            if (status.scores) {
+              const engineScores = status.scores.join(' → ');
+              const chatScores = status.chat.map(s => (typeof s === "number" ? s : "–")).join(" → ");
+              const stoppedText = {
+                no_gain: "no gain",
+                round_limit: "5 rounds",
+                error: "error"
+              }[status.stopped] || "–";
+              statusText = `Done after ${status.round} attempts. Engine score: ${engineScores} (best ${status.best}). Chat: ${chatScores}. Stopped: ${stoppedText}. ${status.needs_facts} gaps need your facts`;
+            } else {
+              statusText = `Done after ${status.round} attempts; ${status.needs_facts} gaps need your facts`;
+            }
         } else {
             statusText = `Attempt ${status.round}/5: ${status.step}`;
         }

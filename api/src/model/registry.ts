@@ -74,14 +74,11 @@ function isRemoteUrl(url: string): boolean {
   return hostname !== "127.0.0.1" && hostname !== "localhost" && hostname !== "::1";
 }
 
-export async function modelUp(task: Task): Promise<{ up: boolean; spec: TaskSpec }> {
+export async function modelUp(task: Task): Promise<{ up: boolean; spec: TaskSpec; status?: number }> {
   const spec = forTask(task);
   try {
-    const r = await fetch(`${spec.url}/models`, { 
-      signal: AbortSignal.timeout(3000),
-      headers: authHeaders(spec)
-    });
-    return { up: r.ok, spec };
+    const r = await fetch(`${spec.url}/models`, { signal: AbortSignal.timeout(3000), headers: authHeaders(spec) });
+    return { up: r.ok, spec, status: r.status };
   } catch {
     return { up: false, spec };
   }
@@ -97,8 +94,11 @@ export const switchCommands = (spec: TaskSpec) => {
 
 export class ModelDownError extends Error {
   readonly spec: TaskSpec;
-  constructor(spec: TaskSpec, why = "") {
-    if (spec.remoteStart) {
+  constructor(spec: TaskSpec, why = "", status?: number) {
+    // 401/403: the server runs but refused the key; restarting it would not help.
+    if (status === 401 || status === 403) {
+      super(`${spec.model} (${spec.task}) refused the API key (status ${status}). Set ${spec.apiKeyEnv ?? "its key"} in .env.`);
+    } else if (spec.remoteStart) {
       super(`${spec.model} (${spec.task}) is not running${why ? `: ${why}` : ""}. Start it with: ${spec.remoteStart}`);
     } else {
       super(`${spec.model} (${spec.task}) is not running${why ? `: ${why}` : ""}. Switch to it with: ${switchCommands(spec).join(" && ")}`);
@@ -109,8 +109,8 @@ export class ModelDownError extends Error {
 
 // Preflight: throws ModelDownError before a command starts work it cannot finish.
 export async function ensureModel(task: Task, why = ""): Promise<TaskSpec> {
-  const { up, spec } = await modelUp(task);
-  if (!up) throw new ModelDownError(spec, why);
+  const { up, spec, status } = await modelUp(task);
+  if (!up) throw new ModelDownError(spec, why, status);
   return spec;
 }
 

@@ -3,7 +3,8 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-10-31, Milestone 4 closed (milestone-4 merged into dev, dev pushed).
+Last updated: 2026-11-03, Milestone 5 built on `milestone-5` (phase A committed; phases H, I, B-F
+uncommitted for the user's review). How to run it: `RUNBOOK-M5.md`.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -31,13 +32,37 @@ Last updated: 2026-10-31, Milestone 4 closed (milestone-4 merged into dev, dev p
     bullets through the guard, up to 5 rounds in the same chat (POST /x/fix; round 5 stops).
   - First real tailored resume: Okta Senior Software Engineer (Core Frontier),
     adapt, 77.5; its PDF passes all three readers.
-- Tests: 109 TypeScript (`npm test`) plus Go (`cd jd-search && go test ./...`).
-- Product models (llama.cpp, `.claude/bin/llm.sh`): general7 (JD parse, judge;
-  3 slots), general14 (bank build, rewording). One heavy model at a time.
+  - **Milestone 5: background agent workflow** (plan `.claude/specs/plan-milestone-5.md`, order
+    0, A, H, I, B, C, D, E, F, G):
+    - general7 runs on the Lenovo laptop (RTX 3050, http://10.10.10.1:8084/v1, API key); the Mac
+      keeps general14. `LLM_GENERAL7_URL` and `LLM_GENERAL7_KEY` in `.env`; a remote model's
+      preflight says to start `C:\llama\start-server.cmd`; a refused key names the setting.
+    - JD prompt v2 (laptop keyword overlap with Claude 0.37 -> 0.46 on 6 JDs).
+    - Qdrant before parsing (optional, QDRANT_URL): reposts reuse the earlier parse (candidates
+      from chunk vectors, confirmed by full-text overlap >= 0.9); keywords get canonical names
+      only when the name is in the JD and similar-and-contained.
+    - Go queue `queue/` (SQLite, one queue per stage, leases, retries, group limits), Node
+      workers (`worker laptop|mac`), `batch start|status|retry`, `/batches` routes.
+    - Report loop raises the score: engine re-score per round, stop on no gain, best kept,
+      chat `fit_score` recorded (`profile/reports/<job>.<source>.loop.json`).
+    - Live-checked on DB copies: repost reuse (no model call); a 3-job batch through the queue
+      and the laptop worker (fetch 47 matched, 3 parsed and scored).
+- Tests: 126 TypeScript (`npm test`) plus Go (jd-search, and `queue/` with 8 store cases);
+  `check.sh` runs both Go modules.
+- Product models (llama.cpp): general7 (JD parse, judge; 3 slots) on the laptop, started by
+  hand with `C:\llama\start-server.cmd` (never an auto-start task); general14 (bank build,
+  rewording; 3 slots, -kvu) on the Mac via `.claude/bin/llm.sh`. Never load general7 on the
+  Mac next to general14.
 
 ## Where to start next
 
-- Milestone 5 (README: background agent workflow). Ask the user what they want first.
+- Milestone 5 close-out, waiting on the user:
+  - review and commit phases H, I, B-F on `milestone-5` (phase A is b254f72), then merge
+    milestone-5 into dev; never touch main;
+  - the first real `batch start` is the user's (batches start only by hand);
+  - tooling branch from dev: add aider `--no-detect-urls` to `run-coder.sh`; commit the new
+    lessons in `.claude/knowledge/fixes.jsonl`.
+- Then Milestone 6 (README: contact search and outreach).
 - Waiting on the user:
   - lint items in their bank: profile links are labels not URLs, level digits
     in two titles ("II" parses better), a planned-work bullet, repeated opening verb.
@@ -96,3 +121,12 @@ Last updated: 2026-10-31, Milestone 4 closed (milestone-4 merged into dev, dev p
 - A 14B fix round once hung for an hour with no output; the 20-minute timeout
   now stops that.
 - Specs must not contain triple-backtick fences (breaks aider's edit parsing).
+- Specs must not contain full http:// URLs: aider scrapes them (in M5 it hit the laptop
+  without a key). Write "host H port P path X".
+- Milestone 5: 21 of 25 coder tasks escalated (no edit, Go redeclarations, made-up imports, a
+  wiped file); the manager wrote most of B-F. `feedback.py stats` shows it.
+- `autofix.sh` reverts every file changed outside the task during a run, new untracked
+  files included: write nothing in the repo while a coder runs.
+- After a restart, start Docker (Qdrant) before coder runs; without it `run-coder.sh`
+  stops and the log misleadingly says "coder window gone". Keep the `jobops` tmux session
+  alive from a foreground command (a background task's tmux server dies with it).

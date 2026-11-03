@@ -10,6 +10,13 @@ id as soon as the chat exists; later reports for the same job go back to that ch
 follow-up instead: "Attempt N: Based on your input, I made changes to my resume. Please have a
 look.", with the bullet ids that changed and the updated resume.
 
+The report loop must raise the score. After each report, JobOps reviews it locally and runs a fix
+round (re-selects or rewords bullets through the guard), then the engine scores the new version.
+The loop stops at the first round that does not raise the engine score, after at most 5 rounds,
+and the best version stays the job's current resume. The popup shows the engine score per round,
+the chat's `fit_score`, why the loop stopped, and how many gaps need your facts. The per-round
+record is in profile/reports/<job>.<source>.loop.json.
+
 ## Install
 1. Go to chrome://extensions.
 2. Turn on Developer mode.

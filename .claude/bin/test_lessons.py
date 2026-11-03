@@ -19,7 +19,9 @@ sys.path.insert(0, HERE)
 import feedback  # noqa: E402  (reads FEEDBACK_FIXES at import)
 
 # A lesson shaped like param-after-opts (TS2353), and its near-miss look-alike.
-PARAM = {"id": "param-after-opts", "status": "observed", "title": "New optional parameters go after existing ones",
+# A hypothesis: root cause, corrective action (resolution) and a repro test, so it may be supplied.
+PARAM = {"id": "param-after-opts", "status": "hypothesis", "title": "New optional parameters go after existing ones",
+         "root_cause": "the coder inserted the new parameter before opts", "repro_test": "tailor.test.ts notes case",
          "signature": "TS2353: Object literal may only specify known properties", "terms": ["parameter", "opts", "baseUrl"],
          "files": ["api/src/tailor/*.ts"], "not_when": r"z\.(object|string)\(|Schema\b", "resolution": "append after opts"}
 
@@ -31,6 +33,17 @@ def write_fixes(*rows):
 
 
 class Matching(unittest.TestCase):
+    def test_an_observation_is_never_supplied(self):
+        # Promotion rule (user, 2026-11-03): a manual fix alone does not make a reusable instruction.
+        write_fixes(dict(PARAM, status="observation"))
+        errs = "api/src/tailor/tailor.ts(125): error TS2353: Object literal may only specify known properties, and 'baseUrl' does not exist"
+        self.assertEqual(feedback.matching_fixes(errs, ["api/src/tailor/reword.ts"], "add an optional notes parameter to rewordContent"), [])
+
+    def test_a_hypothesis_without_a_repro_test_is_not_supplied(self):
+        write_fixes(dict(PARAM, repro_test=""))
+        errs = "api/src/tailor/tailor.ts(125): error TS2353: Object literal may only specify known properties, and 'baseUrl' does not exist"
+        self.assertEqual(feedback.matching_fixes(errs, ["api/src/tailor/reword.ts"], "add an optional notes parameter to rewordContent"), [])
+
     def test_signature_and_task_fit_is_supplied_with_reasons(self):
         write_fixes(PARAM)
         errs = "api/src/tailor/tailor.ts(125): error TS2353: Object literal may only specify known properties, and 'baseUrl' does not exist"
@@ -90,9 +103,11 @@ class Demotion(unittest.TestCase):
 
 class EndToEnd(unittest.TestCase):
     """A lesson is retrieved for the repair round, supplied in its spec, followed by the (fake)
-    coder, validated by check.sh, and the pass reaches _promote: observed -> verified."""
+    coder, validated by check.sh, and the pass reaches _promote: hypothesis -> verified.
+    FIX_CLASSES=all: by default only edit failures get a fix round; this exercises the lesson path."""
     FILE = "api/src/selftest-lesson.ts"
-    LESSON = {"id": "e2e-number-literal", "status": "observed", "title": "E2E: a number field takes a number literal",
+    LESSON = {"id": "e2e-number-literal", "status": "hypothesis", "title": "E2E: a number field takes a number literal",
+              "repro_test": "selftest-lesson.ts with a string literal",
               "signature": "TS2322: Type 'string' is not assignable to type 'number'", "terms": ["selftest"],
               "files": ["api/src/selftest-*.ts"], "resolution": "E2E-LESSON: write the number 1, not the string",
               "root_cause": "test lesson"}
@@ -106,7 +121,7 @@ class EndToEnd(unittest.TestCase):
         # The fake coder follows the lesson only if its resolution is in the repair spec.
         fix = ("grep -q E2E-LESSON .agent-logs/%s-fix1.spec.md && printf 'export const x: number = 1;\\n' > %s || %s"
                % (task, self.FILE, bad))
-        env = dict(os.environ, FIRST_RUNNER="fake", FIX_RUNNER="fake", MAX_FIXES="1", CODER_TIMEOUT="60",
+        env = dict(os.environ, FIRST_RUNNER="fake", FIX_RUNNER="fake", MAX_FIXES="1", CODER_TIMEOUT="60", FIX_CLASSES="all",
                    FEEDBACK_SELF_REVIEW="0", FAKE_ACTION=bad, FAKE_ACTION_FIX=fix)
         r = subprocess.run([os.path.join(HERE, "autofix.sh"), task, spec, self.FILE], cwd=ROOT,
                            capture_output=True, text=True, env=env, timeout=600)
@@ -119,7 +134,8 @@ class EndToEnd(unittest.TestCase):
         logs = os.path.join(ROOT, ".agent-logs")
         for f in os.listdir(logs):
             if f.startswith("e2e-lesson"):
-                os.remove(os.path.join(logs, f))
+                p = os.path.join(logs, f)
+                shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)  # <attempt>.orig/ is a folder
 
     def test_lesson_is_supplied_followed_validated_and_promoted(self):
         r, atts, fx = self.run_autofix("e2e-lesson-use", self.LESSON)
@@ -139,7 +155,7 @@ class EndToEnd(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual([a["verdict"] for a in atts], ["failed", "failed"])
         self.assertEqual(atts[1]["fixes_supplied"], [])
-        self.assertEqual(fx["status"], "observed")
+        self.assertEqual(fx["status"], "hypothesis")
         self.assertNotIn("applications", fx)
 
 

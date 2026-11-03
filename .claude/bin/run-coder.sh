@@ -112,6 +112,12 @@ else
   echo off > "$logs/$task.context.status"
 fi
 
+# Dependency context bundle (pipeline.py prepare writes it): allowed dependencies, the names that
+# already exist in the target's package, and the signatures of names the spec mentions.
+bundle_read=""
+[ -f "$logs/$task.bundle.md" ] || cp "$logs/${task%-fix*}.bundle.md" "$logs/$task.bundle.md" 2>/dev/null
+[ -f "$logs/$task.bundle.md" ] && bundle_read="--read $logs/$task.bundle.md"
+
 if ! tmux has-session -t jobops 2>/dev/null; then
   tmux new-session -d -s jobops -n status -c "$root" \
     "while true; do clear; date; echo; '$bin/llm.sh' status; echo; git -C '$root' status --short; sleep 5; done"
@@ -120,11 +126,11 @@ fi
 tmux new-window -t jobops -n "$task" -c "$root" \
   "{ echo 'KNOWLEDGE: context $(cat "$logs/$task.context.status")'; \
      OPENAI_API_BASE='http://127.0.0.1:$port/v1' OPENAI_API_KEY=local \
-     aider --model '$model' --edit-format '$edit_format' --no-auto-commits --yes-always --no-suggest-shell-commands \
+     aider --model '$model' --edit-format '$edit_format' --no-auto-commits --yes-always --no-suggest-shell-commands --no-detect-urls \
      --no-check-update --no-analytics --no-show-model-warnings --no-gitignore \
      --model-settings-file '$settings' --model-metadata-file '$agents/aider.model.metadata.json' \
      --aiderignore '$ignore' --map-tokens 0 --max-chat-history-tokens ${CODER_HISTORY_TOKENS:-2500} \
-     $context_read \
+     $context_read $bundle_read \
      $lint_flags \
      --message-file '$spec' $*; echo \$? > '.agent-logs/$task.exit'; } 2>&1 | tee '.agent-logs/$task.log'; \
    grep -q 'Applied edit' '.agent-logs/$task.log' || echo 'RUN-CODER: NO EDIT APPLIED' | tee -a '.agent-logs/$task.log'; \

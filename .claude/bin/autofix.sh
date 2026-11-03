@@ -3,17 +3,19 @@
 # §3 and §6). Prints only the final check report.
 # Usage: autofix.sh <task> <spec-file> <file-to-edit>...
 #
-# Every attempt is judged on evidence, never on log text (Phase 0):
-#   coder exit status (.agent-logs/<attempt>.exit; missing = unknown),
-#   timeout (CODER_TIMEOUT seconds, default 1200),
-#   change boundary (files changed outside the task's files fail the attempt),
-#   check.sh (exit status of typecheck, tests, Go).
-# Feedback loop (Phase 3, feedback.py):
-#   each attempt is recorded with its failure category, failure signature, and
-#   the agent's own claim; a repair round is a fresh session with only the new
-#   evidence (errors, hints, matching known fixes), never the same prompt again;
-#   it stops on a repeated failure signature, an environment/validation/context
-#   failure, a timeout, or MAX_FIXES (default 2, user 2026-10-29), and writes an escalation record.
+# The single entry point for a coder task (2026-11-03): one series of steps, the orchestrator
+# decides every outcome, never the model.
+#   1. ready.sh: environment ready? Otherwise nothing is dispatched (INFRA_FAILURE, exit 3).
+#   2. pipeline.py prepare: complexity route and context bundle. A refused task (new subsystem,
+#      cross-language without a contract, multi-file edit, new dependency) exits 2 (SPEC_FAILURE).
+#   3. runner: patch runner for edits to existing files (search/replace, checked and applied by the
+#      controller), aider for new files. FIRST_RUNNER overrides (aider|patch|mini|fake).
+#   4. pipeline.py verify: edit gate (files changed, diff not empty, expect: tokens, scope, no large
+#      deletion, syntax, dependencies exist). A failed gate skips check.sh.
+#   5. check.sh: typecheck, tests, Go.
+# Every attempt gets a failure class (EDIT, CODE, CONTEXT, DEPENDENCY, INFRA, TEST, SPEC_FAILURE).
+# Fix rounds: only for an EDIT_FAILURE, at most MAX_FIXES (default 1, user 2026-11-03: fix rounds
+# passed 4 of 39 times); every other class escalates at once.
 # Result: .agent-logs/<task>.result.json (+ <task>.escalation.json when not passed);
 #   one line per task in the main repo's .agent-logs/outcomes.jsonl.
 # Exit 0 = passed, 1 = anything else (the manager takes over).
@@ -23,7 +25,7 @@ task=$1; spec=$2; shift 2
 bin=$(cd "$(dirname "$0")" && pwd)
 cd "$(git rev-parse --show-toplevel)"
 mkdir -p .agent-logs
-max=${MAX_FIXES:-2}
+max=${MAX_FIXES:-1}
 limit=${CODER_TIMEOUT:-1200}
 attempts=".agent-logs/$task.attempts.jsonl"
 : > "$attempts"
@@ -37,14 +39,28 @@ stage() {
   printf '{"at":"%s","task":"%s","stage":"%s","detail":"%s"}\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$task" "$stage_name" \
     "$(printf '%s' "$*" | tr '"\\\n' "'/ " | cut -c1-300)" >> .agent-logs/stages.jsonl
 }
-stage start "files: $* max_fixes: ${MAX_FIXES:-2} runner: ${FIRST_RUNNER:-auto} test_cmd: ${TEST_CMD:-npm test}"
+stage start "files: $* max_fixes: $max runner: ${FIRST_RUNNER:-auto} test_cmd: ${TEST_CMD:-npm test}"
 
-# Runner per task: aider writes new files and does repair rounds (FIX_RUNNER);
-# mini-swe-agent edits existing files; "fake" is the self-test stand-in.
-runner_for() { # <files...>
-  for f in "$@"; do [ -s "$f" ] || { echo aider; return; }; done
-  echo mini
+# Ends the task without a coder attempt: not ready (INFRA_FAILURE) or refused (SPEC_FAILURE).
+# Nothing is recorded against the coder.
+stop_before() { # <class> <exit> <reason>
+  printf '{"task":"%s","status":"not_dispatched","class":"%s","reason":"%s","at":"%s"}\n' "$task" "$1" \
+    "$(printf '%s' "$3" | tr '"\\\n' "'/ " | cut -c1-300)" "$(date +%Y-%m-%dT%H:%M:%S)" | tee ".agent-logs/$task.result.json" >> .agent-logs/outcomes.jsonl
+  stage not_dispatched "$1: $3"
+  echo "NOT DISPATCHED ($task): $1: $3"
+  exit "$2"
 }
+
+# 1. Readiness (the self-test's fake runner needs no servers).
+if [ "${FIRST_RUNNER:-}" != fake ] && [ "${SKIP_READY:-0}" != 1 ]; then
+  ready=$("$bin/ready.sh" 2>&1) || stop_before INFRA_FAILURE 3 "$(printf '%s\n' "$ready" | tail -1)"
+fi
+# 2. Route and context bundle.
+prep=$(python3 "$bin/pipeline.py" prepare "$task" "$spec" "$@"); prep_rc=$?
+stage prepare "$(printf '%s' "$prep" | tr '\n' ' ')"
+[ "$prep_rc" = 2 ] && [ -z "${FIRST_RUNNER:-}" ] && stop_before SPEC_FAILURE 2 "task refused: $(printf '%s\n' "$prep" | sed -n 's/^PREP note: //p' | head -1)"
+routed=$(printf '%s\n' "$prep" | sed -n 's/^PREP route=[^ ]* runner=\([a-z]*\).*/\1/p')
+[ "$routed" = refused ] && routed=aider
 
 # run <runner> <attempt> <spec> <files...>
 # Sets: run_exit (coder exit status or "unknown"), run_timed_out (0/1).
@@ -53,6 +69,8 @@ run() {
   rm -f ".agent-logs/$t.done" ".agent-logs/$t.exit"
   date +%s > ".agent-logs/$t.started"  # attempt timing (feedback.py attempt reads it)
   case "$r" in
+    patch) cp ".agent-logs/$task.bundle.md" ".agent-logs/$t.bundle.md" 2>/dev/null
+           "$bin/run-patch.sh" "$t" "$s" "$@" > /dev/null ;;
     mini) "$bin/run-mini.sh" "$t" "$s" "$@" > /dev/null ;;
     fake) "$bin/run-fake.sh" "$t" "$s" "$@" > /dev/null ;;
     *)    "$bin/run-coder.sh" "$t" "$s" "$@" > /dev/null ;;
@@ -70,7 +88,7 @@ run() {
     fi
     # aider runs in tmux window jobops:<attempt>; if that window is gone with no .done, the coder
     # never started or died (2026-10-30: autofix slept 10 min after a reboot, no aider running).
-    if [ "$r" = aider ] && [ $((waited % 15)) -eq 14 ] && ! tmux list-windows -t jobops -F '#W' 2>/dev/null | grep -qx "$t"; then
+    if { [ "$r" = aider ] || [ "$r" = patch ]; } && [ $((waited % 15)) -eq 14 ] && ! tmux list-windows -t jobops -F '#W' 2>/dev/null | grep -qx "$t"; then
       [ -f ".agent-logs/$t.done" ] && break
       echo "RUN-CODER: CODER WINDOW GONE (aider not running, no .done after ${waited}s)" | tee -a ".agent-logs/$t.log" >&2
       echo 1 > ".agent-logs/$t.exit"; touch ".agent-logs/$t.done"
@@ -85,6 +103,9 @@ run() {
 attempt() {
   r=$1; a=$2; s=$3; shift 3
   "$bin/tree-snapshot.sh" snap ".agent-logs/$a.before.json"
+  # Each target as it was before the attempt, for the edit gate.
+  rm -rf ".agent-logs/$a.orig"
+  for f in "$@"; do [ -f "$f" ] && mkdir -p ".agent-logs/$a.orig/$(dirname "$f")" && cp "$f" ".agent-logs/$a.orig/$f"; done
   stage coder_start "attempt $a runner $r spec $s"
   run "$r" "$a" "$s" "$@"
   stage coder_end "attempt $a exit $run_exit timed_out $run_timed_out"
@@ -103,6 +124,22 @@ attempt() {
 Last log lines (.agent-logs/$a.log):
 $(grep -v '^[[:space:]]*$' ".agent-logs/$a.log" 2>/dev/null | tail -8)"
     feedback attempt "$a" "$r" "$verdict" "$why" 1 -- "$@" > /dev/null
+    return
+  fi
+
+  # Edit gate: the orchestrator decides whether a real, in-scope edit happened.
+  gate_report=$(OUTSIDE="$outside" python3 "$bin/pipeline.py" verify "$a" "$s" ".agent-logs/$a.orig" "$@"); gate_rc=$?
+  gate=passed; [ "$gate_rc" -ne 0 ] && gate=failed
+  gate_class=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("class") or "")' ".agent-logs/$a.gate.json" 2>/dev/null)
+  stage gate "attempt $a $gate${gate_class:+ ($gate_class)}: $(printf '%s\n' "$gate_report" | grep 'GATE FAILED' | cut -c13- | tr '\n' ';')"
+
+  if [ "$gate" = failed ]; then
+    report="RESULT: FAIL ($a): edit gate
+$(printf '%s\n' "$gate_report" | grep -E 'GATE (FAILED|RESULT)')
+$(grep -hE 'RUN-(CODER|MINI|PATCH):' ".agent-logs/$a.log" 2>/dev/null | head -3)"
+    verdict=failed; why="edit gate: $(printf '%s\n' "$gate_report" | grep -m1 'GATE FAILED' | cut -c14- | cut -c1-200)"
+    FAILURE_CLASS=$gate_class feedback attempt "$a" "$r" "$verdict" "$why" 0 -- "$@" > /dev/null
+    stage verdict "attempt $a $verdict ($gate_class): $why"
     return
   fi
 
@@ -134,7 +171,8 @@ RESULT: $verdict ($a): $why"
   stage verdict "attempt $a $verdict${why:+: $why}"
 }
 
-attempt "${FIRST_RUNNER:-$(runner_for "$@")}" "$task" "$spec" "$@"
+first_runner=${FIRST_RUNNER:-$routed}
+attempt "$first_runner" "$task" "$spec" "$@"
 round=0
 while :; do
   if [ "$verdict" = passed ]; then
@@ -146,6 +184,12 @@ while :; do
     exit 0
   fi
   next=$(feedback decide "$task" "$max")
+  # Only an edit failure gets a fix round (the gate's reason goes into the next spec); every
+  # other class escalates at once.
+  last_class=$(tail -1 "$attempts" | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("failure_class") or "")' 2>/dev/null)
+  # FIX_CLASSES (default EDIT_FAILURE; "all" for every class) is for the tooling self-tests.
+  case "$next" in escalate*) ;; *)
+    case " ${FIX_CLASSES:-EDIT_FAILURE} " in *" all "*|*" $last_class "*) ;; *) next="escalate: $last_class (only edit failures get a fix round)" ;; esac ;; esac
   case "$next" in
     escalate*)
       why_stop=${next#escalate: }
@@ -163,5 +207,10 @@ while :; do
   stage repair_spec "fix round $round of $max from $prev"
   feedback repair-spec "$task" "$prev" "$spec" "$fix_spec" -- "$@" > /dev/null
   stage lessons "fix round $round: $(cat ".agent-logs/$current.fixes-supplied.json" 2>/dev/null || echo none)"
-  attempt "${FIX_RUNNER:-aider}" "$current" "$fix_spec" "$@"
+  # Same runner as the first attempt; the gate's findings lead the repair spec.
+  { echo "## Your previous attempt was rejected by the edit gate"
+    grep -E 'GATE FAILED|RUN-PATCH' ".agent-logs/$prev.gate.json" ".agent-logs/$prev.log" 2>/dev/null | sed 's/^[^:]*://' | head -6
+    python3 -c 'import json,sys; [print("- " + c["check"] + ": " + c["detail"]) for c in json.load(open(sys.argv[1]))["checks"] if c["status"] == "failed"]' ".agent-logs/$prev.gate.json" 2>/dev/null
+    echo; cat "$fix_spec"; } > "$fix_spec.tmp" && mv "$fix_spec.tmp" "$fix_spec"
+  attempt "${FIX_RUNNER:-$first_runner}" "$current" "$fix_spec" "$@"
 done

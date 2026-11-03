@@ -20,7 +20,7 @@ cd "$wt"
 
 mkdir -p .agent-logs/main
 # A throwaway fix record for the promotion check (the real fixes.jsonl is never touched).
-printf '%s\n' '{"id":"st-string-to-number","status":"observed","title":"Self-test: string assigned to number","signature":"TS2322: Type .string. is not assignable to type .number.","terms":[],"files":["api/src/selftest.ts"],"resolution":"Use a number literal.","evidence":"self-test seed"}' > .agent-logs/fixes.jsonl
+printf '%s\n' '{"id":"st-string-to-number","status":"hypothesis","root_cause":"self-test seed","repro_test":"selftest.ts with a string literal","title":"Self-test: string assigned to number","signature":"TS2322: Type .string. is not assignable to type .number.","terms":[],"files":["api/src/selftest.ts"],"resolution":"Use a number literal.","evidence":"self-test seed"}' > .agent-logs/fixes.jsonl
 ok=0; bad=0
 reset() { git checkout -q -- . && git clean -fdq -e node_modules -e .agent-logs; }
 
@@ -64,9 +64,12 @@ scenario no-test-summary  failed    "$F" TEST_CMD="echo nothing" FAKE_ACTION="pr
 BAD="printf 'export const x: number = \"a\";\n' > $F"
 GOOD="printf 'export const x = 1;\n' > $F"
 OTHER="printf 'export const x: boolean = 3;\n' > $F"
-scenario repair-succeeds  passed    "$F" MAX_FIXES=1 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$GOOD"
-scenario repeated-failure failed    "$F" MAX_FIXES=3 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$BAD"
-scenario retry-limit      failed    "$F" MAX_FIXES=1 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$OTHER"
+# Default policy (user, 2026-11-03): a code failure escalates at once, with no fix round.
+scenario code-escalates   failed    "$F" MAX_FIXES=1 FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$GOOD"
+# The repair-round machinery itself, with fix rounds allowed for every class (FIX_CLASSES=all).
+scenario repair-succeeds  passed    "$F" MAX_FIXES=1 FIX_CLASSES=all FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$GOOD"
+scenario repeated-failure failed    "$F" MAX_FIXES=3 FIX_CLASSES=all FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$BAD"
+scenario retry-limit      failed    "$F" MAX_FIXES=1 FIX_CLASSES=all FAKE_ACTION="$BAD" FAKE_ACTION_FIX="$OTHER"
 
 # Evidence checks over the recorded results (categories, stop reasons,
 # escalation records, fix promotion, outcome log).
@@ -76,6 +79,9 @@ L = ".agent-logs"
 def res(n): return json.load(open(os.path.join(L, "st-%s.result.json" % n)))
 def check(name, cond, detail=""):
     print(("OK    " if cond else "WRONG ") + name + (": " + detail if detail else ""))
+r = res("code-escalates")
+check("code failure escalates at once (1 attempt, CODE_FAILURE)", r["attempts_count"] == 1 and r.get("failure_class") == "CODE_FAILURE"
+      and "only edit failures" in (r["reason"] or ""), "%s %s" % (r.get("failure_class"), r["reason"]))
 r = res("repair-succeeds")
 check("repair: 2 attempts, first failed, second passed", r["attempts_count"] == 2 and not r["first_attempt_passed"])
 check("repair: round 2 was a fresh repair with the matching fix", r["attempts"][1]["strategy"].startswith("repair") and "st-string-to-number" in r["attempts"][1]["fixes_supplied"])
@@ -88,9 +94,12 @@ check("fix promoted with evidence when it helped", "st-repair-succeeds: supplied
 check("two failed uses demote the fix to hypothesis", fx["status"] == "hypothesis" and fx.get("applications") == {"supplied": 3, "passed": 1, "failed": 2}, "%s %s" % (fx["status"], fx.get("applications")))
 check("no escalation record for a passed task", r["escalation"] is None and not os.path.exists(os.path.join(L, "st-repair-succeeds.escalation.json")))
 r = res("repeated-failure")
-check("repeated signature stops early (2 of 4 allowed attempts)", r["attempts_count"] == 2 and "repeated failure signature" in (r["reason"] or ""), r["reason"])
+# The fake fix writes the same bad file again: the edit gate calls that "no edit" (2026-11-03), and the
+# repeated no-edit signature stops the task one attempt later (3 of 4 allowed).
+check("repeated signature stops early (3 of 4 allowed attempts)", r["attempts_count"] == 3 and "repeated failure signature" in (r["reason"] or ""), "%s: %s" % (r["attempts_count"], r["reason"]))
 e = json.load(open(os.path.join(L, "st-repeated-failure.escalation.json")))
-check("escalation record: category, what was tried, next owner", e["category"] == "incorrect_implementation" and len(e["what_was_tried"]) == 2 and e["next_owner"])
+check("escalation record: category, class, what was tried, next owner", e["category"] == "model_limitation" and e.get("failure_class") == "EDIT_FAILURE"
+      and len(e["what_was_tried"]) == 3 and e["next_owner"], "%s %s %d" % (e["category"], e.get("failure_class"), len(e["what_was_tried"])))
 r = res("retry-limit")
 check("different failure stops at the retry limit", r["attempts_count"] == 2 and "retry limit" in (r["reason"] or ""), r["reason"])
 cat = {n: res(n)["category"] for n in ("type-error", "outside-boundary", "timeout", "no-change", "tsc-silent-crash", "no-test-summary", "exit-unknown", "failing-test")}
@@ -101,7 +110,7 @@ check("out-of-boundary file reverted before the next attempt", "DELETED api/src/
 check("target written to a wrong path -> environment (tool), not the agent", res("wrong-path")["category"] == "environment", str(res("wrong-path")["category"]))
 check("failure categories (8 scenarios)", cat == want, ", ".join("%s=%s" % kv for kv in cat.items() if want[kv[0]] != kv[1]))
 out = [json.loads(l) for l in open(os.path.join(L, "main", "outcomes.jsonl"))]
-check("outcome log has one line per task", len(out) == 14, "%d lines" % len(out))
+check("outcome log has one line per task", len(out) == 15, "%d lines" % len(out))
 PY
 )
 printf '%s\n' "$checks"

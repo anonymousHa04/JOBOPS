@@ -110,7 +110,7 @@ class CheckExtension(unittest.TestCase):
 class LessonPrecision(unittest.TestCase):
     """T1: the coder edits .claude/knowledge/lesson-terms.json (a small view of the lessons' terms).
     Its terms are merged into a temporary copy of fixes.jsonl, and the eval runs on that copy: recall
-    stays >= 42/46, no forbidden look-alike is supplied, and lesson precision reaches 50%."""
+    stays >= 40/46, no forbidden look-alike is supplied, and lesson precision reaches 50%."""
 
     @classmethod
     def setUpClass(cls):
@@ -128,7 +128,9 @@ class LessonPrecision(unittest.TestCase):
         recall = re.search(r"overall recall: (\d+)/(\d+)", out)
         prec = re.search(r"lesson precision: (\d+)/(\d+) .*forbidden supplied: (\d+)", out)
         self.assertTrue(recall and prec, out[-500:])
-        self.assertGreaterEqual(int(recall.group(1)), 42, "recall dropped below 42/46")
+        # 40, not 42 (2026-11-03): observation lessons are no longer handed to coders (promotion rule),
+        # so two expectations that named observations are withheld on purpose.
+        self.assertGreaterEqual(int(recall.group(1)), 40, "recall dropped below 40/46")
         self.assertEqual(int(prec.group(3)), 0, "a forbidden look-alike lesson was supplied")
         wanted, supplied = int(prec.group(1)), int(prec.group(2))
         self.assertGreaterEqual(wanted / max(1, supplied), 0.5, "lesson precision %d/%d is below 50%%" % (wanted, supplied))

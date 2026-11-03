@@ -52,6 +52,10 @@ Co-Authored-By: $m <$(echo "$m" | tr ':.' '--')@llama-cpp.local>
 Co-Authored-By: llama.cpp <llama-cpp@llama-cpp.local>" -- "$@" && echo "COMMIT: $t $(git rev-parse --short HEAD)"
 }
 
+# Readiness once before the first task: an environment problem stops the plan before any dispatch.
+"$bin/ready.sh" > .agent-logs/ready.txt 2>&1 || { tail -1 .agent-logs/ready.txt; sed -n 's/^\[FAIL\] /  /p' .agent-logs/ready.txt
+  echo "PLAN NOT STARTED: environment not ready (INFRA_FAILURE). Fix it (.claude/bin/ready.sh --fix), then run again."; exit 3; }
+
 started=${start:+0}
 echo "$tasks" | while IFS='|' read -r id files gate; do
   [ -z "$id" ] && continue

@@ -3,8 +3,8 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-03, Milestone 5 built on `milestone-5` (phase A committed; phases H, I, B-F
-uncommitted for the user's review). How to run it: `RUNBOOK-M5.md`.
+Last updated: 2026-11-03, Milestone 5 committed on `milestone-5` and merged into `dev`, with the
+coder-gates tooling (`tooling/coder-gates`). How to run it: `RUNBOOK-M5.md`.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -56,12 +56,14 @@ uncommitted for the user's review). How to run it: `RUNBOOK-M5.md`.
 
 ## Where to start next
 
-- Milestone 5 close-out, waiting on the user:
-  - review and commit phases H, I, B-F on `milestone-5` (phase A is b254f72), then merge
-    milestone-5 into dev; never touch main;
-  - the first real `batch start` is the user's (batches start only by hand);
-  - tooling branch from dev: add aider `--no-detect-urls` to `run-coder.sh`; commit the new
-    lessons in `.claude/knowledge/fixes.jsonl`.
+- Milestone 5 close-out: the first real `batch start` is the user's (batches start only by hand;
+  RUNBOOK-M5.md "Run a batch"). Graph not updated since 2026-11-01 (graphify --update, ask first).
+- Coder tooling (2026-11-03, `tooling/coder-gates`, AGENTS.md rule 7): ready.sh before dispatch,
+  complexity route (patch runner for edits, aider for new files, refuses subsystems/multi-file),
+  context bundle, 7-check edit gate, failure classes, one fix round for EDIT_FAILURE only, lessons
+  observation -> hypothesis -> verified. Measured: TS edits 0/2 -> 1/2 passed, 15.4 -> ~3 min;
+  Go new files still fail (unused imports, NULL columns); the user chose to keep the design as is,
+  so keep Go tasks small or write them as manager.
 - Then Milestone 6 (README: contact search and outreach).
 - Waiting on the user:
   - lint items in their bank: profile links are labels not URLs, level digits

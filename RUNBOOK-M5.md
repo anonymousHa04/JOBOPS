@@ -101,6 +101,10 @@ How a batch runs:
 
 - `batch start` searches the job boards (fetch), then takes up to the limit of jobs, newest first.
   Finished jobs are skipped, so the next batch takes the next jobs.
+- Before it takes jobs, every stored job is checked again against `profile/preferences.yaml`
+  (`jd-search check`: titles, seniority include/exclude, languages, location, pay), so a job saved
+  by an older search is skipped once the preferences exclude it. `batch status <id>` shows
+  `skipped` by reason. Restart the queue server after pulling this change.
 - Each job goes parse -> score -> tailor (only when the decision is reuse or adapt). A job moves to
   its next stage the moment its task finishes.
 - A timeout or a server that does not answer is retried after 30 s and 60 s (3 attempts); invalid

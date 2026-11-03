@@ -39,6 +39,7 @@ type Report struct {
 	Samples     []string          `json:"samples"`
 	// Kept, but the posting names no location; listed so the user can check them.
 	LocationUnknown []string `json:"location_unknown"`
+	PayUnlisted     int      `json:"pay_unlisted"`
 	Errors          []string `json:"errors"`
 }
 
@@ -111,6 +112,9 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 						continue
 					}
 					rep.Matched++
+					if _, found := filter.PayLPA(p.Description); !found {
+						rep.PayUnlisted++
+					}
 					if p.Location == "" && len(rep.LocationUnknown) < maxListed {
 						rep.LocationUnknown = append(rep.LocationUnknown, fmt.Sprintf("%s: %s (%s)", p.Company, p.Title, p.URL))
 					}
@@ -184,6 +188,9 @@ func describe(ctx context.Context, prefs filter.Prefs, p sources.Posting) (sourc
 	if hadLocation || p.Location != "" {
 		ok, reason := filter.Match(prefs, p)
 		return p, ok, reason
+	}
+	if p.Description != "" && !filter.PayOK(prefs, p.Description) {
+		return p, false, "compensation"
 	}
 	return p, true, ""
 }

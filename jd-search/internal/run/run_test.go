@@ -11,10 +11,7 @@ import (
 
 func prefs() filter.Prefs {
 	var p filter.Prefs
-	p.Roles = append(p.Roles, struct {
-		Title   string   `yaml:"title"`
-		Aliases []string `yaml:"aliases"`
-	}{Title: "Senior Software Engineer"})
+	p.Roles = append(p.Roles, filter.Role{Title: "Senior Software Engineer"})
 	p.Location.Cities = []string{"Bengaluru"}
 	p.Location.Onsite = true
 	return p

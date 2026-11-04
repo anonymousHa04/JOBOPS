@@ -26,3 +26,4 @@ bench/**/*.jsonl
 bench/**/*.json
 bench/**/*.csv
 bench/**/*.out
+ui/dist/

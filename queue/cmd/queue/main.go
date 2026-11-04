@@ -49,6 +49,11 @@ func main() {
 	defer stop()
 	go expireLoop(ctx, s)
 	go fetchLoop(ctx, s, fetch.JDSearch(root), fetch.JDCheck(root))
+	if every, err := time.ParseDuration(env("JOBOPS_SWEEP_EVERY", "2m")); err == nil && every > 0 {
+		go sweepLoop(ctx, s, every)
+	} else {
+		log.Printf("sweep: off (JOBOPS_SWEEP_EVERY=%q)", os.Getenv("JOBOPS_SWEEP_EVERY"))
+	}
 
 	srv := &http.Server{Addr: *addr, Handler: api.Handler(s), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -60,6 +65,26 @@ func main() {
 	log.Printf("queue listening on http://%s (db %s)", *addr, path)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
+	}
+}
+
+// Parsed jobs that no batch scored (jd parse, job add, older parses) get scored without a manual
+// batch: every JOBOPS_SWEEP_EVERY (default 2m, "0" turns it off), up to 50 per sweep. The score
+// result decides tailoring as in any batch. Workers must be running to pick the tasks up.
+func sweepLoop(ctx context.Context, s *store.Store, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		if id, n, err := s.Sweep(50); err != nil {
+			log.Printf("sweep: %v", err)
+		} else if n > 0 {
+			log.Printf("sweep: batch %d queued %d parsed jobs for scoring", id, n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
 	}
 }
 

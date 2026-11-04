@@ -3,9 +3,9 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-03, Milestone 5 done: merged into `dev` with the coder-gates tooling and
-the search filters (`search-filters`); all branches except main pushed. How to run it:
-`RUNBOOK-M5.md` (`.claude/bin/batch-up.sh` brings everything up).
+Last updated: 2026-11-04, Milestone 7 (UI and application tracking) merged into `dev`, built
+before Milestone 6 (user). How to run it: `RUNBOOK-M5.md` (`.claude/bin/batch-up.sh`, then
+`npm run ui`). Next: Milestone 8.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -56,6 +56,14 @@ the search filters (`search-filters`); all branches except main pushed. How to r
       are re-checked before every batch (`jd-search check` -> table `job_filter`, `batch status`
       shows `skipped`): on the real data 44 of 121 candidates pass. preferences.yaml: Staff and
       Solutions roles dropped (user). LeetCode Discuss left out (its terms forbid scraping).
+  - **Milestone 7: UI and application tracking** (branch `milestone-7`, c4ab48b; written by the
+    manager on the user's request, no local coders). `ui/` (React 19, Vite 8, own dark CSS;
+    `npm run ui`, 127.0.0.1:5173, no login): Pipeline board, job drawer (why, queue history,
+    score arithmetic with per-requirement evidence), Applications board (drag, notes, prep tasks;
+    tables `applications`, `application_tasks`), Batches tab, health bar. API `/ui/*` routes in
+    `api/src/ui/`. Queue sweep: parsed jobs no batch scored are scored every 2 minutes
+    (`JOBOPS_SWEEP_EVERY`, 0 = off; `POST /batches/sweep`). First sweep (2026-11-04): 41 jobs
+    scored, all not_tailored (best Okta Core Frontier 77.3 moderate, blocked by another check).
 - Tests: 126 TypeScript (`npm test`) plus Go (jd-search filter cases; `queue/` store,
   preference-check and an end-to-end `jd-search check` test); `check.sh` runs both Go modules.
 - Product models (llama.cpp): general7 (JD parse, judge; 3 slots) on the laptop, started by
@@ -65,8 +73,14 @@ the search filters (`search-filters`); all branches except main pushed. How to r
 
 ## Where to start next
 
-- Next: Milestone 6 (README: contact search and outreach). Batches start only by hand
-  (`batch start`); restart the queue server after pulling the search filters.
+- Next: Milestone 8 (containerization, CI, Go gateway, local Kubernetes for supervision and
+  restarts; the user wants services to start and restart on their own). Then Milestone 6.
+- Milestone 6 (contacts and outreach): plan `.claude/specs/plan-milestone-6.md` and phase A
+  specs `.claude/specs/plan-m6-a.md` (git-ignored, approved, not run) on branch `milestone-6`.
+- Milestone 7 open item: tests for the `/ui` routes and the sweep (test plan shown to the user,
+  not yet approved, so not written).
+- Searching for new jobs starts only by hand (`batch start` or the Batches tab); scoring of
+  parsed jobs is automatic once the queue server and workers run.
 - Leftover branches `mini/m5-h1-key-message`, `mini/m5-i4-parse-wiring`: old mini-runner
   attempts, pushed but never merged (never delete branches).
 - Coder tooling (2026-11-03, `tooling/coder-gates`, AGENTS.md rule 7): ready.sh before dispatch,

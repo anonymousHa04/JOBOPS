@@ -39,6 +39,7 @@ export const startBatch = (limit: number, parseVersion: string) =>
   call<{ batch_id: number }>("POST", "/batches", { limit, parse_version: parseVersion });
 export const batches = () => call<unknown[]>("GET", "/batches");
 export const batch = (id: number) => call<unknown>("GET", `/batches/${id}`);
+export const sweep = (max = 50) => call<{ batch_id: number; queued: number }>("POST", "/sweep", { max });
 export const retryBatch = (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`);
 export const lease = (stages: string[], worker: string) => call<QueueTask | null>("POST", "/lease", { stages, worker });
 export const done = (taskId: number, result: Record<string, unknown>) => call<void>("POST", `/tasks/${taskId}/done`, { result });

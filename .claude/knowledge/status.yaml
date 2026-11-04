@@ -3,8 +3,8 @@
 # searched: retrieve.py semantic "what is left for the engine".
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
-updated: 2026-11-03
-branch: milestone-5 (from dev; phase A committed, phases H, I, B-F uncommitted for review)
+updated: 2026-11-04
+branch: dev (milestone-7 merged; next milestone-8)
 
 environment:
   - id: env-llama-cpp
@@ -197,4 +197,17 @@ milestone_5_notes:
   - "autofix.sh reverts any file changed outside the task during a run, new untracked files included"
   - "after a restart: start Docker (Qdrant) before coder runs, or run-coder.sh stops with 'coder window gone'"
   - "extension does not report round 5 (grader requires round < 5); only the chat's round-5 score is lost"
+milestone_7_done: "2026-11-04 (built before M6, user): ui/ React dark dashboard (pipeline board, job drawer with score arithmetic and evidence, applications board with notes and prep tasks, batches tab, health bar), /ui API routes, tables applications and application_tasks, queue sweep scores parsed jobs no batch scored every 2m (JOBOPS_SWEEP_EVERY); manager wrote the code on the user's request; merged into dev"
+milestone_7_open:
+  - id: m7-tests
+    state: todo
+    what: "tests for /ui routes (board states, score route, tracking, health) and queue Sweep; test plan shown 2026-11-04, waits for user approval"
+milestone_6:
+  - id: m6-plan
+    state: todo
+    what: "contacts (LinkedIn Connections.csv + profile/contacts.yaml) and outreach drafts; plan .claude/specs/plan-milestone-6.md, phase A specs plan-m6-a.md approved, not run; after Milestone 8"
+milestone_8:
+  - id: m8-plan
+    state: in_progress
+    what: "containerize, CI, Go gateway in front of Node, local Kubernetes for supervision and restarts (services start and restart on their own); models stay on the host (Metal GPU, laptop)"
 decisions_needed: []

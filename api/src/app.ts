@@ -5,6 +5,7 @@ import type { Db } from "./db.ts";
 import { createJobRepository } from "./jobs/repository.ts";
 import { extensionRoutes } from "./extension/routes.ts";
 import { queueRoutes } from "./queue/routes.ts";
+import { uiRoutes } from "./ui/routes.ts";
 
 export function buildApp(opts: { db: Db; logger?: boolean }): FastifyInstance {
     const app = Fastify({ logger: opts.logger ?? false });
@@ -12,6 +13,7 @@ export function buildApp(opts: { db: Db; logger?: boolean }): FastifyInstance {
     const jobs = createJobRepository(opts.db);
     extensionRoutes(app, opts.db);
     queueRoutes(app);
+    uiRoutes(app, opts.db);
 
     app.post<{ Body: unknown }>(`/jobs`, async (request, reply) => {
         const result = JobInputSchema.safeParse(request.body);

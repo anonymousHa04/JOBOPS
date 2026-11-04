@@ -122,3 +122,20 @@ The loop stops at the first round that does not raise the engine score, at most 
 best version stays the job's current resume. The popup shows the engine score per round, the
 chat's `fit_score`, why it stopped, and how many gaps need your facts. The per-round record is in
 `profile/reports/<job>.<source>.loop.json`.
+
+## Web UI and automatic scoring (Milestone 7)
+
+After `.claude/bin/batch-up.sh` (API, queue and workers up):
+
+    npm run ui                    # 127.0.0.1:5173, no login, local only
+
+- Pipeline: one column per state. Click a card for why it is there (failure, skip reason,
+  queue history) and the Score tab for how the score was calculated.
+- Applications: drag tracked jobs between statuses; notes and preparation tasks per job.
+- Batches: start a batch (limit 1-100), watch it, retry failures, or "Score parsed jobs now".
+- Health dots (top right): every service; click one that is down to copy its start command.
+
+The queue server scores parsed jobs that no batch scored every 2 minutes (up to 50), so a job
+parsed with `jd parse` or `job add` is scored without a batch. Turn it off with
+`JOBOPS_SWEEP_EVERY=0` before starting the queue server. The workers must be running.
+Services do not start on their own after a reboot yet: Milestone 8 (local Kubernetes) does that.

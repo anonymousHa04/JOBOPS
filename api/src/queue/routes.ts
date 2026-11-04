@@ -1,7 +1,7 @@
 // Batch routes: the same actions as `batch start|status|retry`, passed through to the queue server.
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { batch, batches, retryBatch, startBatch, QueueDownError } from "./client.ts";
+import { batch, batches, retryBatch, startBatch, sweep, QueueDownError } from "./client.ts";
 import { loadPrompt } from "../model/prompts.ts";
 
 const StartBody = z.object({ limit: z.number().int().min(1).max(100).default(100) }).strict();
@@ -22,6 +22,9 @@ export function queueRoutes(app: FastifyInstance): void {
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
     return pass(reply, () => startBatch(body.data.limit, loadPrompt("parse-job-descripton").version), 201);
   });
+
+  // Score parsed jobs that no batch has scored (the queue server also does this every 2 minutes).
+  app.post("/batches/sweep", async (_request, reply) => pass(reply, () => sweep(50)));
 
   app.get("/batches", async (_request, reply) => pass(reply, () => batches()));
 

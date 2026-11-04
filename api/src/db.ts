@@ -62,6 +62,21 @@ export function openDb(path: string): Db {
       bank_hash TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS applications (
+      job_id TEXT PRIMARY KEY REFERENCES jobs(id),
+      status TEXT NOT NULL CHECK (status IN ('interested', 'applied', 'interview', 'offer', 'rejected', 'withdrawn')),
+      note TEXT,
+      applied_at TEXT,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS application_tasks (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(id),
+      text TEXT NOT NULL,
+      done INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS application_tasks_job ON application_tasks (job_id);
   `);
   return db;
 }

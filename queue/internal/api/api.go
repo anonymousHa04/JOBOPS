@@ -83,6 +83,22 @@ func Handler(s *store.Store) http.Handler {
 		send(w, http.StatusOK, map[string]int{"requeued": n})
 	})
 
+	// Score leftovers now (parsed jobs no batch has scored); the server also does this on a timer.
+	mux.HandleFunc("POST /sweep", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Max int `json:"max"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		id, n, err := s.Sweep(in.Max)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		send(w, http.StatusOK, map[string]int64{"batch_id": id, "queued": int64(n)})
+	})
+
 	mux.HandleFunc("POST /lease", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Stages []string `json:"stages"`

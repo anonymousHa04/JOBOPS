@@ -325,12 +325,14 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Draft outreach messages.
 - Add an explicit approval step before sending or copying a message to an external service.
 
-### Milestone 7 — UI and application tracking
+### Milestone 7 — UI and application tracking (built before Milestone 6, 2026-11-04)
 
-- Build the job dashboard and job detail view.
-- Show evidence-backed fit assessments.
-- Track decisions, preparation tasks, and application outcomes.
-- Make failed or incomplete workflows visible.
+- Build the job dashboard and job detail view: `ui/` (React, TypeScript, Vite, own dark CSS), `npm run ui` on 127.0.0.1:5173, no login (local only). Pipeline board with a column per state (New, Parsing, Parsed, Scoring, Ready to tailor, Tailoring, Tailored, Not tailored, Failed, Skipped) and a detail drawer per job.
+- Show evidence-backed fit assessments: the Score tab recomputes the score from the bank and the cached judge verdicts (never a model call) and shows the arithmetic: each part's base points, share, coverage and points, the must-have cap, the band, and every requirement's label, credit, source and supporting bullets; plus the reasons a job was not tailored.
+- Track decisions, preparation tasks, and application outcomes: an Applications board (Interested, Applied, Interview, Offer, Rejected, Withdrawn; drag between columns), notes and preparation tasks per job (tables `applications`, `application_tasks`).
+- Make failed or incomplete workflows visible: failure code and detail per stage, skip reason, the job's queue history, a Batches tab (start, live progress, retry, failures), and a health bar for every service with the command that starts it.
+- Parsed jobs are scored without a manual batch: the queue server sweeps parsed jobs that no batch has scored (`jd parse`, `job add`, older parses) every `JOBOPS_SWEEP_EVERY` (default 2m, `0` turns it off), up to 50 at a time; the score decides tailoring as in any batch. Searching for new jobs stays manual (`batch start` or the Batches tab).
+- API routes under `/ui` (board, job detail, score, application, tasks, health) and `POST /batches/sweep`.
 
 ### Milestone 8 — Containerization and deployment
 

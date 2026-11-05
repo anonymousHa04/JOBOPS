@@ -79,6 +79,16 @@ export function openDb(path: string): Db {
     CREATE INDEX IF NOT EXISTS application_tasks_job ON application_tasks (job_id);
     ${GAP_NOTES}
     CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    -- Jobs the user deleted (UI): a fetch that finds the same link or the same content again
+    -- does not add it back. Only what that check needs, plus a label for the user.
+    CREATE TABLE IF NOT EXISTS deleted_jobs (
+      source_url TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
+      title TEXT NOT NULL,
+      company TEXT NOT NULL,
+      deleted_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS deleted_jobs_hash ON deleted_jobs (content_hash);
   `);
   // gap_notes first allowed only must, nice and keyword; responsibilities (theme) came later.
   // SQLite cannot change a CHECK, so an old table is rebuilt once with its rows kept.

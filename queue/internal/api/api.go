@@ -201,6 +201,26 @@ func Handler(s *store.Store) http.Handler {
 		send(w, http.StatusOK, map[string]int64{"batch_id": id})
 	})
 
+	// The user deleted a job (UI): drop its tasks and filter row.
+	mux.HandleFunc("POST /forget", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			JobID string `json:"job_id"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		if in.JobID == "" {
+			fail(w, http.StatusBadRequest, "job_id is required")
+			return
+		}
+		n, err := s.Forget(in.JobID)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		send(w, http.StatusOK, map[string]int{"removed": n})
+	})
+
 	mux.HandleFunc("POST /lease", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Stages []string `json:"stages"`

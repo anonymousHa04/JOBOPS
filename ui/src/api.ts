@@ -108,6 +108,7 @@ export const api = {
   addTask: (id: string, text: string) => call<Application>("POST", `/ui/jobs/${id}/tasks`, { text }),
   patchTask: (id: string, taskId: string, patch: { done?: boolean; remove?: boolean }) =>
     call<Application>("PATCH", `/ui/jobs/${id}/tasks/${taskId}`, patch),
+  deleteJob: (id: string) => call<{ deleted: boolean; resumes: number; files: number; tasks: number }>("DELETE", `/ui/jobs/${id}`),
   batches: () => call<Batch[]>("GET", "/batches"),
   batch: (id: number) => call<Batch>("GET", `/batches/${id}`),
   startBatch: (limit: number) => call<{ batch_id: number }>("POST", "/batches", { limit }),

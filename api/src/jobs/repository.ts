@@ -45,6 +45,8 @@ export type JobRepository = {
   insert(input: JobInput): Job;
   getById(id: string): Job | undefined;
   upsert(input: JobInput): { job: Job; created: boolean };
+  // The user deleted this posting earlier (same link or same content): callers skip upsert.
+  isDeleted(input: JobInput): boolean;
   list(query: JobListQuery): { items: Job[]; total: number };
 };
 
@@ -61,6 +63,9 @@ export function createJobRepository(db: Db): JobRepository {
   `);
   const findByHashStmt = db.prepare(`
     SELECT * FROM jobs WHERE content_hash = @content_hash ORDER BY first_seen_at LIMIT 1
+  `);
+  const deletedStmt = db.prepare(`
+    SELECT 1 FROM deleted_jobs WHERE source_url = @source_url OR content_hash = @content_hash LIMIT 1
   `);
   const touchStmt = db.prepare(`
     UPDATE jobs SET last_seen_at = @last_seen_at WHERE id = @id
@@ -122,6 +127,9 @@ export function createJobRepository(db: Db): JobRepository {
         return rowToJob(row);
       }
       return undefined;
+    },
+    isDeleted(input: JobInput): boolean {
+      return !!deletedStmt.get({ source_url: input.source_url, content_hash: computeContentHash(input) });
     },
     upsert(input: JobInput): { job: Job; created: boolean } {
       const now = new Date().toISOString();

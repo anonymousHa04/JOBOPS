@@ -49,6 +49,14 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
                 <span className="muted">{d.job.location ?? "No location"}</span>
                 <a href={d.job.source_url} target="_blank" rel="noreferrer">Open posting ↗</a>
                 <button className="btn tiny" title="Copies the job, how it was scored and your gaps (no resume text, no contact details) for Claude or ChatGPT to find your weak points." onClick={() => api.prompt(id).then((r) => navigator.clipboard.writeText(r.prompt)).then(() => setCopied("Copied")).catch((e: Error) => setCopied("Copy failed: " + e.message)).finally(() => setTimeout(() => setCopied(null), 4000))}>{copied ?? "Copy as prompt"}</button>
+                <button className="btn tiny danger" title="Remove this job, its answers and its tailored resumes. A later fetch will not add it back." onClick={() => {
+                  // Two questions for a job you applied to (it has history you may need).
+                  const applied = ["applied", "interview", "offer"].includes(d.application?.status ?? "");
+                  const n = d.resumes.filter((r) => r.decision !== "not_tailored").length;
+                  if (!window.confirm(`Delete "${d.job.title}" at ${d.job.company}?\n\nIts gap answers, tracking${n ? ` and ${n} tailored resume${n === 1 ? "" : "s"} (YAML and PDF)` : ""} are removed. A later fetch will not add it back. This cannot be undone.`)) return;
+                  if (applied && !window.confirm(`You marked this job as ${d.application!.status}. Delete it anyway?`)) return;
+                  api.deleteJob(id).then(() => { onChanged(); onClose(); }).catch((e: Error) => window.alert("Could not delete: " + e.message));
+                }}>Delete this job</button>
               </div>
             </div>
             <div className="muted small prompt-note">Copy as prompt: the job, how it was scored, and your gaps, for a stronger model to find your weak points. No resume text or contact details are included.</div>

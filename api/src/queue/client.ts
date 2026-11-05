@@ -54,3 +54,6 @@ export const lease = (stages: string[], worker: string) => call<QueueTask | null
 export const done = (taskId: number, result: Record<string, unknown>) => call<void>("POST", `/tasks/${taskId}/done`, { result });
 export const fail = (taskId: number, code: string, detail: string) =>
   call<void>("POST", `/tasks/${taskId}/fail`, { code, detail: detail.slice(0, 300) });
+
+// The user deleted a job: drop its queue tasks and preference-check row.
+export const forgetJob = (jobId: string) => call<{ removed: number }>("POST", "/forget", { job_id: jobId });

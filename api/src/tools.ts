@@ -350,7 +350,9 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
     // No preferences yet: names come from the board or page.
   }
   const input = await fetchJob(url, { company: opts.company, known });
-  const { job, created } = createJobRepository(d).upsert(input);
+  const repo = createJobRepository(d);
+  if (repo.isDeleted(input)) throw new Error("You deleted this job earlier, so it is not added again.");
+  const { job, created } = repo.upsert(input);
   steps.push({ step: "fetch", status: created ? "done" : "cached", detail: `${job.company}: ${job.title}` });
   const base = { job_id: job.id, company: job.company, title: job.title, location: job.location ?? null };
 

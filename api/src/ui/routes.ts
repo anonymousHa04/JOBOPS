@@ -10,6 +10,7 @@ import { markRescoredAll, rescoreAllStatus, rescoreCandidates, tailorStatus } fr
 import { draftBullet, gapHelp } from "./gap-model.ts";
 import { answerGap, gapList } from "./gaps.ts";
 import { analysisPrompt } from "./prompt.ts";
+import { deleteJob, DeleteRefused } from "../jobs/delete.ts";
 
 const AppBody = z.object({ status: z.enum(APP_STATUSES).nullable(), note: z.string().max(2000).nullable().optional() }).strict();
 const TaskBody = z.object({ text: z.string().trim().min(1).max(300) }).strict();
@@ -160,6 +161,17 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
       return { tailor_batch: (await tailorNow(request.params.id)).batch_id };
     } catch (err) {
       return reply.status(503).send({ error: "queue_down", message: message(err) });
+    }
+  });
+
+  // Delete this job (the UI asks the user first): rows, tailored resumes and queue tasks go;
+  // the link stays on deleted_jobs so a fetch does not add it back.
+  app.delete<{ Params: { id: string } }>("/ui/jobs/:id", async (request, reply) => {
+    try {
+      return { deleted: true, ...(await deleteJob(db, request.params.id)) };
+    } catch (err) {
+      if (err instanceof DeleteRefused) return reply.status(message(err) === "job not found" ? 404 : 409).send({ error: "refused", message: message(err) });
+      return reply.status(500).send({ error: "delete_failed", message: message(err) });
     }
   });
 

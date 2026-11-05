@@ -24,6 +24,11 @@ export function buildApp(opts: { db: Db; logger?: boolean }): FastifyInstance {
                 issues: result.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
             });
         } else {
+            // A job the user deleted: 200 (known, like a duplicate), so fetchers move on.
+            if (jobs.isDeleted(result.data)) {
+                reply.status(200).send({ deleted: true, source_url: result.data.source_url });
+                return;
+            }
             const { job, created } = jobs.upsert(result.data);
             reply.status(created ? 201 : 200).send(job);
         }

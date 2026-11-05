@@ -58,6 +58,7 @@ export function App() {
           )}
           <span className="muted">{counts.total} jobs{counts.failed ? ` · ${counts.failed} failed` : ""}</span>
           <button className="btn ghost" onClick={load}>Refresh</button>
+          <RescoreAll refresh={jobs} onDone={load} />
         </div>
       )}
 
@@ -71,5 +72,39 @@ export function App() {
 
       {open && <JobDrawer key={open + (openTab ?? "")} id={open} initialTab={openTab} onClose={() => setOpen(null)} onChanged={load} />}
     </div>
+  );
+}
+
+// Rescore all: enabled when your bank, added skills or spellings changed since the last one.
+// Only jobs below 75 that are not tailored are re-scored; nothing is tailored on its own.
+function RescoreAll({ refresh, onDone }: { refresh: unknown; onDone: () => void }) {
+  const [st, setSt] = useState<{ changed: boolean; candidates: number } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.rescoreAllStatus().then(setSt).catch(() => setSt(null));
+  }, [refresh]);
+  const run = () => {
+    setBusy(true);
+    api.rescoreAll()
+      .then((r) => {
+        setNote(r.queued ? `Re-scoring ${r.queued} job${r.queued === 1 ? "" : "s"} (batch ${r.batch_id})` : "Nothing to re-score");
+        onDone();
+      })
+      .catch((e: Error) => setNote("Rescore all failed: " + e.message))
+      .finally(() => setBusy(false));
+  };
+  const enabled = !!st && st.changed && st.candidates > 0 && !busy;
+  const title = !st ? "Checking…"
+    : !st.changed ? "Your bank, skills and spellings have not changed since the last Rescore all."
+    : st.candidates === 0 ? "No job below 75 to re-score."
+    : `Your bank, skills or spellings changed: re-score the ${st.candidates} job(s) below 75. Jobs at 75+ and tailored jobs are not touched.`;
+  return (
+    <>
+      <button className="btn ghost" disabled={!enabled} title={title} onClick={run}>
+        {busy ? "Queuing…" : `Rescore all${st?.changed && st.candidates ? ` (${st.candidates})` : ""}`}
+      </button>
+      {note && <span className="muted small">{note}</span>}
+    </>
   );
 }

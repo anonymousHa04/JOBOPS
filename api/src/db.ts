@@ -78,6 +78,7 @@ export function openDb(path: string): Db {
     );
     CREATE INDEX IF NOT EXISTS application_tasks_job ON application_tasks (job_id);
     ${GAP_NOTES}
+    CREATE TABLE IF NOT EXISTS ui_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
   // gap_notes first allowed only must, nice and keyword; responsibilities (theme) came later.
   // SQLite cannot change a CHECK, so an old table is rebuilt once with its rows kept.

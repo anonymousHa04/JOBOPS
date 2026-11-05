@@ -110,7 +110,7 @@ export function RescoreBar({ id, watch, onDone }: { id: string; watch: number | 
         <span className="muted">not scored</span>
       )}
       <span className="muted"> {score?.band}</span>
-      <button className="btn tiny" disabled={busy} onClick={start} title="Score this job again with your current bank (judge on the laptop); tailoring follows if the score allows it.">
+      <button className="btn tiny" disabled={busy} onClick={start} title="Score this job again with your current bank (judge on the laptop). Tailoring waits for Tailor now.">
         {busy ? "Re-scoring…" : "Re-score now"}
       </button>
       {status && <span className="muted small">{status}</span>}

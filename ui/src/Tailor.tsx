@@ -1,0 +1,49 @@
+// Tailor now: a rescore only updates the score; the user starts tailoring here once the resume
+// the tailor would build is at 75+ and every gap question has an answer (Re-tailor for a job
+// tailored before). The last tailor run's outcome shows below, with its reason when it made
+// no resume or the PDF failed.
+import { useEffect, useState } from "react";
+import { api } from "./api";
+import type { TailorStatus } from "./api";
+
+export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: number; onChanged: () => void }) {
+  const [st, setSt] = useState<TailorStatus | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.tailorStatus(id).then(setSt).catch((e: Error) => setNote("Tailor status: " + e.message));
+  }, [id, refresh]);
+
+  if (!st) return note ? <div className="muted small">{note}</div> : null;
+
+  const start = () => {
+    setBusy(true);
+    api.tailorNow(id)
+      .then((r) => {
+        setNote(r.tailor_batch > 0
+          ? `Queued for tailoring (batch ${r.tailor_batch}): the Mac worker tailors it, and the job moves to Tailoring.`
+          : "A score or tailor task is already open for this job.");
+        onChanged();
+      })
+      .catch((e: Error) => setNote("Could not tailor: " + e.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className={"tailor-box" + (st.ready ? " ready" : "")}>
+      {st.ready && <b>Ready for tailor</b>}
+      <button className="btn tiny accent" disabled={!st.can_tailor || busy || note?.startsWith("Queued") === true} onClick={start}
+        title="Make a tailored resume for this job (the Mac worker, general14). Only at 75 or more, with every gap question answered.">
+        {busy ? "Queuing…" : st.tailored ? "Re-tailor" : "Tailor now"}
+      </button>
+      {!st.can_tailor && st.reasons.length > 0 && <span className="muted small">{st.reasons.join(" ")}</span>}
+      {note && <span className="muted small">{note}</span>}
+      {st.last && (
+        <div className={"small tailor-last" + (st.last.ok ? " muted" : " bad")}>
+          Last tailor ({new Date(st.last.at).toLocaleString()}): {st.last.message}
+        </div>
+      )}
+    </div>
+  );
+}

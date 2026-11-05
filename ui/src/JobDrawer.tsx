@@ -3,6 +3,7 @@ import { api, ApiError, APP_LABEL, APP_STATUSES, bandClass, fmtDate, STATE_LABEL
 import type { Application, AppStatus, JobDetail, ScoreDetail } from "./api";
 import { ScoreView } from "./Score";
 import { GapsView } from "./Gaps";
+import { TailorBox } from "./Tailor";
 
 export type Tab = "overview" | "score" | "gaps" | "tracking" | "description";
 
@@ -57,7 +58,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
               ))}
             </nav>
             <div className="drawer-body">
-              {tab === "overview" && <Overview d={d} score={score} scoreErr={scoreErr} onScore={() => setTab("score")} />}
+              {tab === "overview" && <Overview d={d} score={score} scoreErr={scoreErr} onScore={() => setTab("score")} onChanged={() => { onChanged(); api.job(id).then(setD).catch(() => undefined); }} />}
               {tab === "score" && (score ? <ScoreView d={score} /> : <div className="banner">{scoreErr ?? "Computing…"}</div>)}
               {tab === "gaps" && <GapsView id={id} onChanged={() => { onChanged(); api.score(id).then(setScore).catch(() => undefined); }} />}
               {tab === "tracking" && <Tracking id={id} app={d.application} onChange={setApp} />}
@@ -70,7 +71,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
   );
 }
 
-function Overview({ d, score, scoreErr, onScore }: { d: JobDetail; score: ScoreDetail | null; scoreErr: string | null; onScore: () => void }) {
+function Overview({ d, score, scoreErr, onScore, onChanged }: { d: JobDetail; score: ScoreDetail | null; scoreErr: string | null; onScore: () => void; onChanged: () => void }) {
   const failed = d.tasks.filter((t) => t.state === "failed");
   return (
     <div className="overview">
@@ -89,7 +90,9 @@ function Overview({ d, score, scoreErr, onScore }: { d: JobDetail; score: ScoreD
         {d.state === "parsed" && <div>Parsed, not scored yet. The queue server scores leftovers like this every 2 minutes; or use “Score parsed jobs now” on the Batches tab.</div>}
         {d.state === "to_tailor" && <div>Scored well enough to tailor ({d.decision}); the Mac worker tailors it next.</div>}
         {d.state === "tailored" && <div>A tailored resume exists (below).</div>}
-        {d.state === "not_tailored" && (score?.reasons.length ? <ul>{score.reasons.map((r) => <li key={r}>{r}</li>)}</ul> : <div>Score below the tailoring bands.</div>)}
+        {d.state === "not_tailored" && d.ready_to_tailor && <div>Re-scored into a tailoring band ({d.decision}). It stays here until you start tailoring.</div>}
+        {d.state === "not_tailored" && !d.ready_to_tailor && (score?.reasons.length ? <ul>{score.reasons.map((r) => <li key={r}>{r}</li>)}</ul> : <div>Score below the tailoring bands.</div>)}
+        {(d.state === "not_tailored" || d.state === "tailored") && <TailorBox id={d.job.id as string} refresh={0} onChanged={onChanged} />}
         {score && <button className="btn link" onClick={onScore}>See how the score was calculated →</button>}
         {scoreErr && d.parsed && <div className="muted small">Score: {scoreErr}</div>}
       </div>
@@ -105,12 +108,49 @@ function Overview({ d, score, scoreErr, onScore }: { d: JobDetail; score: ScoreD
         <Fact k="Batch score" v={d.score != null ? `${d.score.toFixed(1)} (${d.band})` : "—"} />
       </div>
 
+      {d.resumes.length > 0 && (
+        <>
+          <h4>Resumes</h4>
+          {(() => {
+            // A tailor that produced the same content returns that resume as is (records never
+            // change): say so, with the job's score now, so the table does not look stale.
+            const last = [...d.tasks].reverse().find((t) => t.stage === "tailor" && t.state === "done");
+            const res = last?.result as { created?: boolean; resume_id?: string | null } | null | undefined;
+            return res && res.created === false && res.resume_id ? (
+              <div className="banner">
+                The last tailor ({fmtDate(last!.updated_at)}) picked the same bullets and skills as <code>{res.resume_id}</code>, so no new resume was made.
+                {d.score !== null ? ` The job scores ${d.score.toFixed(1)} now.` : ""}
+                {" "}New answers raise the job's score, but change the resume only when they beat a bullet that is already picked (each role has a bullet limit).
+              </div>
+            ) : null;
+          })()}
+          <table className="tasks">
+            <thead><tr><th>Resume</th><th>Decision</th><th>Score</th><th>File</th><th>Created</th><th>Last tailor run</th></tr></thead>
+            <tbody>
+              {[...d.resumes].sort((a, b) => Number(b.latest) - Number(a.latest) || (b.last_run_at ?? b.created_at).localeCompare(a.last_run_at ?? a.created_at)).map((r) => (
+                <tr key={r.resume_id} className={r.latest ? "" : "old-row"}>
+                  <td className="mono">{r.resume_id}{r.latest && <span className="chip ok-chip">latest</span>}</td>
+                  <td>{r.decision}</td>
+                  {/* The latest resume carries the job's score (the Score tab's); older ones are history. */}
+                  {r.latest && d.score != null
+                    ? <td>{d.score.toFixed(1)} ({d.band})</td>
+                    : <td className="muted" title="Score at the time it was made (history).">{r.score != null ? `${r.score}${r.band ? ` (${r.band})` : ""}` : "—"} then</td>}
+                  <td className="mono">{r.path}</td>
+                  <td className="muted">{fmtDate(r.created_at)}</td>
+                  <td className="muted">{r.last_run_at ? fmtDate(r.last_run_at) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      
       <h4>Pipeline history</h4>
       {d.tasks.length ? (
         <table className="tasks">
           <thead><tr><th>Stage</th><th>State</th><th>Batch</th><th>Tries</th><th>Worker</th><th>Result</th><th>Updated</th></tr></thead>
           <tbody>
-            {d.tasks.map((t, n) => (
+            {[...d.tasks].sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map((t, n) => (
               <tr key={n} className={t.state === "failed" ? "fail-row" : ""}>
                 <td>{t.stage}</td>
                 <td><span className={`task-state ${t.state}`}>{t.state}</span></td>
@@ -125,19 +165,7 @@ function Overview({ d, score, scoreErr, onScore }: { d: JobDetail; score: ScoreD
         </table>
       ) : <div className="muted">No batch has picked up this job.</div>}
 
-      {d.resumes.length > 0 && (
-        <>
-          <h4>Resumes</h4>
-          <table className="tasks">
-            <thead><tr><th>Resume</th><th>Decision</th><th>Score</th><th>File</th><th>Created</th></tr></thead>
-            <tbody>
-              {d.resumes.map((r) => (
-                <tr key={r.resume_id}><td className="mono">{r.resume_id}</td><td>{r.decision}</td><td>{r.score ?? "—"}</td><td className="mono">{r.path}</td><td className="muted">{fmtDate(r.created_at)}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
+      
     </div>
   );
 }

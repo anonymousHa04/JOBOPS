@@ -5,7 +5,8 @@ import { z } from "zod";
 import type { Db } from "../db.ts";
 import { addPrepTask, APP_STATUSES, board, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
 import { health } from "./health.ts";
-import { QueueDownError, rescore } from "../queue/client.ts";
+import { QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
+import { markRescoredAll, rescoreAllStatus, rescoreCandidates, tailorStatus } from "./tailor-ready.ts";
 import { draftBullet, gapHelp } from "./gap-model.ts";
 import { answerGap, gapList } from "./gaps.ts";
 import { analysisPrompt } from "./prompt.ts";
@@ -20,7 +21,8 @@ const AnswerBody = z.object({
   kind: Kind, requirement: z.string().min(1).max(500), answer: z.enum(["have", "other_name", "learnable", "no"]),
   entry_id: z.string().optional(), text: z.string().trim().max(400).optional(), tags: z.array(z.string().max(60)).max(8).optional(),
   story: z.string().max(3000).optional(), proof: z.string().max(1000).optional(), same_as: z.string().max(120).optional(),
-  as_skill: z.boolean().optional(), entry_ids: z.array(z.string().max(120)).max(30).optional()
+  as_skill: z.boolean().optional(), entry_ids: z.array(z.string().max(120)).max(30).optional(),
+  extra_skills: z.array(z.string().max(80)).max(10).optional()
 }).strict();
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -129,6 +131,52 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
     try {
       return { rescore_batch: (await rescore(request.params.id)).batch_id };
+    } catch (err) {
+      return reply.status(503).send({ error: "queue_down", message: message(err) });
+    }
+  });
+
+  // Tailor now: only when the job is at 75+ and every gap question has an answer (or, for a
+  // tailored job, Re-tailor at 75+). Rescores never start tailoring on their own.
+  app.get<{ Params: { id: string } }>("/ui/jobs/:id/tailor", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    try {
+      return tailorStatus(db, request.params.id);
+    } catch (err) {
+      return reply.status(500).send({ error: "tailor_status_failed", message: message(err) });
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/ui/jobs/:id/tailor", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    let st;
+    try {
+      st = tailorStatus(db, request.params.id);
+    } catch (err) {
+      return reply.status(500).send({ error: "tailor_status_failed", message: message(err) });
+    }
+    if (!st.can_tailor) return reply.status(409).send({ error: "not_ready", message: st.reasons.join(" ") });
+    try {
+      return { tailor_batch: (await tailorNow(request.params.id)).batch_id };
+    } catch (err) {
+      return reply.status(503).send({ error: "queue_down", message: message(err) });
+    }
+  });
+
+  // Rescore all: enabled when the bank, the added skills or the spellings changed since the
+  // last Rescore all; re-scores only jobs below the tailoring bands that are not tailored.
+  app.get("/ui/rescore-all", async () => rescoreAllStatus(db));
+
+  app.post("/ui/rescore-all", async (_request, reply) => {
+    const ids = rescoreCandidates(db);
+    if (!ids.length) {
+      markRescoredAll(db);
+      return { batch_id: 0, queued: 0 };
+    }
+    try {
+      const r = await rescoreJobs(ids);
+      markRescoredAll(db);
+      return r;
     } catch (err) {
       return reply.status(503).send({ error: "queue_down", message: message(err) });
     }

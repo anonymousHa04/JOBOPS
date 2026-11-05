@@ -42,6 +42,10 @@ export const batch = (id: number) => call<unknown>("GET", `/batches/${id}`);
 export const sweep = (max = 50) => call<{ batch_id: number; queued: number }>("POST", "/sweep", { max });
 
 export const rescore = (jobId: string) => call<{ batch_id: number }>("POST", "/rescore", { job_id: jobId });
+// Rescore all: one batch for many jobs; jobs that are busy or not parsed are skipped.
+export const rescoreJobs = (jobIds: string[]) => call<{ batch_id: number; queued: number }>("POST", "/rescore", { job_ids: jobIds });
+// Tailor now: one tailor task (batch 0 when a score or tailor task is already open).
+export const tailorNow = (jobId: string) => call<{ batch_id: number }>("POST", "/tailor", { job_id: jobId });
 export const retryBatch = (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`);
 export const ping = (worker: string) => call<void>("POST", "/workers/ping", { worker });
 // When each worker group last asked for work or pinged (ISO times, by group: laptop, mac).

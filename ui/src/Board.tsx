@@ -17,7 +17,9 @@ function JobCard({ job, onOpen, draggable }: { job: Card; onOpen: (id: string) =
       <div className="card-sub">{job.company}{job.location ? ` · ${job.location}` : ""}</div>
       <div className="card-meta">
         {job.score !== null && <span className={`score-pill ${bandClass(job.band)}`}>{job.score.toFixed(1)}</span>}
-        {job.decision && <span className="chip">{job.decision.replace("_", " ")}</span>}
+        {job.ready_to_tailor
+          ? <span className="chip accent" title="Re-scored to 75 or more: open it to tailor (Overview or Gaps)">re-scored 75+</span>
+          : job.decision && <span className="chip">{job.decision.replace("_", " ")}</span>}
         {job.state === "failed" && <span className="chip danger">{job.failed_stage}: {job.error_code ?? "failed"}</span>}
         {job.state === "skipped" && job.skip_reason && <span className="chip muted-chip">{job.skip_reason}</span>}
         {job.application && <span className="chip accent">{APP_LABEL[job.application]}</span>}

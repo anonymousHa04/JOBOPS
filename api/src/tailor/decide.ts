@@ -41,8 +41,9 @@ export type Decision = {
   risk_gate: { open: string[]; blocked: boolean };
 };
 
-// Step 5 and 6. `ideal` is scored on its own bullets for tailorability; equivalence is
-// against the starting record (null when there is none).
+// Step 5 and 6. The gate and the score are the job's (whole bank); `ideal` gives the page and
+// the unsupported-must-have flags; equivalence is against the starting record (null when there
+// is none).
 export function decide(
   ideal: ResumeContent,
   start: StoredRecord | null,
@@ -52,8 +53,12 @@ export function decide(
   risks: Risk[],
   opts: { jobId?: string; verdicts?: Verdicts; force?: boolean } = {}
 ): Decision {
-  const s = scoreRequirements(req, bank, extra, ideal.bullets.map((b) => b.id), opts.jobId, opts.verdicts);
-  const unsupported = s.items
+  // One score (user, 2026-11-05): the job's, from the whole bank, as on the Score tab. It gates
+  // tailoring and is the record's score. The ideal set only decides what goes on the page; its
+  // own items still flag must-haves the page does not show.
+  const s = scoreRequirements(req, bank, extra, undefined, opts.jobId, opts.verdicts);
+  const page = scoreRequirements(req, bank, extra, ideal.bullets.map((b) => b.id), opts.jobId, opts.verdicts);
+  const unsupported = page.items
     .filter((i) => i.kind === "must" && i.credit < 0.5 && i.label !== "learnable" && yearsAsked(i.requirement) === 0)
     .map((i) => i.requirement);
   const flags = { unsupported_must_haves: unsupported, risks: risks.map((r) => r.id) };

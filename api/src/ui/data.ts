@@ -26,7 +26,7 @@ export type AppStatus = (typeof APP_STATUSES)[number];
 export type Pipeline = "new" | "parsing" | "scoring" | "tailoring" | "parsed" | "to_tailor" | "not_tailored" | "tailored" | "failed" | "skipped";
 
 type TaskRow = {
-  job_id: string; batch_id: number; stage: string; state: string; attempts: number; worker: string | null;
+  job_id: string; batch_id: number; stage: string; prompt_version: string; state: string; attempts: number; worker: string | null;
   error_code: string | null; error_detail: string | null; result: string | null; final: number; updated_at: string;
 };
 
@@ -46,7 +46,7 @@ function json(s: string | null): Record<string, unknown> | null {
 function tasksByJob(db: Db, jobId?: string): Map<string, TaskRow[]> {
   const out = new Map<string, TaskRow[]>();
   if (!hasTable(db, "queue_tasks")) return out;
-  const sql = `SELECT job_id, batch_id, stage, state, attempts, worker, error_code, error_detail, result, final, updated_at
+  const sql = `SELECT job_id, batch_id, stage, prompt_version, state, attempts, worker, error_code, error_detail, result, final, updated_at
     FROM queue_tasks WHERE job_id NOT LIKE 'batch:%'`;
   const rows = (jobId
     ? db.prepare(`${sql} AND job_id = ? ORDER BY updated_at`).all(jobId)
@@ -79,14 +79,24 @@ function pipelineOf(tasks: TaskRow[], parsed: boolean, tailoredRecord: boolean, 
     decision: (typeof tailorRes?.decision === "string" ? tailorRes.decision : null) ??
       (typeof scoreRes?.decision === "string" ? scoreRes.decision : null),
     error_code: failed?.error_code ?? null,
-    failed_stage: failed?.stage ?? null
+    failed_stage: failed?.stage ?? null,
+    // A rescore that reached a tailoring band: the job stays in its column until the user
+    // clicks Tailor now (rescores never start tailoring on their own).
+    ready_to_tailor: false
   };
+  const lastScore = last.get("score");
+  const lastTailor = last.get("tailor");
+  const rescored = !!lastScore && lastScore.prompt_version.startsWith("rescore-") && !(lastTailor && lastTailor.batch_id > lastScore.batch_id);
   let state: Pipeline;
   const open = ["parse", "score", "tailor"].find((s) => last.get(s)?.state === "queued" || last.get(s)?.state === "leased");
   if (open) state = open === "parse" ? "parsing" : open === "score" ? "scoring" : "tailoring";
   else if (failed) state = "failed";
   else if (tailoredRecord || (last.get("tailor")?.state === "done" && base.decision !== "not_tailored")) state = "tailored";
   else if (base.decision === "not_tailored") state = "not_tailored";
+  else if ((base.decision === "reuse" || base.decision === "adapt") && rescored) {
+    state = "not_tailored";
+    base.ready_to_tailor = true;
+  }
   else if (base.decision === "reuse" || base.decision === "adapt") state = "to_tailor";
   else if (skipped) state = "skipped";
   else if (parsed || last.get("parse")?.state === "done") state = "parsed";
@@ -97,7 +107,7 @@ function pipelineOf(tasks: TaskRow[], parsed: boolean, tailoredRecord: boolean, 
 export type Card = {
   id: string; title: string; company: string; location: string | null; source_name: string | null;
   first_seen_at: string; state: Pipeline; score: number | null; band: string | null; decision: string | null;
-  error_code: string | null; failed_stage: string | null; skip_reason: string | null;
+  error_code: string | null; failed_stage: string | null; skip_reason: string | null; ready_to_tailor: boolean;
   application: AppStatus | null; open_tasks: number;
 };
 
@@ -132,15 +142,33 @@ export function jobDetail(db: Db, id: string) {
     "SELECT resume_id, decision, band, score, path, created_at FROM resume_records WHERE jd_id = ? ORDER BY created_at DESC"
   ).all(id);
   const p = pipelineOf(tasks, !!req, resumes.some((r) => (r as { decision: string }).decision !== "not_tailored"), !!f && !f.ok);
+  const parsedTasks = tasks.map((t) => ({ ...t, result: json(t.result), final: t.final === 1 }));
   return {
     job,
     ...p,
     filter: f,
     parsed: req ?? null,
-    tasks: tasks.map((t) => ({ ...t, result: json(t.result), final: t.final === 1 })),
-    resumes,
+    tasks: parsedTasks,
+    resumes: resumeState(resumes as ResumeRow[], parsedTasks),
     application: application(db, id)
   };
+}
+
+type ResumeRow = { resume_id: string; decision: string; band: string | null; score: number | null; path: string; created_at: string };
+
+// The resumes as a history, newest tailor run first. The job has one score (the Score tab's,
+// from the whole bank): the latest resume is shown with it; older ones keep the score they were
+// made with, as history. last_run_at: the last tailor run that returned the resume (a run with
+// the same bullets returns the existing one, so it is newer than created_at).
+function resumeState(rows: ResumeRow[], tasks: { stage: string; state: string; updated_at: string; result: Record<string, unknown> | null }[]) {
+  const runs = tasks.filter((t) => t.stage === "tailor" && t.state === "done" && typeof t.result?.resume_id === "string")
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  const latestId = runs[0]?.result?.resume_id ?? null;
+  return rows.map((r) => ({
+    ...r,
+    last_run_at: runs.find((t) => t.result?.resume_id === r.resume_id)?.updated_at ?? null,
+    latest: r.resume_id === latestId
+  }));
 }
 
 // The score as the engine computes it now (cached judge verdicts only, never a model call),

@@ -147,6 +147,39 @@ func Handler(s *store.Store) http.Handler {
 
 	mux.HandleFunc("POST /rescore", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
+			JobID  string   `json:"job_id"`
+			JobIDs []string `json:"job_ids"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		if in.JobID == "" && len(in.JobIDs) == 0 {
+			fail(w, http.StatusBadRequest, "job_id or job_ids is required")
+			return
+		}
+		if in.JobID == "" {
+			id, n, err := s.RescoreJobs(in.JobIDs)
+			if err != nil {
+				fail(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			send(w, http.StatusOK, map[string]int64{"batch_id": id, "queued": int64(n)})
+			return
+		}
+		id, err := s.Rescore(in.JobID)
+		if errors.Is(err, store.ErrNotParsed) {
+			fail(w, http.StatusConflict, "job not parsed")
+			return
+		}
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		send(w, http.StatusOK, map[string]int64{"batch_id": id})
+	})
+
+	mux.HandleFunc("POST /tailor", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
 			JobID string `json:"job_id"`
 		}
 		if !read(w, r, &in) {
@@ -156,7 +189,7 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusBadRequest, "job_id is required")
 			return
 		}
-		id, err := s.Rescore(in.JobID)
+		id, err := s.Tailor(in.JobID)
 		if errors.Is(err, store.ErrNotParsed) {
 			fail(w, http.StatusConflict, "job not parsed")
 			return

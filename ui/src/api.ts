@@ -7,7 +7,7 @@ export type AppStatus = (typeof APP_STATUSES)[number];
 export type Card = {
   id: string; title: string; company: string; location: string | null; source_name: string | null;
   first_seen_at: string; state: Pipeline; score: number | null; band: string | null; decision: string | null;
-  error_code: string | null; failed_stage: string | null; skip_reason: string | null;
+  error_code: string | null; failed_stage: string | null; skip_reason: string | null; ready_to_tailor: boolean;
   application: AppStatus | null; open_tasks: number;
 };
 
@@ -26,11 +26,16 @@ export type JobDetail = {
     id: string; title: string; company: string; location: string | null; source_url: string; source_name: string | null;
     employment_type: string | null; seniority: string | null; posted_at: string | null; first_seen_at: string; last_seen_at: string; description: string;
   };
-  state: Pipeline; score: number | null; band: string | null; decision: string | null; error_code: string | null; failed_stage: string | null;
+  state: Pipeline; score: number | null; band: string | null; decision: string | null; error_code: string | null; failed_stage: string | null; ready_to_tailor: boolean;
   filter: { ok: boolean; reason: string; checked_at: string } | null;
   parsed: { prompt_version: string; created_at: string } | null;
   tasks: QueueTask[];
-  resumes: { resume_id: string; decision: string; band: string | null; score: number | null; path: string; created_at: string }[];
+  // score/band: when the resume was made (history). latest: the newest tailor run returned it
+  // (the drawer shows the job's score for it); last_run_at: the last run that returned it.
+  resumes: {
+    resume_id: string; decision: string; band: string | null; score: number | null; path: string; created_at: string;
+    last_run_at: string | null; latest: boolean;
+  }[];
   application: Application;
 };
 
@@ -58,12 +63,13 @@ export type GapKind = "must" | "theme" | "nice" | "keyword";
 export type GapAnswer = "have" | "other_name" | "learnable" | "no";
 export type GapHelp = { meaning: string; similar_terms: string[]; related: { bullet_id: string; why: string }[]; questions: string[] };
 export type Gap = { kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null; answer: GapAnswer | null; outcome: string | null; updated_at: string | null };
-export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: { id: string; title: string; company: string | null; dates: string }[] };
-export type Draft = { text: string; tags: string[]; codes: string[] };
+export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
+export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: GapEntry[] };
+export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[] };
 export type AnswerBody = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
-  as_skill?: boolean; entry_ids?: string[];
+  as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -115,7 +121,19 @@ export const api = {
   answer: (id: string, body: AnswerBody) =>
     call<{ outcome: string; bullet_id: string | null; rescore_batch: number; rescore_error?: string | null }>("POST", `/ui/jobs/${id}/gaps/answer`, body),
   rescore: (id: string) => call<{ rescore_batch: number }>("POST", `/ui/jobs/${id}/rescore`),
-  prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`)
+  prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`),
+  tailorStatus: (id: string) => call<TailorStatus>("GET", `/ui/jobs/${id}/tailor`),
+  tailorNow: (id: string) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`),
+  rescoreAllStatus: () => call<{ changed: boolean; candidates: number }>("GET", "/ui/rescore-all"),
+  rescoreAll: () => call<{ batch_id: number; queued: number }>("POST", "/ui/rescore-all")
+};
+
+export type TailorStatus = {
+  score: number | null; band: string | null; open_questions: number; tailored: boolean; busy: boolean;
+  ready: boolean; can_tailor: boolean; reasons: string[];
+  // What Tailor now would do (it decides on the job's score).
+  plan: { decision: string; reason: string; open_risks: string[] } | null;
+  last: { at: string; state: string; ok: boolean; message: string } | null;
 };
 
 // Shared labels and helpers.

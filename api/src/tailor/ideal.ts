@@ -90,8 +90,13 @@ export function idealContent(
   // What each bullet is evidence for (supported or partial).
   const musts = new Map<string, Set<string>>();
   const themes = new Map<string, number>();
-  // Requirements that get one covering bullet each: must-haves and soft-skill must-haves.
+  // Requirements that get one covering bullet each: must-haves and soft-skill must-haves
+  // first (cover), then responsibilities (themeCover), then nice-to-haves (niceCover). A
+  // requirement the bank shows but no chosen bullet does scores 0 on the resume, which can drop
+  // it a band below the bank's score.
   const cover = new Map<string, Set<string>>();
+  const themeCover = new Map<string, Set<string>>();
+  const niceCover = new Map<string, Set<string>>();
   for (const i of scored.items) {
     if (i.credit <= 0 || i.kind === "keyword") continue;
     for (const id of i.bullet_ids) {
@@ -99,7 +104,11 @@ export function idealContent(
       // A soft-skill must-have is scored as a theme: it ranks as one theme (not also as a
       // must-have), but still gets one bullet that shows it.
       if (i.kind === "must" || i.soft) cover.set(id, (cover.get(id) ?? new Set()).add(i.requirement));
-      if (i.kind === "theme") themes.set(id, (themes.get(id) ?? 0) + 1);
+      if (i.kind === "nice") niceCover.set(id, (niceCover.get(id) ?? new Set()).add(i.requirement));
+      if (i.kind === "theme") {
+        themes.set(id, (themes.get(id) ?? 0) + 1);
+        themeCover.set(id, (themeCover.get(id) ?? new Set()).add(i.requirement));
+      }
     }
   }
   // A bullet's own evidence credit (§3): a measured result earns supported_metric, times
@@ -130,12 +139,18 @@ export function idealContent(
     perEntry.set(e, (perEntry.get(e) ?? 0) + 1);
     if (metricLed(b.text)) metricPerEntry.set(e, (metricPerEntry.get(e) ?? 0) + 1);
   };
-  // 1. Cover every must-have with its best bullet; 2. fill by rank.
-  const covered = new Set<string>();
-  for (const b of rank) {
-    const adds = [...(cover.get(b.id) ?? [])].filter((r) => !covered.has(r));
-    if (adds.length && fits(b)) { take(b); adds.forEach((r) => covered.add(r)); }
-  }
+  // 1. Cover every must-have with its best bullet; 2. then every responsibility (§4 step 2:
+  // must-have evidence first, then themes); 3. then every nice-to-have; 4. fill by rank.
+  const coverAll = (map: Map<string, Set<string>>) => {
+    const covered = new Set(chosen.flatMap((b) => [...(map.get(b.id) ?? [])]));
+    for (const b of rank) {
+      const adds = [...(map.get(b.id) ?? [])].filter((r) => !covered.has(r));
+      if (adds.length && fits(b)) { take(b); adds.forEach((r) => covered.add(r)); }
+    }
+  };
+  coverAll(cover);
+  coverAll(themeCover);
+  coverAll(niceCover);
   for (const b of rank) if (fits(b)) take(b);
   // 3. Every listed role keeps at least one bullet (swap out the weakest from a role with more).
   for (const role of bank.roles) {

@@ -89,13 +89,13 @@ const recency = (m: number) => (m <= 12 ? 1 : m <= 36 ? 0.9 : 0.75);
 
 1. Score existing records; pick the best starting record.
 2. Build the ideal set in code, deterministically (tie-break: score, recency, id):
-   must-have evidence first, then themes, then impact; budget per role; every listed role
+   must-have evidence first, then themes, then nice-to-haves (one covering bullet each), then impact; budget per role; every listed role
    keeps at least one bullet; at most 2 metric-led bullets per role.
 3. Ideal set is relative to the starting record: reuse the record's wording for shared ids;
    mark for rewording only when a supported JD keyword is missing literally.
 4. Skills: supported JD keywords in JD order, then remaining existing skills.
 5. Decision:
-   - years gate fails, or ideal band poor/very poor → `not_tailored`
+   - years gate fails, or the job band (whole bank, the Score tab score) poor/very poor → `not_tailored`. One score (user, 2026-11-05): the ideal set picks the page only; it is not scored separately, and the record stores the job score
    - equivalence ≥ 95 → `reuse`
    - else → `adapt`
    - flags (unsupported must-haves, risks) on every decision

@@ -81,6 +81,8 @@ input[type="checkbox"] { padding: 0; accent-color: var(--accent); }
 .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
 
 .chip { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--bg-4); color: var(--text); white-space: nowrap; }
+.chip.ok-chip { margin-left: 6px; background: #1d3a24; color: var(--ok, #3fb950); }
+tr.old-row td { opacity: 0.6; }
 .chip.accent { background: var(--accent-bg); color: var(--accent); }
 .chip.danger { background: #3a1d1d; color: var(--bad); }
 .chip.muted-chip { color: var(--muted); }
@@ -255,3 +257,8 @@ td.bad { color: var(--bad); font-weight: 700; }
 .roles { margin-top: 6px; }
 .role-check { display: flex; align-items: center; gap: 6px; margin: 2px 0; font-size: 13px; }
 .gap .role-check input { width: auto; margin: 0; }
+
+.tailor-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.tailor-box.ready { border-color: var(--ok, #3fb950); }
+.tailor-last { flex-basis: 100%; }
+.tailor-last.bad { color: var(--bad); }

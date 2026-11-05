@@ -84,7 +84,10 @@ func (s *Store) Done(taskID int64, result json.RawMessage) error {
 			Decision string `json:"decision"`
 		}
 		_ = json.Unmarshal(result, &r)
-		if r.Decision == "reuse" || r.Decision == "adapt" {
+		// A rescore only updates the score: the user starts tailoring from the UI (Tailor now).
+		if strings.HasPrefix(t.PromptVersion, "rescore-") {
+			final = true
+		} else if r.Decision == "reuse" || r.Decision == "adapt" {
 			next = "tailor"
 		} else {
 			final = true

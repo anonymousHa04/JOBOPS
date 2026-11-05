@@ -5,7 +5,7 @@ import { addSynonym, askable } from "../lists.ts";
 import { addBullet, addSkill, loadBank, loadSkillsExtra, recordLearnable } from "../profile/bank.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import { loadVerdicts } from "../scoring/judge.ts";
-import { bankTermFor, scoreRequirements, yearsAsked } from "../scoring/score.ts";
+import { bankTermFor, scoreRequirements, span, yearsAsked } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
 
 export type GapKind = "must" | "theme" | "nice" | "keyword";
@@ -15,15 +15,16 @@ export type Gap = { kind: GapKind; requirement: string; note: string | null; kno
 export type AnswerInput = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
-  as_skill?: boolean; entry_ids?: string[];
+  as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
 };
+export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
 
 export type NotAsked = { kind: GapKind; requirement: string; reason: string };
 
 // Every requirement that is red on the Score tab: must-haves, responsibilities and
 // nice-to-haves under 0.5 credit, keywords not found word for word. Each carries a note on why
 // it is red. Only what an answer cannot change (years, degrees) is listed apart, in not_asked.
-export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsked[]; years: string | null; entries: { id: string; title: string; company: string | null; dates: string }[] } {
+export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsked[]; years: string | null; entries: Entry[] } {
   const req = loadRequirements(db, jobId);
   if (!req) throw new Error("This job has not been parsed yet.");
   const bank = loadBank();
@@ -61,7 +62,13 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
     });
   }
 
-  const entries = [...bank.roles, ...bank.projects].filter(e => e.kind !== "break").map(e => ({ id: e.id, title: e.title, company: e.company ?? null, dates: e.dates }));
+  // project, bullets and end let the UI place a drafted bullet: under the checked job (never a
+  // project) with the fewest bullets; on a tie, the most recent one.
+  const projects = new Set(bank.projects.map((p) => p.id));
+  const entries: Entry[] = [...bank.roles, ...bank.projects].filter(e => e.kind !== "break").map(e => ({
+    id: e.id, title: e.title, company: e.company ?? null, dates: e.dates,
+    project: projects.has(e.id), bullets: e.bullets.length, end: span(e.dates)?.end ?? null
+  }));
   const years = r.hard.pass ? null : `asks ${r.hard.years_asked}+ years; I have ${r.hard.years_have}`;
   return { gaps: list, not_asked: notAsked, years, entries };
 }
@@ -108,6 +115,24 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       const tags = given.length ? given : [input.requirement.toLowerCase()];
       bullet_id = addBullet(input.entry_id, input.text, tags, "medium", { evidence });
       outcome = `bullet ${bullet_id} added`;
+      // Other checked roles: the requirement is also saved as a skill, with every checked role as
+      // context (the bullet is the evidence at one of them).
+      const others = (input.entry_ids ?? []).filter(filled);
+      if (others.length > 1) {
+        const bank = loadBank();
+        const roles = bank ? [...bank.roles, ...bank.projects] : [];
+        const names = others.map((id) => {
+          const e = roles.find((r) => r.id === id);
+          return e ? (e.company ? `${e.title} at ${e.company}` : e.title) : id;
+        });
+        addSkill(input.requirement, "have", `answer ${today}: ${input.story} (used at: ${names.join("; ")}; bullet ${bullet_id})`);
+        outcome += `; skill added (used at ${others.length} roles)`;
+      }
+      // Skills the user's own story names, that they ticked under the draft.
+      const extras = [...new Set((input.extra_skills ?? []).map((s) => s.trim()).filter(Boolean))]
+        .filter((s) => input.story!.toLowerCase().includes(s.toLowerCase()));
+      for (const s of extras) addSkill(s, "have", `answer ${today}: named in the story for "${input.requirement}": ${input.story}`);
+      if (extras.length) outcome += `; ${extras.length} more skill${extras.length === 1 ? "" : "s"} (${extras.join(", ")})`;
       break;
     case "other_name":
       if (input.kind !== "keyword") {

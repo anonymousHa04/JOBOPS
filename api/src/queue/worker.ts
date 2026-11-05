@@ -27,7 +27,12 @@ export async function runStage(stage: string, jobId: string): Promise<Record<str
     const t = await tailor(db(), jobId);
     if (!("created" in t)) throw new Error("tailor returned a dry run");
     const pdf = t.resume_id && t.decision !== "not_tailored" ? await render(db(), t.resume_id) : null;
-    return { decision: t.decision, resume_id: t.resume_id ?? null, created: t.created, pdf_ok: pdf ? pdf.ok : null };
+    // Why a PDF failed: the typst error, or the parse-back issue codes (no resume text).
+    const why = pdf && !pdf.ok ? (pdf.error ?? [...new Set(pdf.issues.map((i) => `${i.code} (${i.extractor})`))].join(", ")) : null;
+    // reason: why the tailor decided as it did (a not_tailored or blocked run makes no resume,
+    // and the drawer shows this). No score here: the job's score is the score task's.
+    return { decision: t.decision, reason: t.reason, resume_id: t.resume_id ?? null, created: t.created,
+      pdf_ok: pdf ? pdf.ok : null, ...(why ? { pdf_issue: why } : {}) };
   }
   throw new Error(`unknown stage ${stage}`);
 }

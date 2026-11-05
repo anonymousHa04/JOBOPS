@@ -79,7 +79,10 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   // Sections in order, skills listed.
   const titles = ["summary", "experience", "projects", "education", "skills"].filter((s) =>
     s === "summary" ? data.summary : s === "skills" ? data.skills.length : (data as unknown as Record<string, unknown[]>)[s].length);
-  const pos = titles.map((s) => t.indexOf(s));
+  // A heading is a line of its own; the word alone ("skills" in a bullet, "experience" in the
+  // summary) is not one, and finding it first failed good resumes.
+  const lines = text.split(/\r?\n/).map(norm);
+  const pos = titles.map((s) => lines.indexOf(s));
   if (pos.some((p) => p < 0) || pos.some((p, i) => i > 0 && p < pos[i - 1])) add("section_order", titles.join(","));
   for (const [i, s] of data.skills.entries()) if (!t.includes(norm(s))) add("skill_missing", `skill#${i + 1}`);
   // Icon fonts show up as private-use characters: noise for an ATS.

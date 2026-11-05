@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Gap, GapAnswer, GapList, GapHelp, Draft } from "./api";
 import { RescoreBar } from "./Rescore";
+import { TailorBox } from "./Tailor";
 
 type Answered = { outcome: string; rescore_batch: number; rescore_error?: string | null };
 
@@ -14,8 +15,10 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
   const [note, setNote] = useState<string | null>(null);
   const [watch, setWatch] = useState<number | null>(null); // a re-score batch to follow
   const [explaining, setExplaining] = useState<string | null>(null);
+  const [loads, setLoads] = useState(0); // bumps on every reload, so the tailor box rechecks
 
   const load = () => {
+    setLoads((n) => n + 1);
     api.gaps(id)
       .then(setList)
       .catch((e: Error) => setErr(e.message));
@@ -59,9 +62,10 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
   return (
     <div>
       <div className="muted small">
-        Everything red on the Score tab for this job. For each one: see what it means, where you may already have it, then answer. A new bullet or skill re-scores the job; if the score allows it, tailoring follows on its own.
+        Everything red on the Score tab for this job. For each one: see what it means, where you may already have it, then answer. A new bullet or skill re-scores the job. Once it reaches 75 and every question has an answer, it is ready for tailor: start it with Tailor now (the job stays in its column until then).
       </div>
       <RescoreBar id={id} watch={watch} onDone={() => { setWatch(null); load(); onChanged(); }} />
+      <TailorBox id={id} refresh={loads} onChanged={onChanged} />
       {unexplained > 0 && (
         <button className="btn tiny" disabled={explaining !== null} onClick={() => void explainAll()}>
           {explaining ?? `Explain all remaining (${unexplained})`}
@@ -111,10 +115,20 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
     setChecked((c) => (c.length ? c : suggested(help)));
   }, [help]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (id: string) => setChecked((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
-  const entry = checked.length === 1 ? checked[0] : ""; // a bullet belongs to exactly one role
+  // The drafted bullet goes under one checked job (never a project): the one with the fewest
+  // bullets; on a tie, the most recent. The user can switch it.
+  const jobs = entries.filter((e) => checked.includes(e.id) && !e.project);
+  const pick = jobs.slice().sort((a, b) => a.bullets - b.bullets || (b.end ?? -1) - (a.end ?? -1))[0]?.id ?? "";
+  const [chosen, setChosen] = useState<string>("");
+  const entry = jobs.some((e) => e.id === chosen) ? chosen : pick;
+  const [extras, setExtras] = useState<string[]>([]);
   const [sameAs, setSameAs] = useState<string>(gap.known_as ?? "");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState<string>("");
+  // A draft is written for one job: a new target job means a new draft.
+  useEffect(() => {
+    setDraft(null);
+  }, [entry]);
 
   const filled = (v: string) => v.trim().length > 0;
   const run = <T,>(what: string, p: Promise<T>, then: (v: T) => void) => {
@@ -136,13 +150,14 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
       run("draft", api.draft(id, { kind: gap.kind, requirement: gap.requirement, entry_id: entry, story, proof: proof || undefined }), (d) => {
         setDraft(d);
         setText(d.text);
+        setExtras([]);
       });
     }
   };
 
   const handleSave = () => {
     if (filled(text)) {
-      run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", entry_id: entry, text, tags: draft?.tags, story, proof: proof || undefined }), onAnswered);
+      run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", entry_id: entry, text, tags: draft?.tags, story, proof: proof || undefined, entry_ids: checked, extra_skills: extras }), onAnswered);
     }
   };
 
@@ -218,7 +233,16 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
             onClick={() => run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", as_skill: true, entry_ids: checked, story, proof: proof || undefined }), onAnswered)}>
             Add as a skill ({checked.length} role{checked.length === 1 ? "" : "s"})
           </button>
-          {checked.length !== 1 && <div className="muted small">Check exactly one role to draft a bullet for it.</div>}
+          {checked.length > 0 && !entry && <div className="muted small">Check a job too: bullets go under jobs, not projects.</div>}
+          {entry && (
+            <div className="muted small">
+              Bullet goes under{" "}
+              <select value={entry} onChange={(e) => setChosen(e.target.value)}>
+                {jobs.map((e) => <option key={e.id} value={e.id}>{e.title + (e.company ? " · " + e.company : "")} ({e.bullets} bullets)</option>)}
+              </select>
+              {" "}(the checked job with the fewest bullets; on a tie, the most recent).{checked.length > 1 ? " The skill is saved with every checked role as context." : ""}
+            </div>
+          )}
           {gap.kind !== "keyword" && (
             <div className="muted small">As a skill this counts 0.3 of 1 for a {gap.kind === "must" ? "must-have" : gap.kind === "theme" ? "responsibility" : "nice-to-have"}; a bullet counts 0.85.{gap.kind === "must" ? " A must-have needs 0.5, so a bullet at your strongest role helps more." : ""}</div>
           )}
@@ -227,7 +251,20 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
               <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />
               <div>Words: {text.split(/\s+/).filter(word => word.length > 0).length} of 25</div>
               {draft.codes.length > 0 && <div className="banner error">The draft adds what your answer does not say ({draft.codes.join(", ")}). Edit it so it only states your facts.</div>}
-              <button className="btn tiny" onClick={handleSave} disabled={!filled(text) || busy === "answer"}>Add to my bank and re-score</button>
+              {draft.skills.length > 0 && (
+                <div className="roles">
+                  <div className="muted small">Your story also names these. Tick the ones to add as skills:</div>
+                  {draft.skills.map((sk) => (
+                    <label key={sk} className="role-check">
+                      <input type="checkbox" checked={extras.includes(sk)} onChange={() => setExtras((x) => (x.includes(sk) ? x.filter((y) => y !== sk) : [...x, sk]))} />
+                      {sk}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <button className="btn tiny" onClick={handleSave} disabled={!filled(text) || busy === "answer"}>
+                {"Add bullet" + (checked.length > 1 ? " + skill" : "") + (extras.length ? ` + ${extras.length} more skill${extras.length === 1 ? "" : "s"}` : "") + " and re-score"}
+              </button>
             </div>
           )}
         </div>

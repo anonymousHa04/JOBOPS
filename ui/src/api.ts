@@ -54,6 +54,17 @@ export type ScoreDetail = {
 };
 export type ScoreError = { error: string; message: string };
 
+export type GapKind = "must" | "nice" | "keyword";
+export type GapAnswer = "have" | "other_name" | "learnable" | "no";
+export type GapHelp = { meaning: string; similar_terms: string[]; related: { bullet_id: string; why: string }[]; questions: string[] };
+export type Gap = { kind: GapKind; requirement: string; help: GapHelp | null; answer: GapAnswer | null; outcome: string | null; updated_at: string | null };
+export type GapList = { gaps: Gap[]; years: string | null; entries: { id: string; title: string; company: string | null; dates: string }[] };
+export type Draft = { text: string; tags: string[]; codes: string[] };
+export type AnswerBody = {
+  kind: GapKind; requirement: string; answer: GapAnswer;
+  entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
+};
+
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
 
 export type StageCount = { queued: number; leased: number; done: number; failed: number };
@@ -94,7 +105,16 @@ export const api = {
   batch: (id: number) => call<Batch>("GET", `/batches/${id}`),
   startBatch: (limit: number) => call<{ batch_id: number }>("POST", "/batches", { limit }),
   sweep: () => call<{ batch_id: number; queued: number }>("POST", "/batches/sweep"),
-  retryBatch: (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`)
+  retryBatch: (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`),
+  gaps: (id: string) => call<GapList>("GET", `/ui/jobs/${id}/gaps`),
+  gapHelp: (id: string, kind: GapKind, requirement: string, refresh = false) =>
+    call<GapHelp>("POST", `/ui/jobs/${id}/gaps/help`, { kind, requirement, refresh }),
+  draft: (id: string, body: { kind: GapKind; requirement: string; entry_id: string; story: string; proof?: string }) =>
+    call<Draft>("POST", `/ui/jobs/${id}/gaps/draft`, body),
+  answer: (id: string, body: AnswerBody) =>
+    call<{ outcome: string; bullet_id: string | null; rescore_batch: number }>("POST", `/ui/jobs/${id}/gaps/answer`, body),
+  rescore: (id: string) => call<{ rescore_batch: number }>("POST", `/ui/jobs/${id}/rescore`),
+  prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`)
 };
 
 // Shared labels and helpers.

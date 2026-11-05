@@ -4,6 +4,7 @@ import type { Card } from "./api";
 import { HealthBar } from "./HealthBar";
 import { AppBoard, PipelineBoard } from "./Board";
 import { JobDrawer } from "./JobDrawer";
+import type { Tab } from "./JobDrawer";
 import { Batches } from "./Batches";
 
 type View = "pipeline" | "applications" | "batches";
@@ -13,6 +14,8 @@ export function App() {
   const [jobs, setJobs] = useState<Card[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [openTab, setOpenTab] = useState<Tab | undefined>(undefined);
+  const openJob = (id: string, tab?: Tab) => { setOpenTab(tab); setOpen(id); };
   const [query, setQuery] = useState("");
   const [showSkipped, setShowSkipped] = useState(false);
 
@@ -61,12 +64,12 @@ export function App() {
       <main className="content">
         {error && <div className="banner error">API not reachable: {error}. Start it with <code>node api/src/server.ts</code>.</div>}
         {!jobs && !error && <div className="muted pad">Loading…</div>}
-        {jobs && view === "pipeline" && <PipelineBoard jobs={shown} showSkipped={showSkipped} onOpen={setOpen} />}
-        {jobs && view === "applications" && <AppBoard jobs={shown} onOpen={setOpen} onChanged={load} />}
-        {view === "batches" && <Batches onOpen={setOpen} onChanged={load} />}
+        {jobs && view === "pipeline" && <PipelineBoard jobs={shown} showSkipped={showSkipped} onOpen={openJob} />}
+        {jobs && view === "applications" && <AppBoard jobs={shown} onOpen={openJob} onChanged={load} />}
+        {view === "batches" && <Batches onOpen={openJob} onChanged={load} />}
       </main>
 
-      {open && <JobDrawer id={open} onClose={() => setOpen(null)} onChanged={load} />}
+      {open && <JobDrawer key={open + (openTab ?? "")} id={open} initialTab={openTab} onClose={() => setOpen(null)} onChanged={load} />}
     </div>
   );
 }

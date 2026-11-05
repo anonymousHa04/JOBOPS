@@ -77,6 +77,16 @@ export function openDb(path: string): Db {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS application_tasks_job ON application_tasks (job_id);
+    CREATE TABLE IF NOT EXISTS gap_notes (
+      job_id TEXT NOT NULL REFERENCES jobs(id),
+      requirement TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('must', 'nice', 'keyword')),
+      help TEXT,
+      answer TEXT CHECK (answer IN ('have', 'other_name', 'learnable', 'no')),
+      outcome TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (job_id, requirement)
+    );
   `);
   return db;
 }

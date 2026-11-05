@@ -27,3 +27,6 @@ bench/**/*.json
 bench/**/*.csv
 bench/**/*.out
 ui/dist/
+
+# bin/jobops builds the ctl binary here
+ctl/.bin/

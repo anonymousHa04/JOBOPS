@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, APP_LABEL, APP_STATUSES, bandClass, STATE_LABEL } from "./api";
+import type { Tab } from "./JobDrawer";
 import type { AppStatus, Card, Pipeline } from "./api";
 
 const PIPELINE: Pipeline[] = ["new", "parsing", "parsed", "scoring", "to_tailor", "tailoring", "tailored", "not_tailored", "failed", "skipped"];
@@ -49,21 +50,25 @@ export function PipelineBoard({ jobs, showSkipped, onOpen }: { jobs: Card[]; sho
 }
 
 // The tracker: drag cards between your own statuses.
-export function AppBoard({ jobs, onOpen, onChanged }: { jobs: Card[]; onOpen: (id: string) => void; onChanged: () => void }) {
+export function AppBoard({ jobs, onOpen, onChanged }: { jobs: Card[]; onOpen: (id: string, tab?: Tab) => void; onChanged: () => void }) {
   const [over, setOver] = useState<AppStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const tracked = jobs.filter((j) => j.application);
 
   const drop = async (status: AppStatus, id: string) => {
     setOver(null);
-    try { await api.setApplication(id, status); onChanged(); } catch (e) { setErr((e as Error).message); }
+    try {
+      await api.setApplication(id, status);
+      onChanged();
+      if (status === "interested") onOpen(id, "gaps"); // fill the job's gaps right away
+    } catch (e) { setErr((e as Error).message); }
   };
 
   return (
     <>
       {err && <div className="banner error">{err}</div>}
       {!tracked.length && (
-        <div className="banner">No tracked jobs yet. Open a job on the Pipeline board and choose “Track” to add it here.</div>
+        <div className="banner">No tracked jobs yet. Open a job on the Pipeline board and choose “Track”. Drop a job into Interested to fill its gaps.</div>
       )}
       <div className="board">
         {APP_STATUSES.map((s) => {

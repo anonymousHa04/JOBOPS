@@ -56,3 +56,9 @@ tasks:
     model: qwen2.5:7b
     timeout_s: 180
     max_tokens: 1500
+
+  gap_help:     # Gaps tab: what a missing requirement means, and a bullet drafted from the user's answer
+    model: qwen2.5:14b
+    env: JOBOPS_REWORD_MODEL
+    timeout_s: 180
+    max_tokens: 800

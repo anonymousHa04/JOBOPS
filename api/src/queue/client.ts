@@ -40,6 +40,8 @@ export const startBatch = (limit: number, parseVersion: string) =>
 export const batches = () => call<unknown[]>("GET", "/batches");
 export const batch = (id: number) => call<unknown>("GET", `/batches/${id}`);
 export const sweep = (max = 50) => call<{ batch_id: number; queued: number }>("POST", "/sweep", { max });
+
+export const rescore = (jobId: string) => call<{ batch_id: number }>("POST", "/rescore", { job_id: jobId });
 export const retryBatch = (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`);
 export const ping = (worker: string) => call<void>("POST", "/workers/ping", { worker });
 // When each worker group last asked for work or pinged (ISO times, by group: laptop, mac).

@@ -145,6 +145,29 @@ func Handler(s *store.Store) http.Handler {
 		send(w, http.StatusOK, map[string]int64{"batch_id": id, "queued": int64(n)})
 	})
 
+	mux.HandleFunc("POST /rescore", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			JobID string `json:"job_id"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		if in.JobID == "" {
+			fail(w, http.StatusBadRequest, "job_id is required")
+			return
+		}
+		id, err := s.Rescore(in.JobID)
+		if errors.Is(err, store.ErrNotParsed) {
+			fail(w, http.StatusConflict, "job not parsed")
+			return
+		}
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		send(w, http.StatusOK, map[string]int64{"batch_id": id})
+	})
+
 	mux.HandleFunc("POST /lease", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Stages []string `json:"stages"`

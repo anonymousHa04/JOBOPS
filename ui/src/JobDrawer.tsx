@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { api, ApiError, APP_LABEL, APP_STATUSES, bandClass, fmtDate, STATE_LABEL } from "./api";
 import type { Application, AppStatus, JobDetail, ScoreDetail } from "./api";
 import { ScoreView } from "./Score";
+import { GapsView } from "./Gaps";
 
-type Tab = "overview" | "score" | "tracking" | "description";
+export type Tab = "overview" | "score" | "gaps" | "tracking" | "description";
 
-export function JobDrawer({ id, onClose, onChanged }: { id: string; onClose: () => void; onChanged: () => void }) {
+export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; initialTab?: Tab; onClose: () => void; onChanged: () => void }) {
   const [d, setD] = useState<JobDetail | null>(null);
   const [score, setScore] = useState<ScoreDetail | null>(null);
   const [scoreErr, setScoreErr] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
+  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
     setD(null); setScore(null); setScoreErr(null); setErr(null);
@@ -45,16 +47,19 @@ export function JobDrawer({ id, onClose, onChanged }: { id: string; onClose: () 
                 {d.application.status && <span className="chip accent">{APP_LABEL[d.application.status]}</span>}
                 <span className="muted">{d.job.location ?? "No location"}</span>
                 <a href={d.job.source_url} target="_blank" rel="noreferrer">Open posting ↗</a>
+                <button className="btn tiny" title="Copies the job, how it was scored and your gaps (no resume text, no contact details) for Claude or ChatGPT to find your weak points." onClick={() => api.prompt(id).then((r) => navigator.clipboard.writeText(r.prompt)).then(() => setCopied("Copied")).catch((e: Error) => setCopied("Copy failed: " + e.message)).finally(() => setTimeout(() => setCopied(null), 4000))}>{copied ?? "Copy as prompt"}</button>
               </div>
             </div>
+            <div className="muted small prompt-note">Copy as prompt: the job, how it was scored, and your gaps, for a stronger model to find your weak points. No resume text or contact details are included.</div>
             <nav className="drawer-tabs">
-              {(["overview", "score", "tracking", "description"] as Tab[]).map((t) => (
+              {(["overview", "score", "gaps", "tracking", "description"] as Tab[]).map((t) => (
                 <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
               ))}
             </nav>
             <div className="drawer-body">
               {tab === "overview" && <Overview d={d} score={score} scoreErr={scoreErr} onScore={() => setTab("score")} />}
               {tab === "score" && (score ? <ScoreView d={score} /> : <div className="banner">{scoreErr ?? "Computing…"}</div>)}
+              {tab === "gaps" && <GapsView id={id} onChanged={() => { onChanged(); api.score(id).then(setScore).catch(() => undefined); }} />}
               {tab === "tracking" && <Tracking id={id} app={d.application} onChange={setApp} />}
               {tab === "description" && <pre className="description">{d.job.description}</pre>}
             </div>

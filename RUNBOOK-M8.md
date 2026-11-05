@@ -5,7 +5,11 @@ workers and the gateway (web UI) start on their own when Docker Desktop starts, 
 restarts any of them that crashes. The models stay outside the cluster: general14 and embed on
 the Mac (Metal GPU), general7 on the laptop.
 
-One command does almost everything: `bin/jobops`. Run it without arguments for the list.
+One command does almost everything: `bin/jobops`. Run it without arguments for the list. It is
+a Go program (`ctl/`, standard library only); `bin/jobops` builds it when its code changed and
+runs it. Its background part keeps the two port-forwards alive: one supervisor process
+(`ctl/.bin/jobops _forward`, its pid in `data/port-forward.pid`, its log in
+`data/port-forward.log`) restarts a forward when its pod is replaced.
 
 ## Daily use
 
@@ -14,13 +18,14 @@ One command does almost everything: `bin/jobops`. Run it without arguments for t
     bin/jobops cli batch start --limit 3
     bin/jobops logs worker-laptop
 
-After a reboot:
+After a reboot, or any morning:
 
 1. Laptop: double-click `C:\llama\start-server.cmd` (never an auto-start task).
-2. Mac: start Docker Desktop. Kubernetes and every JobOps pod come back by themselves.
-3. Mac models: `.claude/bin/llm.sh start general14` and `.claude/bin/llm.sh start embed`.
-4. `bin/jobops ui` to open localhost:8080 (UI) and localhost:3000 (Chrome extension) again.
-   These two forwards are the one part that does not start on its own.
+2. Mac: `bin/jobops start`. It starts Docker Desktop and waits for Kubernetes, starts Qdrant,
+   brings the pods back (one each), stops the coder model if no coder run is active, starts
+   general14 and embed, checks the laptop model, opens localhost:8080 (UI) and localhost:3000
+   (extension), and prints what the health bar shows. Each line says `[ok]` or `[!!]` with the
+   fix. From cold it takes about a minute and a half.
 
 After changing code: `bin/jobops up` (builds the image, applies the manifests, restarts the pods).
 
@@ -118,7 +123,7 @@ need; the raw ones, if you want to look around:
 | Symptom | Check |
 |---|---|
 | `bin/jobops`: "Kubernetes is not running" | Docker Desktop started? Settings > Kubernetes green? |
-| localhost:8080 does not answer | `bin/jobops ui`; then `data/port-forward-gateway.log` |
+| localhost:8080 does not answer | `bin/jobops ui`; then `data/port-forward.log` |
 | A pod is `CrashLoopBackOff` | `bin/jobops logs <name>`; `kubectl -n jobops describe pod <pod>` |
 | A worker pod is `Init:0/1` | it waits for the queue: `bin/jobops logs queue` |
 | Health bar: general14 or embed down | start them on the Mac with `.claude/bin/llm.sh` |

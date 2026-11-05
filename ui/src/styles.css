@@ -150,6 +150,47 @@ td.bad { color: var(--bad); font-weight: 700; }
 .task-state.done { color: var(--ok); }
 .task-state.leased, .task-state.queued { color: var(--accent); }
 
+.gap {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.gap.answered {
+  opacity: 0.75;
+}
+
+.gap-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.gap-help {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.gap-help ul {
+  padding-left: 18px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.gap textarea, .gap input, .gap select {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+}
+
+.prompt-note {
+  margin-top: 4px;
+}
+
 .bar { position: relative; height: 16px; min-width: 110px; background: var(--bg-4); border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; background: var(--accent); }
 .bar span { position: absolute; inset: 0; font-size: 11px; display: grid; place-items: center; }

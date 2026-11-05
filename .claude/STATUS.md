@@ -5,7 +5,10 @@ Handoff for the next session. Update this file at the end of every milestone
 
 Last updated: 2026-11-04, Milestone 8 (containers, local Kubernetes, gateway, CI) built on
 branch `milestone-8`, uncommitted. JobOps now runs in Docker Desktop's Kubernetes: `bin/jobops
-status`, UI at localhost:8080 (`RUNBOOK-M8.md`). The local tmux stack is stopped: run one or the
+status`, UI at localhost:8080 (`RUNBOOK-M8.md`); `bin/jobops start` brings everything up in one
+command (checked from cold, 2026-11-05: 78 s). `bin/jobops` is now a Go program (`ctl/`, 2026-11-05;
+shell version kept at `.agent-logs/jobops.shell-version.sh`): a real supervisor keeps the
+port-forwards alive; `ctl` has no tests yet (test plan waits for the user). The local tmux stack is stopped: run one or the
 other, never both. Next: commit and merge M8 when the user says, first CI run, then Milestone 6.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.

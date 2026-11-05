@@ -11,6 +11,7 @@ import { draftBullet, gapHelp } from "./gap-model.ts";
 import { answerGap, gapList } from "./gaps.ts";
 import { autoCarry, carryAnswers, declineCarried, linkSame, matchSimilar, reuseAnswer, setAutoCarry } from "./gap-memory.ts";
 import { analysisPrompt } from "./prompt.ts";
+import { event, shortId, warnEvent } from "../log.ts";
 import { bulkDelete, bulkPreview, deleteHints, deleteJob, DeleteRefused, deleteSkipMatches, setKept, skipMatches } from "../jobs/delete.ts";
 
 const AppBody = z.object({ status: z.enum(APP_STATUSES).nullable(), note: z.string().max(2000).nullable().optional() }).strict();
@@ -157,12 +158,21 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     }
   };
 
+  // Browser errors (the UI sends them here so they show in the api log next to the requests).
+  app.post<{ Body: unknown }>("/ui/client-log", async (request, reply) => {
+    const body = z.object({ message: z.string().max(2000), where: z.string().max(300).optional() }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    warnEvent(`ui error${body.data.where ? ` (${body.data.where})` : ""}: ${body.data.message.replace(/\s+/g, " ").slice(0, 600)}`);
+    return { ok: true };
+  });
+
   // Whether exact earlier answers are filled in automatically (default) or only proposed.
   app.get("/ui/gaps/settings", async () => ({ auto_carry: autoCarry(db) }));
   app.post<{ Body: unknown }>("/ui/gaps/settings", async (request, reply) => {
     const body = z.object({ auto_carry: z.boolean() }).strict().safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
     setAutoCarry(db, body.data.auto_carry);
+    event(`gaps setting: fill exact matches automatically ${body.data.auto_carry ? "on" : "off"}`);
     return { auto_carry: autoCarry(db) };
   });
 
@@ -216,7 +226,9 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: { id: string } }>("/ui/jobs/:id/rescore", async (request, reply) => {
     if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
     try {
-      return { rescore_batch: (await rescore(request.params.id)).batch_id };
+      const batch = (await rescore(request.params.id)).batch_id;
+      event(`rescore queued (job ${shortId(request.params.id)}): batch ${batch}`);
+      return { rescore_batch: batch };
     } catch (err) {
       return reply.status(503).send({ error: "queue_down", message: message(err) });
     }
@@ -243,7 +255,9 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     }
     if (!st.can_tailor) return reply.status(409).send({ error: "not_ready", message: st.reasons.join(" ") });
     try {
-      return { tailor_batch: (await tailorNow(request.params.id)).batch_id };
+      const batch = (await tailorNow(request.params.id)).batch_id;
+      event(`tailor queued (job ${shortId(request.params.id)}): batch ${batch}`);
+      return { tailor_batch: batch };
     } catch (err) {
       return reply.status(503).send({ error: "queue_down", message: message(err) });
     }
@@ -325,6 +339,7 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     try {
       const r = await rescoreJobs(ids);
       markRescoredAll(db);
+      event(`rescore all queued: ${r.queued} jobs, batch ${r.batch_id}`);
       return r;
     } catch (err) {
       return reply.status(503).send({ error: "queue_down", message: message(err) });

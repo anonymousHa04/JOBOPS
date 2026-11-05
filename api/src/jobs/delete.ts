@@ -9,6 +9,7 @@ import { addSkipKeywords, loadPreferences, roleWords } from "../profile/bank.ts"
 import { forgetJob } from "../queue/client.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import { gapList } from "../ui/gaps.ts";
+import { event, plural, warnEvent } from "../log.ts";
 import { pdfDir } from "../render/render.ts";
 import { recordsDir } from "../tailor/records.ts";
 
@@ -116,14 +117,19 @@ export async function deleteJob(db: Db, jobId: string, why: DeleteReason = {}): 
       kwError = err instanceof Error ? err.message : String(err);
     }
   }
+  event(`job deleted: ${job.company} · ${job.title}${why.reason ? ` (${why.reason})` : ""}`
+    + (resumes.length ? `; ${plural(resumes.length, "resume record")} and ${plural(files, "file")} removed` : "")
+    + (tasks ? `; ${plural(tasks, "queue task")} forgotten` : ""));
+  if (added.length) event(`skip words added: ${added.join(", ")}`);
+  if (refused.length) event(`skip words refused (your target-role words): ${refused.join(", ")}`);
+  if (kwError) warnEvent(`skip words not saved: ${kwError}`);
   return { resumes: resumes.length, files, tasks, keywords_added: added, keywords_refused: refused, keywords_error: kwError };
 }
 
 // --- Delete every job with a skip word (top bar) ------------------------------------------
 // The stored jobs whose title or description has one of the user's skip words (whole words,
-// as jd-search matches them). Jobs marked applied, interview or offer are never in a bulk
-// delete: they are listed apart (kept) and can be deleted one by one from the drawer.
-// resumes: tailored resumes the job has (they are deleted with it); the UI marks those jobs.
+// as jd-search matches them) and that are not tailored. Never included: tailored jobs (they
+// have resumes), jobs marked applied, interview or offer, and kept jobs.
 export type SkipMatch = { id: string; title: string; company: string; word: string; status: string | null; resumes: number };
 const KEEP = new Set(["applied", "interview", "offer"]);
 
@@ -147,7 +153,7 @@ export function skipMatches(db: Db): { keywords: string[]; jobs: SkipMatch[]; ke
     const word = keywords.find((w) => hasWord(text, w));
     if (!word) continue;
     const m = { id: r.id, title: r.title, company: r.company, word, status: r.status, resumes: r.resumes };
-    (r.status && KEEP.has(r.status) ? kept : jobs).push(m);
+    (r.resumes > 0 || (r.status && KEEP.has(r.status)) ? kept : jobs).push(m);
   }
   return { keywords, jobs, kept };
 }
@@ -171,6 +177,8 @@ export async function deleteSkipMatches(db: Db, ids: string[]): Promise<{
       out.refused.push({ title: m.title, company: m.company, message: err instanceof Error ? err.message : String(err) });
     }
   }
+  event(`jobs deleted (skip words): ${out.deleted} of ${new Set(ids).size} ticked; ${plural(out.resumes, "resume record")} removed`
+    + (out.skipped ? `; ${out.skipped} no longer matched` : "") + (out.refused.length ? `; ${out.refused.length} refused` : ""));
   return out;
 }
 
@@ -185,6 +193,8 @@ export function setKept(db: Db, jobId: string, keep: boolean): { kept: boolean }
   } else {
     db.prepare("DELETE FROM kept_jobs WHERE job_id = ?").run(jobId);
   }
+  const j = db.prepare("SELECT title, company FROM jobs WHERE id = ?").get(jobId) as { title: string; company: string };
+  event(`${keep ? "job kept" : "keep removed"}: ${j.company} · ${j.title}`);
   return { kept: keep };
 }
 
@@ -222,5 +232,7 @@ export async function bulkDelete(db: Db, ids: string[], opts: { include_applied:
       out.refused.push({ title: item.title, company: item.company, message: err instanceof Error ? err.message : String(err) });
     }
   }
+  event(`jobs deleted (board selection): ${out.deleted} of ${new Set(ids).size} ticked; ${plural(out.resumes, "resume record")} removed`
+    + (out.left_applied ? `; ${out.left_applied} applied left` : "") + (out.refused.length ? `; ${out.refused.length} refused` : ""));
   return out;
 }

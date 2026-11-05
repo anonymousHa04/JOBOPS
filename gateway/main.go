@@ -57,9 +57,36 @@ func handler(uiDir, apiURL string) (http.Handler, error) {
 		w.Header().Set("content-type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
-	mux.Handle("/api/", proxy)
+	mux.Handle("/api/", logWrites(proxy))
 	mux.Handle("/", spa(uiDir))
 	return mux, nil
+}
+
+// statusWriter remembers the status code the proxy wrote.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusWriter) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// logWrites logs every request that changes something (not GET/HEAD, which the UI polls every
+// 15 s) and every failed request: method, path, status, time. bin/jobops watch shows these.
+func logWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			if sw.status < 400 {
+				return
+			}
+		}
+		log.Printf("%s %s %d %d ms", r.Method, r.URL.Path, sw.status, time.Since(start).Milliseconds())
+	})
 }
 
 // spa serves files from dir; a path with no such file gets index.html (the UI has one page).

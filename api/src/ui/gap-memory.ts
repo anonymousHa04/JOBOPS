@@ -17,6 +17,7 @@ import { addSkill, forgetLearnable, loadBank, loadSkillsExtra, recordLearnable }
 import type { Bank, SkillsExtra } from "../profile/schema.ts";
 import { allBullets } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
+import { event, plural, shortId, warnEvent } from "../log.ts";
 import { gapList } from "./gaps.ts";
 import type { GapAnswer, GapKind } from "./gaps.ts";
 
@@ -271,6 +272,7 @@ export function carryAnswers(db: Db, jobId: string): { carried: number; rescore:
     rescore = apply(db, jobId, g, g.reuse.exact).rescore || rescore;
     carried++;
   }
+  if (carried) event(`gaps (job ${shortId(jobId)}): ${plural(carried, "earlier answer")} carried`);
   return { carried, rescore };
 }
 
@@ -286,9 +288,11 @@ export function reuseAnswer(db: Db, jobId: string, input: { kind: GapKind; requi
   if (p.match === "exact") {
     if (input.accept) return apply(db, jobId, g, p);
     markDeclined(db, jobId, g);
+    event(`gap (job ${shortId(jobId)}): earlier answer not used for "${g.requirement}"`);
     return { outcome: "not used for this job", rescore: false };
   }
   saveLink(db, askKey(g.requirement), askKey(p.requirement), input.accept ? "same" : "different", "user", null);
+  event(`gap (job ${shortId(jobId)}): "${g.requirement}" ${input.accept ? "=" : "≠"} "${p.requirement}" (your verdict, remembered)`);
   if (!input.accept) return { outcome: "not the same: not proposed again", rescore: false };
   return apply(db, jobId, g, { ...p, match: "learned" });
 }
@@ -316,6 +320,7 @@ export function declineCarried(db: Db, jobId: string, requirement: string): void
   if (row.answer === "learnable") forgetLearnable(requirement, jobId);
   db.prepare("UPDATE gap_notes SET answer = NULL, outcome = NULL, carried_from = 'declined', input = NULL, updated_at = ? WHERE job_id = ? AND requirement = ?")
     .run(new Date().toISOString(), jobId, requirement);
+  event(`gap (job ${shortId(jobId)}): carried answer undone for "${requirement}"`);
 }
 
 const MatchSchema = z.object({ same: z.array(z.number().int()).max(MAX_SIMILAR) });
@@ -351,7 +356,10 @@ export async function matchSimilar(db: Db, jobId: string, opts: { baseUrl?: stri
     try {
       await ensureModel("gap_match", "to check earlier answers");
     } catch (err) {
-      if (err instanceof ModelDownError) return { ...stats, failed: todo.length, error: err.message };
+      if (err instanceof ModelDownError) {
+        warnEvent(`gap match (job ${shortId(jobId)}): ${plural(todo.length, "gap")} not checked: ${err.message}`);
+        return { ...stats, failed: todo.length, error: err.message };
+      }
       throw err;
     }
   }
@@ -374,5 +382,7 @@ export async function matchSimilar(db: Db, jobId: string, opts: { baseUrl?: stri
   await Promise.all(Array.from({ length: Math.min(PARALLEL, todo.length) }, async () => {
     while (next < todo.length) await one(todo[next++]);
   }));
+  if (stats.error) warnEvent(`gap match (job ${shortId(jobId)}): ${stats.checked} pairs checked, then the model failed: ${stats.error}`);
+  else event(`gap match (job ${shortId(jobId)}, ${model}): ${plural(stats.checked, "pair")} checked, ${stats.same} same`);
   return stats;
 }

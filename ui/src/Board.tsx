@@ -5,8 +5,8 @@ import type { AppStatus, Card, Pipeline } from "./api";
 
 const PIPELINE: Pipeline[] = ["new", "parsing", "parsed", "scoring", "to_tailor", "tailoring", "tailored", "not_tailored", "failed", "skipped"];
 
-// Columns whose cards can be ticked for "Delete N selected" (top bar).
-export const SELECTABLE: Pipeline[] = ["tailored", "not_tailored", "skipped"];
+// Only Skipped cards can be ticked, for "Delete N selected" (top bar).
+export const SELECTABLE: Pipeline[] = ["skipped"];
 
 function JobCard({ job, onOpen, draggable, selected, onToggle }: {
   job: Card; onOpen: (id: string) => void; draggable?: boolean; selected?: boolean; onToggle?: (id: string) => void;

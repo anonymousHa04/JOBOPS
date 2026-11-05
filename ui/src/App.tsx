@@ -20,7 +20,7 @@ export function App() {
   const openJob = (id: string, tab?: Tab) => { setOpenTab(tab); setOpen(id); };
   const [query, setQuery] = useState("");
   const [showSkipped, setShowSkipped] = useState(false);
-  // Jobs ticked on the board (Tailored, Not tailored, Skipped) for "Delete N selected".
+  // Skipped jobs ticked on the board, for "Delete N selected".
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const select = (ids: string[], on: boolean) => setSelected((cur) => {
     const next = new Set(cur);
@@ -38,7 +38,7 @@ export function App() {
   // A ticked job that left the board (deleted, moved to another column) is no longer ticked.
   useEffect(() => {
     if (!jobs) return;
-    const ok = new Set(jobs.filter((j) => ["tailored", "not_tailored", "skipped"].includes(j.state)).map((j) => j.id));
+    const ok = new Set(jobs.filter((j) => j.state === "skipped").map((j) => j.id));
     setSelected((cur) => ([...cur].every((id) => ok.has(id)) ? cur : new Set([...cur].filter((id) => ok.has(id)))));
   }, [jobs]);
 

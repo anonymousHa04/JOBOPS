@@ -129,6 +129,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 export class ApiError extends Error {
   constructor(public status: number, message: string, public data: unknown) {
     super(message);
+    this.name = "ApiError"; // clientLog.ts skips these: the API logged the failed request
   }
 }
 

@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import type { FastifyInstance } from "fastify";
 import { JobInputSchema, JobListQuerySchema } from "./jobs/schema.ts";
 import type { Db } from "./db.ts";
@@ -6,9 +6,26 @@ import { createJobRepository } from "./jobs/repository.ts";
 import { extensionRoutes } from "./extension/routes.ts";
 import { queueRoutes } from "./queue/routes.ts";
 import { uiRoutes } from "./ui/routes.ts";
+import { lineStream, setEventSink } from "./log.ts";
 
 export function buildApp(opts: { db: Db; logger?: boolean }): FastifyInstance {
-    const app = Fastify({ logger: opts.logger ?? false });
+    // The server logs one readable line per request worth seeing (log.ts), not Fastify's two
+    // JSON lines per request: the UI polls every 15 s, which buried everything else.
+    const app = Fastify(opts.logger
+        ? { logger: { level: "info", stream: lineStream }, logController: new LogController({ disableRequestLogging: true }) }
+        : { logger: false });
+    if (opts.logger) {
+        setEventSink({ info: (m) => app.log.info(m), warn: (m) => app.log.warn(m) });
+        // Writes, errors and slow requests always; a successful GET (polling) only when slow.
+        app.addHook("onResponse", async (req, reply) => {
+            const ms = reply.elapsedTime;
+            const status = reply.statusCode;
+            if (req.method === "GET" && status < 400 && ms < 2000) return;
+            const line = `${req.method} ${req.url} ${status} ${Math.round(ms)} ms`;
+            if (status >= 400) app.log.warn(line);
+            else app.log.info(line);
+        });
+    }
 
     const jobs = createJobRepository(opts.db);
     extensionRoutes(app, opts.db);

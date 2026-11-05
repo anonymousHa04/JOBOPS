@@ -97,7 +97,8 @@ with the other open test plans, first CI run, merge M8 into `dev`, then Mileston
       - Checked with Playwright and `jd-search check` on demo data.
       - The suggestions are this job's red Gaps keywords plus its title words. "Already on
         your skip list" shows only the saved words this job has.
-      - Top bar **Delete N jobs with skip words** (`ui/src/SkipDelete.tsx`; routes
+      - Top bar **Delete N jobs with skip keywords** (simplified 2026-11-06: no per-job
+        checkboxes; never takes tailored, applied or kept jobs) (`ui/src/SkipDelete.tsx`; routes
         `GET /ui/skip-matches`, `POST /ui/skip-matches/delete`) counts live: title or
         description, whole words. A confirm panel lists each job with the word it matched,
         then each is deleted through `deleteJob`, with reason `skip word: <w>`.
@@ -111,13 +112,27 @@ with the other open test plans, first CI run, merge M8 into `dev`, then Mileston
         - Their 4 resumes (YAML and PDF) are lost: no snapshots, Time Machine not mounted.
           Next: Re-score, then Tailor now.
         - The live DB just before the restore: `jobops-20261106-011723.db`.
-      - Board selection (user, 2026-11-06): cards in Tailored, Not tailored and Skipped have
-        a checkbox, and each of those column headers ticks the whole column.
+      - Board selection (user, 2026-11-06, simplified the same day): only Skipped cards have a
+        checkbox, and the Skipped column header ticks the whole column.
         - **Delete N selected** in the top bar (`ui/src/BulkDelete.tsx`; routes
           `POST /ui/jobs/bulk-delete/preview` and `/ui/jobs/bulk-delete`) opens a confirm panel:
           tailored jobs with their resume counts, kept jobs marked.
         - Applied, interview and offer jobs are deleted only with an extra tick, otherwise left.
         - Checked with Playwright on demo data.
+      - Logging for `bin/jobops watch` (user, 2026-11-06). Before, a delete showed only as two
+        JSON request lines among about 250 polling requests every 30 min.
+        - API (`api/src/log.ts`): readable `YYYY/MM/DD hh:mm:ss` lines. Successful GET polling
+          is not logged; writes, errors and requests slower than 2 s are.
+        - API action lines: job deleted (title, reason, resumes, tasks), bulk-delete
+          summaries, skip words added or refused, kept or unkept, gap answered, carried,
+          reused or undone, gap match, tailor, rescore and rescore-all queued, gap setting.
+          Ids, titles, counts and JD wording only.
+        - Browser errors go to `POST /ui/client-log` (`ui/src/clientLog.ts`, throttled) and
+          show as `WARN ui error`.
+        - Queue: a line on batch start and retry, sweep, rescore, tailor, forget, and task
+          lease, done and fail (result summary: decision, score, resume id). Worker heartbeats
+          log only state changes: up, quiet after 90 s, back.
+        - Gateway: one line per proxied write request and per failed request.
       - **Keep this job** (drawer toggle; table `kept_jobs` in both `db.ts` and the queue's
         `db.go`): a kept job is left out of the stored-job preference check
         (`FilterCandidates`) and of the bulk delete. Delete and forget drop the mark.

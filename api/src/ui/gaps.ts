@@ -7,6 +7,7 @@ import { loadRequirements } from "../requirements/parse.ts";
 import { loadVerdicts } from "../scoring/judge.ts";
 import { bankTermFor, scoreRequirements, span, yearsAsked } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
+import { event, shortId } from "../log.ts";
 import { carriedInput, reuseFor } from "./gap-memory.ts";
 import type { CarriedFrom, EarlierInput, Reuse } from "./gap-memory.ts";
 
@@ -186,5 +187,6 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
   // An answer given here replaces a carried one (and its carried_from mark).
   db.prepare("INSERT INTO gap_notes (job_id, requirement, kind, answer, outcome, carried_from, input, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?) ON CONFLICT (job_id, requirement) DO UPDATE SET answer = excluded.answer, outcome = excluded.outcome, carried_from = NULL, input = excluded.input, updated_at = excluded.updated_at").run(jobId, input.requirement, input.kind, input.answer, outcome, typed, updated_at);
 
+  event(`gap answered (job ${shortId(jobId)}): ${input.kind} "${input.requirement}": ${input.answer}, ${outcome}`);
   return { outcome, bullet_id };
 }

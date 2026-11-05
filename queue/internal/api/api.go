@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,10 +20,16 @@ var stages = map[string]bool{"fetch": true, "parse": true, "score": true, "tailo
 
 // seen: when each worker group (laptop, mac) last asked for work or pinged. In memory only:
 // the health bar uses it where pgrep cannot see the workers (each runs in its own pod).
+// The log gets a line when a worker comes up or comes back, and when it goes quiet (watchQuiet),
+// never one per heartbeat.
 type seen struct {
-	mu   sync.Mutex
-	last map[string]time.Time
+	mu    sync.Mutex
+	last  map[string]time.Time
+	quiet map[string]bool // reported quiet; the next heartbeat logs "back"
 }
+
+// quietAfter: no heartbeat or lease for this long counts as quiet (workers ping every ~30 s).
+const quietAfter = 90 * time.Second
 
 func (k *seen) mark(worker string) {
 	group, _, _ := strings.Cut(worker, "-")
@@ -29,8 +37,32 @@ func (k *seen) mark(worker string) {
 		return
 	}
 	k.mu.Lock()
+	_, known := k.last[group]
+	wasQuiet := k.quiet[group]
 	k.last[group] = time.Now().UTC()
+	delete(k.quiet, group)
 	k.mu.Unlock()
+	switch {
+	case !known:
+		log.Printf("worker %s up (%s)", group, worker)
+	case wasQuiet:
+		log.Printf("worker %s back (%s)", group, worker)
+	}
+}
+
+// watchQuiet logs each worker group that stops sending heartbeats, once until it is back.
+func (k *seen) watchQuiet(every time.Duration) {
+	for range time.Tick(every) {
+		now := time.Now().UTC()
+		k.mu.Lock()
+		for g, t := range k.last {
+			if now.Sub(t) > quietAfter && !k.quiet[g] {
+				k.quiet[g] = true
+				log.Printf("worker %s quiet: no heartbeat for %s", g, now.Sub(t).Round(time.Second))
+			}
+		}
+		k.mu.Unlock()
+	}
 }
 
 func (k *seen) all() map[string]string {
@@ -45,7 +77,8 @@ func (k *seen) all() map[string]string {
 
 func Handler(s *store.Store) http.Handler {
 	mux := http.NewServeMux()
-	workers := &seen{last: map[string]time.Time{}}
+	workers := &seen{last: map[string]time.Time{}, quiet: map[string]bool{}}
+	go workers.watchQuiet(30 * time.Second)
 
 	mux.HandleFunc("POST /workers/ping", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -87,6 +120,7 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		log.Printf("batch %d started (limit %d, parse %s)", id, in.Limit, in.ParseVersion)
 		send(w, http.StatusCreated, map[string]int64{"batch_id": id})
 	})
 
@@ -126,6 +160,7 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		log.Printf("batch %d retry: %d tasks requeued", id, n)
 		send(w, http.StatusOK, map[string]int{"requeued": n})
 	})
 
@@ -141,6 +176,9 @@ func Handler(s *store.Store) http.Handler {
 		if err != nil {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if n > 0 {
+			log.Printf("sweep (asked): batch %d queued %d parsed jobs for scoring", id, n)
 		}
 		send(w, http.StatusOK, map[string]int64{"batch_id": id, "queued": int64(n)})
 	})
@@ -163,6 +201,7 @@ func Handler(s *store.Store) http.Handler {
 				fail(w, http.StatusInternalServerError, err.Error())
 				return
 			}
+			log.Printf("rescore: batch %d queued %d of %d jobs", id, n, len(in.JobIDs))
 			send(w, http.StatusOK, map[string]int64{"batch_id": id, "queued": int64(n)})
 			return
 		}
@@ -175,6 +214,7 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		log.Printf("rescore: job %s, batch %d", short(in.JobID), id)
 		send(w, http.StatusOK, map[string]int64{"batch_id": id})
 	})
 
@@ -190,6 +230,9 @@ func Handler(s *store.Store) http.Handler {
 			return
 		}
 		id, err := s.Tailor(in.JobID)
+		if err == nil {
+			log.Printf("tailor: job %s, batch %d", short(in.JobID), id)
+		}
 		if errors.Is(err, store.ErrNotParsed) {
 			fail(w, http.StatusConflict, "job not parsed")
 			return
@@ -218,6 +261,7 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		log.Printf("forget: job %s (%d tasks removed)", short(in.JobID), n)
 		send(w, http.StatusOK, map[string]int{"removed": n})
 	})
 
@@ -249,6 +293,7 @@ func Handler(s *store.Store) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+		log.Printf("task %d leased: %s job %s, batch %d, attempt %d, by %s", t.ID, t.Stage, short(t.JobID), t.BatchID, t.Attempts, in.Worker)
 		send(w, http.StatusOK, t)
 	})
 
@@ -263,7 +308,11 @@ func Handler(s *store.Store) http.Handler {
 		if !read(w, r, &in) {
 			return
 		}
-		finish(w, s.Done(id, in.Result))
+		err := s.Done(id, in.Result)
+		if err == nil {
+			log.Printf("task %d done%s", id, summary(in.Result))
+		}
+		finish(w, err)
 	})
 
 	mux.HandleFunc("POST /tasks/{id}/fail", func(w http.ResponseWriter, r *http.Request) {
@@ -282,7 +331,11 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusBadRequest, "code is required")
 			return
 		}
-		finish(w, s.Fail(id, in.Code, in.Detail))
+		err := s.Fail(id, in.Code, in.Detail)
+		if err == nil {
+			log.Printf("task %d failed: %s %s", id, in.Code, clip(in.Detail, 200))
+		}
+		finish(w, err)
 	})
 
 	return mux
@@ -326,4 +379,50 @@ func send(w http.ResponseWriter, status int, v any) {
 
 func fail(w http.ResponseWriter, status int, msg string) {
 	send(w, status, map[string]string{"error": msg})
+}
+
+// short: the first 8 characters of a job id, as the UI shows them.
+func short(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
+// summary: the few result fields worth a log line (decision, score, resume id), never text.
+func summary(raw json.RawMessage) string {
+	var r struct {
+		Decision *string  `json:"decision"`
+		Score    *float64 `json:"score"`
+		ResumeID *string  `json:"resume_id"`
+		Fetched  *int     `json:"fetched"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &r) != nil {
+		return ""
+	}
+	var parts []string
+	if r.Decision != nil {
+		parts = append(parts, *r.Decision)
+	}
+	if r.Score != nil {
+		parts = append(parts, fmt.Sprintf("score %.1f", *r.Score))
+	}
+	if r.ResumeID != nil && *r.ResumeID != "" {
+		parts = append(parts, "resume "+*r.ResumeID)
+	}
+	if r.Fetched != nil {
+		parts = append(parts, fmt.Sprintf("fetched %d", *r.Fetched))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ": " + strings.Join(parts, ", ")
 }

@@ -205,8 +205,15 @@ async function load(page: Page, url: string): Promise<string | null> {
   return null;
 }
 
+// The installed Google Chrome on the Mac; in the container image (Linux arm64 has no Chrome)
+// the Chromium named by JOBOPS_CHROME_PATH.
+function launchOptions() {
+  const path = process.env.JOBOPS_CHROME_PATH;
+  return path ? { executablePath: path, headless: true } : { channel: "chrome", headless: true };
+}
+
 export async function list(start: string): Promise<{ ats?: Ats; jobs?: Job[]; blocked?: string }> {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch(launchOptions());
   try {
     const { page, urls } = await open(browser);
     let url = start;
@@ -279,7 +286,7 @@ export async function describe(url: string): Promise<Details | { blocked: string
   } catch {
     // Fall through to the browser.
   }
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch(launchOptions());
   try {
     const { page } = await open(browser);
     const blocked = await load(page, url);

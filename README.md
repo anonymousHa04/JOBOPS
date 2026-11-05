@@ -334,14 +334,19 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Parsed jobs are scored without a manual batch: the queue server sweeps parsed jobs that no batch has scored (`jd parse`, `job add`, older parses) every `JOBOPS_SWEEP_EVERY` (default 2m, `0` turns it off), up to 50 at a time; the score decides tailoring as in any batch. Searching for new jobs stays manual (`batch start` or the Batches tab).
 - API routes under `/ui` (board, job detail, score, application, tasks, health) and `POST /batches/sweep`.
 
-### Milestone 8 — Containerization and deployment
+### Milestone 8 — Containerization and deployment (2026-11-04)
 
-- Containerize the working components.
-- Add repeatable local development instructions.
-- Add CI and automated tests.
-- Put the Go gateway in front of the Node services.
-- Run everything on local Kubernetes, which handles supervision and restarts.
-- Introduce cloud infrastructure only when the local deployment is stable.
+- Containerize the working components: one image `jobops:dev` (`Dockerfile`, multi-stage) runs every service: the Node API, workers and CLI, the Go queue server with jd-search, and the gateway with the built UI. It includes typst, poppler and Chromium (the careers crawler; Google Chrome has no Linux arm64 build). `.dockerignore` is an allow-list, so `profile/`, `data/`, `.env` and `.scout/` never go into the image.
+- Add repeatable local development instructions: [RUNBOOK-M8.md](RUNBOOK-M8.md), with a short Kubernetes primer. The local way without Kubernetes stays in [RUNBOOK-M5.md](RUNBOOK-M5.md).
+- Add CI and automated tests: `.github/workflows/ci.yml` runs on every push and PR. It covers the API and UI typecheck, the UI build, the TypeScript tests (with typst and poppler), gofmt, vet and tests for the three Go modules, the kustomize render, and a Docker build (no push, no deploy).
+- Put the Go gateway in front of the Node services: `gateway/` (standard library only) serves `ui/dist` and passes `/api/*` to the API.
+- Run everything on local Kubernetes, which handles supervision and restarts:
+  - **Cluster:** Docker Desktop's built-in cluster (kubeadm), with manifests in `infra/k8s/` (kustomize). It has the `jobops` namespace and one Deployment each for api, queue, worker-laptop, worker-mac and gateway, with probes and Recreate updates.
+  - **Data:** the database is on the PersistentVolumeClaim `jobops-data`. `profile/` is mounted from the Mac, and `.env` becomes a Secret.
+  - **Restarts:** when a pod is deleted or crashes, a new one starts.
+- `bin/jobops` handles daily use: `up`, `down`, `status`, `logs`, `cli`, `ui`, `db-import` and `db-backup`. The UI is at localhost:8080, and the extension's API is still at localhost:3000. Both are opened as port-forwards on 127.0.0.1 only. A LoadBalancer on Docker Desktop would listen on every network of the Mac, and the UI has no login.
+- The models stay outside the cluster: pods reach general14, embed and Qdrant on the Mac through `host.docker.internal`, and general7 on the laptop. In the cluster, the health bar sees workers through a heartbeat in the queue server (`/workers`).
+- Introduce cloud infrastructure only when the local deployment is stable. PostgreSQL in place of SQLite comes later (user choice).
 
 Each milestone should end with a demonstrable, tested increment. Avoid building a large collection of empty services before the main workflow is useful.
 

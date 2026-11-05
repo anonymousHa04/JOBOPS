@@ -3,9 +3,10 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-04, Milestone 7 (UI and application tracking) merged into `dev`, built
-before Milestone 6 (user). How to run it: `RUNBOOK-M5.md` (`.claude/bin/batch-up.sh`, then
-`npm run ui`). Next: Milestone 8.
+Last updated: 2026-11-04, Milestone 8 (containers, local Kubernetes, gateway, CI) built on
+branch `milestone-8`, uncommitted. JobOps now runs in Docker Desktop's Kubernetes: `bin/jobops
+status`, UI at localhost:8080 (`RUNBOOK-M8.md`). The local tmux stack is stopped: run one or the
+other, never both. Next: commit and merge M8 when the user says, first CI run, then Milestone 6.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -64,6 +65,19 @@ before Milestone 6 (user). How to run it: `RUNBOOK-M5.md` (`.claude/bin/batch-up
     `api/src/ui/`. Queue sweep: parsed jobs no batch scored are scored every 2 minutes
     (`JOBOPS_SWEEP_EVERY`, 0 = off; `POST /batches/sweep`). First sweep (2026-11-04): 41 jobs
     scored, all not_tailored (best Okta Core Frontier 77.3 moderate, blocked by another check).
+  - **Milestone 8: containers and local Kubernetes** (branch `milestone-8`, uncommitted; written
+    by the manager on the user's request, no local coders). One image `jobops:dev` (`Dockerfile`,
+    allow-list `.dockerignore`; Chromium, typst, poppler). `infra/k8s/` (kustomize): Deployments
+    api, queue, worker-laptop, worker-mac, gateway; ClusterIP Services; PVC `jobops-data` (the
+    database); `profile/` as hostPath; Secret from `.env`; ConfigMap `jobops-cluster`
+    (host.docker.internal for the Mac's models and Qdrant). `gateway/` (Go, stdlib): ui/dist and
+    `/api` proxy. `bin/jobops` up/down/status/logs/cli/ui/db-import/db-backup; ports 8080 (UI)
+    and 3000 (extension) are port-forwards on 127.0.0.1 only. Queue worker heartbeat
+    (`/workers`, `/workers/ping`) for the health bar; workers stop cleanly on SIGTERM. CI
+    `.github/workflows/ci.yml` (not yet run: needs a push). Checked: all pods Running, deleted
+    pods replaced in seconds, UI/board/health through the gateway, `bin/jobops cli batch status`,
+    pods write `profile/` and reach general14, Qdrant and the laptop; the 130-job database was
+    imported (2026-11-04, after stopping the local stack).
 - Tests: 126 TypeScript (`npm test`) plus Go (jd-search filter cases; `queue/` store,
   preference-check and an end-to-end `jd-search check` test); `check.sh` runs both Go modules.
 - Product models (llama.cpp): general7 (JD parse, judge; 3 slots) on the laptop, started by
@@ -73,8 +87,14 @@ before Milestone 6 (user). How to run it: `RUNBOOK-M5.md` (`.claude/bin/batch-up
 
 ## Where to start next
 
-- Next: Milestone 8 (containerization, CI, Go gateway, local Kubernetes for supervision and
-  restarts; the user wants services to start and restart on their own). Then Milestone 6.
+- Next: commit Milestone 8 when the user asks, push, and check the first CI run (it has never
+  run). Then merge into `dev` and the graph update. Then Milestone 6.
+- Milestone 8 open items: the gateway unit test (`gateway/main_test.go`, written without an
+  approved test plan: ask the user to keep it); opening the port-forwards at login (launchd
+  agent, only if the user wants it; until then `bin/jobops ui` after a reboot); PostgreSQL in
+  place of SQLite later (user choice).
+- The database that counts is the cluster's (`bin/jobops db-backup` copies it out);
+  `data/jobops.db` on the Mac is the 2026-11-04 copy.
 - Milestone 6 (contacts and outreach): plan `.claude/specs/plan-milestone-6.md` and phase A
   specs `.claude/specs/plan-m6-a.md` (git-ignored, approved, not run) on branch `milestone-6`.
 - Milestone 7 open item: tests for the `/ui` routes and the sweep (test plan shown to the user,
@@ -127,6 +147,11 @@ before Milestone 6 (user). How to run it: `RUNBOOK-M5.md` (`.claude/bin/batch-up
 
 - Ollama is retired (2026-10-26): every model runs on llama.cpp from GGUF files
   in `~/models/jobops/`, started with `.claude/bin/llm.sh`.
+- Docker Desktop: 5 GB memory, Kubernetes on, cluster type kubeadm (not kind: kind sees
+  neither the local image nor `/Users`). Change these in its Settings window only: hand-editing
+  `settings-store.json` crashed the VM (2026-11-04). Never "Reset to factory defaults" or
+  "Reset Kubernetes cluster" without `bin/jobops db-backup` (the volume's reclaim policy is
+  Delete).
 - The careers crawler drives the installed Google Chrome (playwright-core); the
   OpenResume reader runs from `.scout/openresume-runner` (git-ignored, AGPL).
 - aider and mini-swe-agent are `uv` tools; mini-swe-agent needs the `mcp`
@@ -153,6 +178,11 @@ before Milestone 6 (user). How to run it: `RUNBOOK-M5.md` (`.claude/bin/batch-up
   wiped file); the manager wrote most of B-F. `feedback.py stats` shows it.
 - `autofix.sh` reverts every file changed outside the task during a run, new untracked
   files included: write nothing in the repo while a coder runs.
+- Check for a running local stack (`tmux ls`, `pgrep -fl cli.ts`) right before touching the
+  cluster's database: on 2026-11-04 the user had started it in between, and both stacks ran on
+  separate copies for a few minutes.
+- A LoadBalancer Service on Docker Desktop listens on all the Mac's networks, and pods see every
+  caller as 192.168.65.3: never expose the UI that way (port-forward on 127.0.0.1).
 - After a restart, start Docker (Qdrant) before coder runs; without it `run-coder.sh`
   stops and the log misleadingly says "coder window gone". Keep the `jobops` tmux session
   alive from a foreground command (a background task's tmux server dies with it).

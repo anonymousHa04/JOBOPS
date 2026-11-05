@@ -31,7 +31,9 @@ func main() {
 	addr := flag.String("addr", env("JOBOPS_QUEUE_ADDR", "127.0.0.1:8090"), "listen address (loopback only)")
 	flag.Parse()
 
-	if !loopback(*addr) {
+	// Loopback only, except inside the cluster (JOBOPS_IN_CLUSTER=1): pods reach it through a
+	// ClusterIP Service, which nothing outside the cluster can reach.
+	if !loopback(*addr) && os.Getenv("JOBOPS_IN_CLUSTER") != "1" {
 		fmt.Fprintf(os.Stderr, "queue: refusing to listen on %s: use 127.0.0.1, ::1 or localhost\n", *addr)
 		os.Exit(2)
 	}
@@ -170,7 +172,11 @@ func loopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// repoRoot: JOBOPS_ROOT when set (the container image has no .git), else the nearest folder with .git.
 func repoRoot() (string, error) {
+	if root := os.Getenv("JOBOPS_ROOT"); root != "" {
+		return root, nil
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err

@@ -1,0 +1,63 @@
+# The API (Node, Fastify): jobs, scoring and tailoring routes, the UI's /ui/* routes, the
+# browser extension's routes. Same image as everything else; this pod runs the server.
+#
+# Volumes (where files live, outside the image):
+#   data:    the PersistentVolumeClaim (storage.yaml), mounted at /app/data.
+#   profile: your profile/ folder on the Mac, mounted at /app/profile (hostPath = a folder of
+#            the machine the pod runs on; Docker Desktop shares /Users with its VM). Kubernetes
+#            needs an absolute path, so the files say __REPO__ and bin/jobops puts in this
+#            repo's path when it applies them. Your resume data stays on the Mac this way and is
+#            never copied into an image.
+#
+# Probes: tcpSocket (port open = alive). /ui/health is not used because it calls the models,
+# and a model being down must not restart the API.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      containers:
+        - name: api
+          image: jobops:dev
+          imagePullPolicy: Never
+          command: [node, api/src/server.ts]
+          ports:
+            - { name: http, containerPort: 3000 }
+          envFrom:
+            - secretRef: { name: jobops-env, optional: true }
+            - configMapRef: { name: jobops-cluster }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: profile, mountPath: /app/profile }
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 768Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: jobops-data }
+        - name: profile
+          hostPath: { path: __REPO__/profile, type: Directory }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector: { app: api }
+  ports:
+    - { name: http, port: 3000, targetPort: http }

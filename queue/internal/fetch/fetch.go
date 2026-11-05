@@ -40,7 +40,7 @@ func JDCheck(repoRoot string) Checker {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		var stdout, stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, "go", "run", "./cmd/jd-search", "check")
+		cmd := jdSearch(ctx, "check")
 		cmd.Dir = filepath.Join(repoRoot, "jd-search")
 		cmd.Env = os.Environ()
 		cmd.Stdin = bytes.NewReader(in)
@@ -74,12 +74,21 @@ func Recheck(ctx context.Context, s *store.Store, check Checker) (map[string]int
 	return s.SaveVerdicts(verdicts)
 }
 
+// jdSearch runs jd-search with one subcommand: the prebuilt binary named by JOBOPS_JDSEARCH_BIN
+// (the container image), else "go run ./cmd/jd-search" (a checkout on the Mac).
+func jdSearch(ctx context.Context, sub string) *exec.Cmd {
+	if bin := os.Getenv("JOBOPS_JDSEARCH_BIN"); bin != "" {
+		return exec.CommandContext(ctx, bin, sub)
+	}
+	return exec.CommandContext(ctx, "go", "run", "./cmd/jd-search", sub)
+}
+
 func JDSearch(repoRoot string) Runner {
 	return func(ctx context.Context) (Summary, error) {
 		ctx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 		defer cancel()
 		var stdout, stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, "go", "run", "./cmd/jd-search", "run")
+		cmd := jdSearch(ctx, "run")
 		cmd.Dir = filepath.Join(repoRoot, "jd-search")
 		cmd.Env = os.Environ()
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr

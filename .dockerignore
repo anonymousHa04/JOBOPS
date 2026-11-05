@@ -1,0 +1,18 @@
+# Allow-list: nothing goes into an image unless named below. Private data (profile/, data/,
+# .env, .scout/, logs) must never be baked into an image; pods get them from volumes and a Secret.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!api/src/
+!api/config/
+!api/templates/
+!requierements/*.md
+!queue/
+!jd-search/
+!gateway/
+!ui/
+**/node_modules
+**/dist
+**/*_test.go
+**/.DS_Store

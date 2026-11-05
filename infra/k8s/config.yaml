@@ -1,0 +1,29 @@
+# ConfigMap: plain settings handed to the pods as environment variables.
+#
+# Every pod reads two sources, in this order (the later one wins on the same name):
+#   1. Secret "jobops-env": your .env file, made by bin/jobops at deploy time. Never in git.
+#   2. This ConfigMap: the few values that must differ inside the cluster.
+#
+# Why they differ: inside a pod, 127.0.0.1 is the pod itself, not your Mac. Docker Desktop
+# gives pods the name host.docker.internal for the Mac, so the models (llama.cpp, Metal GPU)
+# and Qdrant stay on the Mac and pods reach them there. The laptop model (general7) keeps the
+# 10.10.10.1 address from .env. Pods find each other by Service name: http://queue:8090.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jobops-cluster
+data:
+  JOBOPS_IN_CLUSTER: "1"
+  JOBOPS_QUEUE_URL: http://queue:8090
+  JOBOPS_API: http://api:3000
+  LLM_GENERAL14_URL: http://host.docker.internal:8085/v1
+  LLM_EMBED_URL: http://host.docker.internal:8082/v1
+  EMBED_URL: http://host.docker.internal:8082/v1
+  QDRANT_URL: http://host.docker.internal:6333
+  PORT: "3000"
+  HOST: 0.0.0.0
+  DB_PATH: /app/data/jobops.db
+  JOBOPS_DB: /app/data/jobops.db
+  JOBOPS_PROFILE_DIR: /app/profile
+  JOBOPS_PROMPTS_DIR: requierements
+  JOBOPS_SWEEP_EVERY: 2m

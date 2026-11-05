@@ -206,8 +206,18 @@ milestone_6:
   - id: m6-plan
     state: todo
     what: "contacts (LinkedIn Connections.csv + profile/contacts.yaml) and outreach drafts; plan .claude/specs/plan-milestone-6.md, phase A specs plan-m6-a.md approved, not run; after Milestone 8"
-milestone_8:
-  - id: m8-plan
-    state: in_progress
-    what: "containerize, CI, Go gateway in front of Node, local Kubernetes for supervision and restarts (services start and restart on their own); models stay on the host (Metal GPU, laptop)"
+milestone_8_done: "2026-11-04 (manager wrote it on the user's request; branch milestone-8, uncommitted): one image jobops:dev (Dockerfile, allow-list .dockerignore, Chromium/typst/poppler); infra/k8s kustomize on Docker Desktop kubeadm (Deployments api, queue, worker-laptop, worker-mac, gateway; ClusterIP Services; PVC jobops-data; profile hostPath; Secret from .env; ConfigMap jobops-cluster); gateway/ Go (ui/dist + /api proxy); bin/jobops up/down/status/logs/cli/ui/db-import/db-backup; 8080 and 3000 port-forwards on 127.0.0.1; queue worker heartbeat; CI .github/workflows/ci.yml; RUNBOOK-M8.md; checked: pods replaced after delete, UI through gateway, cli in cluster, 130-job DB imported"
+milestone_8_open:
+  - id: m8-ci-first-run
+    state: todo
+    what: "CI has never run: needs the user's commit and push, then a green run on GitHub"
+  - id: m8-gateway-test
+    state: todo
+    what: "gateway/main_test.go written without an approved test plan; ask the user to keep it"
+  - id: m8-forward-at-login
+    state: todo
+    what: "port-forwards (8080 UI, 3000 extension) need bin/jobops ui after a reboot; launchd agent only if the user wants it"
+  - id: m8-postgres
+    state: todo
+    what: "PostgreSQL in the cluster in place of SQLite (user: later)"
 decisions_needed: []

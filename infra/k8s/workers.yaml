@@ -1,0 +1,88 @@
+# The two queue workers. Each is a Deployment with one pod and no Service (nothing calls them;
+# they call the queue and ask for work).
+#   worker-laptop: parse and score (model general7 on the laptop, 10.10.10.1).
+#   worker-mac:    tailor and render (general14 on the Mac; typst and poppler in the image).
+#
+# initContainer: runs to the end before the main container starts. Here it waits until the
+# queue answers, because a worker exits at once when the queue is down.
+# No probes: a worker has no port. If it crashes, Kubernetes restarts it (restartPolicy Always
+# is the Deployment default). When stopped, it gets SIGTERM and finishes its current tasks
+# within terminationGracePeriodSeconds; a task cut off is retried when its lease runs out.
+# The health bar sees workers through the queue: each one leases or pings every 15 s or less.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-laptop
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: worker-laptop }
+  template:
+    metadata:
+      labels: { app: worker-laptop }
+    spec:
+      terminationGracePeriodSeconds: 120
+      initContainers:
+        - name: wait-for-queue
+          image: jobops:dev
+          imagePullPolicy: Never
+          command: [sh, -c, "until curl -sf queue:8090/health >/dev/null; do echo waiting for queue; sleep 2; done"]
+      containers:
+        - name: worker
+          image: jobops:dev
+          imagePullPolicy: Never
+          command: [node, api/src/cli.ts, worker, laptop]
+          envFrom:
+            - secretRef: { name: jobops-env, optional: true }
+            - configMapRef: { name: jobops-cluster }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: profile, mountPath: /app/profile }
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 768Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: jobops-data }
+        - name: profile
+          hostPath: { path: __REPO__/profile, type: Directory }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-mac
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: worker-mac }
+  template:
+    metadata:
+      labels: { app: worker-mac }
+    spec:
+      terminationGracePeriodSeconds: 300   # a tailor run can take a few minutes
+      initContainers:
+        - name: wait-for-queue
+          image: jobops:dev
+          imagePullPolicy: Never
+          command: [sh, -c, "until curl -sf queue:8090/health >/dev/null; do echo waiting for queue; sleep 2; done"]
+      containers:
+        - name: worker
+          image: jobops:dev
+          imagePullPolicy: Never
+          command: [node, api/src/cli.ts, worker, mac]
+          envFrom:
+            - secretRef: { name: jobops-env, optional: true }
+            - configMapRef: { name: jobops-cluster }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: profile, mountPath: /app/profile }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: jobops-data }
+        - name: profile
+          hostPath: { path: __REPO__/profile, type: Directory }

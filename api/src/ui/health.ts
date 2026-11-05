@@ -2,7 +2,7 @@
 import { execFile } from "node:child_process";
 import { modelUp } from "../model/registry.ts";
 import type { Task } from "../model/registry.ts";
-import { queueUp } from "../queue/client.ts";
+import { queueUp, workersSeen } from "../queue/client.ts";
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
 
@@ -16,6 +16,19 @@ async function ok(url: string): Promise<boolean> {
 
 function running(pattern: string): Promise<boolean> {
   return new Promise((resolve) => execFile("pgrep", ["-f", pattern], (err) => resolve(!err)));
+}
+
+// In the cluster each worker runs in its own pod, so pgrep cannot see it: ask the queue when the
+// group last leased or pinged (a worker does one or the other at least every 15 s).
+const inCluster = process.env.JOBOPS_IN_CLUSTER === "1";
+async function worker(group: string): Promise<boolean> {
+  if (!inCluster) return running(`cli.ts worker ${group}`);
+  try {
+    const at = (await workersSeen())[group];
+    return !!at && Date.now() - Date.parse(at) < 60_000;
+  } catch {
+    return false;
+  }
 }
 
 async function model(task: Task, name: string, role: string, start: string): Promise<Service> {
@@ -38,8 +51,8 @@ export async function health(): Promise<Service[]> {
     qdrant
       ? ok(`${qdrant}/collections`).then((up): Service => ({ name: "qdrant", role: "Vector store for reposts", up, detail: up ? "ok" : "not answering", start: "docker compose -f infra/qdrant/docker-compose.yml up -d" }))
       : Promise.resolve<Service>({ name: "qdrant", role: "Vector store for reposts", up: null, detail: "off (QDRANT_URL unset)", start: "set QDRANT_URL in .env" }),
-    queueUp().then((up): Service => ({ name: "queue", role: "Batch queue server", up, detail: up ? "ok" : "not running", start: "go run -C queue ./cmd/queue" })),
-    running("cli.ts worker laptop").then((up): Service => ({ name: "worker-laptop", role: "Parse and score worker", up, detail: up ? "running" : "not running", start: "node api/src/cli.ts worker laptop" })),
-    running("cli.ts worker mac").then((up): Service => ({ name: "worker-mac", role: "Tailor worker", up, detail: up ? "running" : "not running", start: "node api/src/cli.ts worker mac" }))
+    queueUp().then((up): Service => ({ name: "queue", role: "Batch queue server", up, detail: up ? "ok" : "not running", start: inCluster ? "bin/jobops up" : "go run -C queue ./cmd/queue" })),
+    worker("laptop").then((up): Service => ({ name: "worker-laptop", role: "Parse and score worker", up, detail: up ? "running" : "not running", start: inCluster ? "bin/jobops up" : "node api/src/cli.ts worker laptop" })),
+    worker("mac").then((up): Service => ({ name: "worker-mac", role: "Tailor worker", up, detail: up ? "running" : "not running", start: inCluster ? "bin/jobops up" : "node api/src/cli.ts worker mac" }))
   ]);
 }

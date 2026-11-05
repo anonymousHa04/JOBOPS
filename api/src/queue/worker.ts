@@ -5,7 +5,7 @@ import { db, render, score, tailor, tailorAll } from "../tools.ts";
 import { parseJob } from "../requirements/parse.ts";
 import { modelUp, switchCommands } from "../model/registry.ts";
 import type { Task } from "../model/registry.ts";
-import { done, fail, lease, queueUp, QueueDownError } from "./client.ts";
+import { done, fail, lease, ping, queueUp, QueueDownError } from "./client.ts";
 
 // score first: it moves jobs forward.
 export const GROUPS: Record<string, string[]> = {
@@ -50,10 +50,13 @@ export async function runWorker(group: string, opts: { concurrency?: number } = 
   if (!(await queueUp())) throw new QueueDownError();
 
   let stopping = false;
-  process.once("SIGINT", () => {
-    stopping = true;
-    console.error("stopping after the current tasks");
-  });
+  // SIGINT: Ctrl-C; SIGTERM: Kubernetes stopping the pod (it waits, then kills).
+  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+    process.once(sig, () => {
+      stopping = true;
+      console.error("stopping after the current tasks");
+    });
+  }
   const warned = new Map<string, number>();
 
   const loop = async (i: number) => {
@@ -71,6 +74,7 @@ export async function runWorker(group: string, opts: { concurrency?: number } = 
           }
         }
         if (!ready.length) {
+          await ping(worker); // still alive, waiting for a model (the health bar shows it)
           await wait(15_000);
           continue;
         }

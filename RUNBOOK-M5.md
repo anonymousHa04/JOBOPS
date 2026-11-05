@@ -138,4 +138,5 @@ After `.claude/bin/batch-up.sh` (API, queue and workers up):
 The queue server scores parsed jobs that no batch scored every 2 minutes (up to 50), so a job
 parsed with `jd parse` or `job add` is scored without a batch. Turn it off with
 `JOBOPS_SWEEP_EVERY=0` before starting the queue server. The workers must be running.
-Services do not start on their own after a reboot yet: Milestone 8 (local Kubernetes) does that.
+Run this way, services do not start on their own after a reboot. On Kubernetes they do: see
+[RUNBOOK-M8.md](RUNBOOK-M8.md). Run one or the other, never both (each has its own database).

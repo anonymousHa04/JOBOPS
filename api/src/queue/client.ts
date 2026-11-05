@@ -41,6 +41,9 @@ export const batches = () => call<unknown[]>("GET", "/batches");
 export const batch = (id: number) => call<unknown>("GET", `/batches/${id}`);
 export const sweep = (max = 50) => call<{ batch_id: number; queued: number }>("POST", "/sweep", { max });
 export const retryBatch = (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`);
+export const ping = (worker: string) => call<void>("POST", "/workers/ping", { worker });
+// When each worker group last asked for work or pinged (ISO times, by group: laptop, mac).
+export const workersSeen = () => call<Record<string, string>>("GET", "/workers");
 export const lease = (stages: string[], worker: string) => call<QueueTask | null>("POST", "/lease", { stages, worker });
 export const done = (taskId: number, result: Record<string, unknown>) => call<void>("POST", `/tasks/${taskId}/done`, { result });
 export const fail = (taskId: number, code: string, detail: string) =>

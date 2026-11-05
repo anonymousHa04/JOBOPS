@@ -7,14 +7,60 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"jobops/queue/internal/store"
 )
 
 var stages = map[string]bool{"fetch": true, "parse": true, "score": true, "tailor": true}
 
+// seen: when each worker group (laptop, mac) last asked for work or pinged. In memory only:
+// the health bar uses it where pgrep cannot see the workers (each runs in its own pod).
+type seen struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (k *seen) mark(worker string) {
+	group, _, _ := strings.Cut(worker, "-")
+	if group == "" {
+		return
+	}
+	k.mu.Lock()
+	k.last[group] = time.Now().UTC()
+	k.mu.Unlock()
+}
+
+func (k *seen) all() map[string]string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	out := make(map[string]string, len(k.last))
+	for g, t := range k.last {
+		out[g] = t.Format(time.RFC3339)
+	}
+	return out
+}
+
 func Handler(s *store.Store) http.Handler {
 	mux := http.NewServeMux()
+	workers := &seen{last: map[string]time.Time{}}
+
+	mux.HandleFunc("POST /workers/ping", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Worker string `json:"worker"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		workers.mark(in.Worker)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /workers", func(w http.ResponseWriter, r *http.Request) {
+		send(w, http.StatusOK, workers.all())
+	})
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		send(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -117,6 +163,7 @@ func Handler(s *store.Store) http.Handler {
 				return
 			}
 		}
+		workers.mark(in.Worker)
 		t, err := s.Lease(in.Stages, in.Worker)
 		if err != nil {
 			fail(w, http.StatusInternalServerError, err.Error())

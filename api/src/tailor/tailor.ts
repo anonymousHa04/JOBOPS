@@ -8,7 +8,7 @@ import { pageCount } from "../render/render.ts";
 import type { Verdicts } from "../scoring/score.ts";
 import { decide, pickStart } from "./decide.ts";
 import type { Decision, StoredRecord } from "./decide.ts";
-import { idealContent } from "./ideal.ts";
+import { idealContent, jdSpelling } from "./ideal.ts";
 import type { Budget, ResumeContent } from "./ideal.ts";
 import { originalContent, toStored, writeRecord } from "./records.ts";
 import { rewordContent, rewordModel } from "./reword.ts";
@@ -118,6 +118,8 @@ export async function tailorJob(
   }
 
   let content = d.decision === "reuse" && plan.start ? plan.start.content : plan.ideal;
+  // A reused record keeps its bullets, but its skills line takes this JD's spelling.
+  if (d.decision !== "not_tailored") content = { ...content, skills: jdSpelling(content.skills, req.keywords) };
   let changes: ResumeRecord["changes"] = [];
   let reworded: RewordLog[] = [];
   let error: string | null = null;

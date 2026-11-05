@@ -10,7 +10,7 @@ import { cachedHelp, saveHelp } from "./gaps.ts";
 import type { GapHelp, GapKind } from "./gaps.ts";
 
 const MAX_WORDS = 25;
-const KIND_LABEL: Record<GapKind, string> = { must: "must-have requirement", nice: "nice-to-have", keyword: "keyword" };
+const KIND_LABEL: Record<GapKind, string> = { must: "must-have requirement", theme: "responsibility", nice: "nice-to-have", keyword: "keyword" };
 const HelpSchema = z.object({
   meaning: z.string(),
   similar_terms: z.array(z.string()),

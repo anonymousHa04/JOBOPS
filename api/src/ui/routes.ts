@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Db } from "../db.ts";
 import { addPrepTask, APP_STATUSES, board, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
 import { health } from "./health.ts";
-import { rescore } from "../queue/client.ts";
+import { QueueDownError, rescore } from "../queue/client.ts";
 import { draftBullet, gapHelp } from "./gap-model.ts";
 import { answerGap, gapList } from "./gaps.ts";
 import { analysisPrompt } from "./prompt.ts";
@@ -13,13 +13,14 @@ import { analysisPrompt } from "./prompt.ts";
 const AppBody = z.object({ status: z.enum(APP_STATUSES).nullable(), note: z.string().max(2000).nullable().optional() }).strict();
 const TaskBody = z.object({ text: z.string().trim().min(1).max(300) }).strict();
 const TaskPatch = z.object({ done: z.boolean().optional(), remove: z.boolean().optional() }).strict();
-const Kind = z.enum(["must", "nice", "keyword"]);
+const Kind = z.enum(["must", "theme", "nice", "keyword"]);
 const HelpBody = z.object({ kind: Kind, requirement: z.string().min(1).max(500), refresh: z.boolean().optional() }).strict();
 const DraftBody = z.object({ kind: Kind, requirement: z.string().min(1).max(500), entry_id: z.string().min(1), story: z.string().trim().min(1).max(3000), proof: z.string().max(1000).optional() }).strict();
 const AnswerBody = z.object({
   kind: Kind, requirement: z.string().min(1).max(500), answer: z.enum(["have", "other_name", "learnable", "no"]),
   entry_id: z.string().optional(), text: z.string().trim().max(400).optional(), tags: z.array(z.string().max(60)).max(8).optional(),
-  story: z.string().max(3000).optional(), proof: z.string().max(1000).optional(), same_as: z.string().max(120).optional()
+  story: z.string().max(3000).optional(), proof: z.string().max(1000).optional(), same_as: z.string().max(120).optional(),
+  as_skill: z.boolean().optional(), entry_ids: z.array(z.string().max(120)).max(30).optional()
 }).strict();
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
@@ -109,15 +110,19 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     } catch (err) {
       return reply.status(400).send({ error: "answer_failed", message: message(err) });
     }
-    let queued = 0; // -1: the queue server is down
+    // rescore_batch: the batch id; 0 when a score or tailor task is already open; -1 when the
+    // queue server is down. Any other queue error comes back as rescore_error.
+    let queued = 0;
+    let rescoreError: string | null = null;
     if (body.data.answer === "have" || body.data.answer === "other_name") {
       try {
         queued = (await rescore(id)).batch_id;
-      } catch {
-        queued = -1;
+      } catch (err) {
+        if (err instanceof QueueDownError) queued = -1;
+        else rescoreError = message(err);
       }
     }
-    return { ...r, rescore_batch: queued };
+    return { ...r, rescore_batch: queued, rescore_error: rescoreError };
   });
 
   app.post<{ Params: { id: string } }>("/ui/jobs/:id/rescore", async (request, reply) => {

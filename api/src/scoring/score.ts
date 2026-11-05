@@ -156,13 +156,22 @@ export function bulletRecency(bank: Bank, now = new Date()): Map<string, number>
 // Does the bank have this term under any name (skills list, confirmed extras, or a
 // bullet's text or tags; synonyms count: "Golang" = Go)?
 export function bankHasTerm(bank: Bank, extra: SkillsExtra, term: string): boolean {
+  return bankTermFor(bank, extra, term) !== null;
+}
+
+// The bank's own name for a term (normalised, e.g. "react" for "ReactJS"), or null when the
+// bank does not have it under any name.
+export function bankTermFor(bank: Bank, extra: SkillsExtra, term: string): string | null {
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
   const listed = new Set([...Object.values(bank.skills).flat(), ...extra.skills.filter((x) => x.status === "have").map((x) => x.name)].map(norm));
-  if (listed.has(norm(term))) return true;
+  if (listed.has(norm(term))) return norm(term);
   const found = terms(term, vocab);
-  if (found.some((t) => listed.has(t))) return true;
+  const inList = found.find((t) => listed.has(t));
+  if (inList) return inList;
   const index = buildIndex(allBullets(bank), vocab);
-  return found.some((t) => index.has(t)) || (vocab.has(norm(term)) && index.has(norm(term)));
+  const inBullets = found.find((t) => index.has(t));
+  if (inBullets) return inBullets;
+  return vocab.has(norm(term)) && index.has(norm(term)) ? norm(term) : null;
 }
 
 const NUMBER = /\d/;
@@ -309,7 +318,10 @@ export function scoreRequirements(
 
   // Keywords: literal, case-insensitive, whole words, counted once, no synonyms;
   // a keyword that also appears in a must-have counts double.
-  const haystack = [...bullets.map((b) => b.text), ...listed].join("\n");
+  // The skills as written, not normalised: norm() maps synonyms to one name ("golang" -> "go"),
+  // which would hide the exact word an ATS looks for.
+  const written = [...Object.values(bank.skills).flat(), ...extra.skills.filter((s) => s.status === "have").map((s) => s.name)];
+  const haystack = [...bullets.map((b) => b.text), ...written].join("\n");
   const mustText = req.must_have.join("\n");
   let kwHit = 0;
   let kwTotal = 0;

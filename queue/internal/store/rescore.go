@@ -13,6 +13,9 @@ var ErrNotParsed = errors.New("job not parsed")
 // a bullet or a skill). It goes under a new batch (parse_version "rescore"); when the score
 // decides reuse or adapt, Done queues tailor as in any batch. Nothing is queued (batch 0) while
 // the job already has an open score or tailor task: that task reads the new bank anyway.
+// RescoreVersion is the prompt_version of a rescore batch's tasks.
+func RescoreVersion(batchID int64) string { return fmt.Sprintf("rescore-%d", batchID) }
+
 func (s *Store) Rescore(jobID string) (int64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -47,8 +50,10 @@ func (s *Store) Rescore(jobID string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("rescore: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO queue_tasks (batch_id, job_id, stage, state, created_at, updated_at)
-		VALUES (?, ?, 'score', 'queued', ?, ?)`, batchID, jobID, now, now); err != nil {
+	// Its own prompt_version (rescore-<batch>): a job has one task per stage and version, and the
+	// job's earlier score (and maybe tailor) task holds the default one. Done passes it on.
+	if _, err := tx.Exec(`INSERT INTO queue_tasks (batch_id, job_id, stage, prompt_version, state, created_at, updated_at)
+		VALUES (?, ?, 'score', ?, 'queued', ?, ?)`, batchID, jobID, RescoreVersion(batchID), now, now); err != nil {
 		return 0, fmt.Errorf("rescore: %w", err)
 	}
 	return batchID, tx.Commit()

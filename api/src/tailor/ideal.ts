@@ -4,7 +4,7 @@ import type { Requirements } from "../requirements/schema.ts";
 import { allBullets, bulletRecency, scoreRequirements } from "../scoring/score.ts";
 import type { Verdicts } from "../scoring/score.ts";
 import { hasTerm, norm, terms } from "../scoring/terms.ts";
-import { softSkills } from "../lists.ts";
+import { softSkills, synonyms } from "../lists.ts";
 import { CREDIT, MAX_SKILLS } from "../scoring/config.ts";
 
 // The ideal resume content for one JD (engine-algorithm.md §4, steps 2-4): chosen in
@@ -50,6 +50,28 @@ function missingKeywords(b: Bullet, keywords: string[], vocab: Set<string>): { k
   // Alias-only: the bullet already names the same thing by another name (k8s -> Kubernetes).
   const aliasOnly = missing.length > 0 && missing.every((k) => terms(b.text, vocab).includes(norm(k)));
   return { keywords: missing, aliasOnly };
+}
+
+// The skills line in the JD's own spelling: a skill the JD names another way ("React JS" for
+// the bank's "React") is written as the JD writes it. Only a respelling: never a new skill.
+export function jdSpelling(skills: string[], keywords: string[]): string[] {
+  const byCanon = new Map<string, string>();
+  for (const k of keywords) if (!byCanon.has(norm(k))) byCanon.set(norm(k), k);
+  return skills.map((s) => byCanon.get(norm(s)) ?? s);
+}
+
+// JD spellings of the candidate's skills that the synonym lists do not have word for word
+// (alias -> the skill's usual name), to save for later jobs.
+export function newSpellings(keywords: string[], bank: Bank, extra: SkillsExtra): [string, string][] {
+  const syn = synonyms();
+  const have = new Set([...Object.values(bank.skills).flat(), ...extra.skills.filter((s) => s.status === "have").map((s) => s.name)].map(norm));
+  const out = new Map<string, string>();
+  for (const k of keywords) {
+    const alias = k.trim().toLowerCase().replace(/\s+/g, " ");
+    const to = norm(k);
+    if (alias !== to && syn[alias] === undefined && have.has(to)) out.set(alias, to);
+  }
+  return [...out];
 }
 
 export function idealContent(

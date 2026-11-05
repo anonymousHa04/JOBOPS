@@ -11,12 +11,14 @@ import (
 const usage = `JobOps in local Kubernetes (Docker Desktop, kubeadm). RUNBOOK-M8.md explains each step.
 
   bin/jobops start         everything for a normal day: Docker, Kubernetes, Qdrant, the pods,
-                           the Mac models (general14, embed), localhost:8080; checks the laptop
+                           the Mac models (general14, embed), localhost:8080; checks the laptop;
+                           opens the UI in the browser
   bin/jobops up            build the image, load .env as a Secret, apply infra/k8s, wait
   bin/jobops down          stop every pod (scale to 0); the database volume is kept
   bin/jobops ui            (re)open localhost:8080 (UI) and :3000 (extension); up does it too
   bin/jobops status        pods, restarts, and whether the UI answers
   bin/jobops logs <name>   follow one service's log: api, queue, worker-laptop, worker-mac, gateway
+  bin/jobops watch         every service's log in tmux, one window each (session jobops-logs)
   bin/jobops cli <args>    run the JobOps CLI inside the cluster, e.g. bin/jobops cli batch status
   bin/jobops db-import [--force]   copy data/jobops.db into the cluster volume (once)
   bin/jobops db-backup     copy the cluster database to data/backups/jobops-<time>.db
@@ -58,6 +60,8 @@ func run(cmd string, rest []string) error {
 			return fmt.Errorf("usage: bin/jobops logs <%s>", joinDeploys("|"))
 		}
 		return e.logs(rest[0])
+	case "watch":
+		return e.watch()
 	case "cli":
 		return e.cli(rest)
 	case "db-import":

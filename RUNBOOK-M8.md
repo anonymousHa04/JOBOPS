@@ -17,6 +17,7 @@ runs it. Its background part keeps the two port-forwards alive: one supervisor p
     open http://localhost:8080 # the web UI (was 127.0.0.1:5173 with npm run ui)
     bin/jobops cli batch start --limit 3
     bin/jobops logs worker-laptop
+    bin/jobops watch           # every service log in tmux, one window each
 
 After a reboot, or any morning:
 

@@ -4,11 +4,16 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Gap, GapAnswer, GapList, GapHelp, Draft } from "./api";
+import { RescoreBar } from "./Rescore";
+
+type Answered = { outcome: string; rescore_batch: number; rescore_error?: string | null };
 
 export function GapsView({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [list, setList] = useState<GapList | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [watch, setWatch] = useState<number | null>(null); // a re-score batch to follow
+  const [explaining, setExplaining] = useState<string | null>(null);
 
   const load = () => {
     api.gaps(id)
@@ -28,44 +33,86 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
     return <div>Loading...</div>;
   }
 
-  const { gaps, years, entries } = list;
-  const answered = (r: { outcome: string; rescore_batch: number }) => {
-    setNote(r.outcome + (r.rescore_batch > 0 ? " · re-scoring (batch " + r.rescore_batch + ")" : r.rescore_batch === -1 ? " · queue server down: re-score from the Batches tab later" : ""));
+  const { gaps, not_asked, years, entries } = list;
+  const answered = (r: Answered) => {
+    setNote(r.outcome + (r.rescore_error ? " · re-score failed: " + r.rescore_error
+      : r.rescore_batch > 0 ? " · re-scoring (batch " + r.rescore_batch + ")"
+      : r.rescore_batch === -1 ? " · queue server down: re-score from the Batches tab later"
+      : " · a score or tailor task is already queued for this job; it uses the new bullet"));
+    if (r.rescore_batch > 0) setWatch(r.rescore_batch);
     load();
     onChanged();
   };
-  const groups: [Gap["kind"], string][] = [["must", "Must-haves"], ["nice", "Nice-to-haves"], ["keyword", "Keywords"]];
+  const groups: [Gap["kind"], string][] = [["must", "Must-haves"], ["theme", "Responsibilities"], ["nice", "Nice-to-haves"], ["keyword", "Keywords"]];
+  // Asks the local model about every gap with no explanation and no answer, one at a time.
+  const explainAll = async () => {
+    const todo = gaps.filter((g) => !g.help && !g.answer);
+    for (let i = 0; i < todo.length; i++) {
+      setExplaining(`Explaining ${i + 1} of ${todo.length}…`);
+      await api.gapHelp(id, todo[i].kind, todo[i].requirement).catch(() => null);
+    }
+    setExplaining(null);
+    load();
+  };
+  const unexplained = gaps.filter((g) => !g.help && !g.answer).length;
 
   return (
     <div>
       <div className="muted small">
-        Requirements your experience bank does not show for this job. For each one: see what it means, where you may already have it, then answer. A new bullet or skill re-scores the job; if the score allows it, tailoring follows on its own.
+        Everything red on the Score tab for this job. For each one: see what it means, where you may already have it, then answer. A new bullet or skill re-scores the job; if the score allows it, tailoring follows on its own.
       </div>
+      <RescoreBar id={id} watch={watch} onDone={() => { setWatch(null); load(); onChanged(); }} />
+      {unexplained > 0 && (
+        <button className="btn tiny" disabled={explaining !== null} onClick={() => void explainAll()}>
+          {explaining ?? `Explain all remaining (${unexplained})`}
+        </button>
+      )}
       {years && <div className="banner">Years: {years} (years are the one hard limit; answers here cannot change them)</div>}
       {note && <div className="banner ok">{note}</div>}
-      {gaps.length === 0 && <div className="banner">No gaps: the bank shows every requirement of this job.</div>}
+      {gaps.length === 0 && not_asked.length === 0 && <div className="banner">No gaps: every requirement of this job is covered.</div>}
       {groups.map(([kind, title]) => {
         const items = gaps.filter((gap) => gap.kind === kind);
         return items.length ? (
           <div key={kind}>
             <h4>{title}</h4>
-            {items.map((gap) => <GapRow key={gap.kind + gap.requirement} id={id} gap={gap} entries={entries} onAnswered={answered} />)}
+            {items.map((gap) => <GapRow key={gap.kind + gap.requirement + (gap.help ? ":h" : "")} id={id} gap={gap} entries={entries} onAnswered={answered} />)}
           </div>
         ) : null;
       })}
+      {not_asked.length > 0 && (
+        <div>
+          <h4>Not asked here</h4>
+          {not_asked.map((n) => (
+            <div key={n.kind + n.requirement} className="gap answered">
+              <div className="gap-head"><span className="chip">{n.kind}</span><b>{n.requirement}</b></div>
+              <div className="muted small">{n.reason}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entries: GapList["entries"]; onAnswered: (r: { outcome: string; rescore_batch: number }) => void }) {
+function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entries: GapList["entries"]; onAnswered: (r: Answered) => void }) {
   const [help, setHelp] = useState<GapHelp | null>(gap.help);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<GapAnswer | null>(null);
   const [story, setStory] = useState<string>("");
   const [proof, setProof] = useState<string>("");
-  const [entry, setEntry] = useState<string>(entries[0]?.id ?? "");
-  const [sameAs, setSameAs] = useState<string>("");
+  // Roles where the user used it: pre-checked from "You may already have it" (a bullet id starts
+  // with its role id plus "-"; the longest matching role id wins).
+  const roleOf = (bulletId: string) =>
+    entries.filter((e) => bulletId.startsWith(e.id + "-")).sort((a, b) => b.id.length - a.id.length)[0]?.id;
+  const suggested = (h: GapHelp | null) => [...new Set((h?.related ?? []).map((r) => roleOf(r.bullet_id)).filter((x): x is string => !!x))];
+  const [checked, setChecked] = useState<string[]>(() => suggested(gap.help));
+  useEffect(() => {
+    setChecked((c) => (c.length ? c : suggested(help)));
+  }, [help]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = (id: string) => setChecked((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+  const entry = checked.length === 1 ? checked[0] : ""; // a bullet belongs to exactly one role
+  const [sameAs, setSameAs] = useState<string>(gap.known_as ?? "");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState<string>("");
 
@@ -106,6 +153,7 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
         <b>{gap.requirement}</b>
         {gap.outcome && <span className="muted small">Answered: {gap.outcome}</span>}
       </div>
+      {gap.note && <div className="muted small">{gap.note}</div>}
       {help === null && (
         <button className="btn tiny" onClick={() => run("help", api.gapHelp(id, gap.kind, gap.requirement), setHelp)} disabled={busy === "help"}>
           {busy === "help" ? "Asking the local model…" : "Explain and find related experience"}
@@ -150,14 +198,30 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
       </div>
       {mode === "have" && (
         <div>
-          <select value={entry} onChange={(e) => setEntry(e.target.value)}>
-            {entries.map(entry => (
-              <option key={entry.id} value={entry.id}>{entry.title + (entry.company ? " · " + entry.company : "") + " (" + entry.dates + ")"}</option>
+          <div className="roles">
+            <div className="muted small">Where did you use it? Check every role that applies.</div>
+            {entries.map((e) => (
+              <label key={e.id} className="role-check">
+                <input type="checkbox" checked={checked.includes(e.id)} onChange={() => toggle(e.id)} />
+                {e.title + (e.company ? " · " + e.company : "") + " (" + e.dates + ")"}
+              </label>
             ))}
-          </select>
+            <div>
+              <button type="button" className="btn ghost tiny" onClick={() => setChecked(entries.map((e) => e.id))}>Select all</button>
+              <button type="button" className="btn ghost tiny" onClick={() => setChecked([])}>Clear</button>
+            </div>
+          </div>
           <textarea rows={4} value={story} onChange={(e) => setStory(e.target.value)} placeholder="Where did you use it, what did you do, and what changed? Your own words; only facts you can defend in an interview." />
           <input type="text" value={proof} onChange={(e) => setProof(e.target.value)} placeholder="Proof (optional): a link, a PR, a doc, a number you measured" />
-          <button className="btn tiny" onClick={handleDraft} disabled={!filled(story) || busy === "draft"}>{busy === "draft" ? "Drafting…" : "Draft a bullet"}</button>
+          <button className="btn tiny" onClick={handleDraft} disabled={!filled(story) || !entry || busy === "draft"}>{busy === "draft" ? "Drafting…" : "Draft a bullet"}</button>
+          <button className="btn tiny" disabled={!filled(story) || !checked.length || busy === "answer"}
+            onClick={() => run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", as_skill: true, entry_ids: checked, story, proof: proof || undefined }), onAnswered)}>
+            Add as a skill ({checked.length} role{checked.length === 1 ? "" : "s"})
+          </button>
+          {checked.length !== 1 && <div className="muted small">Check exactly one role to draft a bullet for it.</div>}
+          {gap.kind !== "keyword" && (
+            <div className="muted small">As a skill this counts 0.3 of 1 for a {gap.kind === "must" ? "must-have" : gap.kind === "theme" ? "responsibility" : "nice-to-have"}; a bullet counts 0.85.{gap.kind === "must" ? " A must-have needs 0.5, so a bullet at your strongest role helps more." : ""}</div>
+          )}
           {draft && (
             <div>
               <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />

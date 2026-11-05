@@ -68,7 +68,52 @@ func (e *env) start() error {
 	}
 	okLine("UI http://localhost:8080 and extension port localhost:3000")
 	fmt.Println(healthSummary())
+	openUI()
+	fmt.Println("logs of every service: bin/jobops watch")
 	return nil
+}
+
+// openUI opens the web UI in the default browser (JOBOPS_NO_OPEN=1 turns it off).
+func openUI() {
+	if os.Getenv("JOBOPS_NO_OPEN") == "1" {
+		return
+	}
+	exec.Command("open", "http://localhost:8080").Run()
+}
+
+const watchSession = "jobops-logs"
+
+// watch: a tmux session with one window per service, each following its log. A log ends when
+// its pod is replaced, so each window starts it again. In a terminal it attaches at once.
+func (e *env) watch() error {
+	if err := e.needCluster(); err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return fmt.Errorf("tmux is not installed: brew install tmux (or use bin/jobops logs <name>)")
+	}
+	if !e.ok("tmux", "has-session", "-t", watchSession) {
+		for i, d := range deploys {
+			loop := fmt.Sprintf("while true; do kubectl --context %s -n %s logs -f --tail=50 deploy/%s; echo '--- %s log ended (pod replaced?); following again in 3 s'; sleep 3; done", kubeCtx, namespace, d, d)
+			args := []string{"new-window", "-d", "-t", watchSession, "-n", d, loop}
+			if i == 0 {
+				args = []string{"new-session", "-d", "-s", watchSession, "-n", d, loop}
+			}
+			if _, err := e.out(nil, "tmux", args...); err != nil {
+				return err
+			}
+		}
+	}
+	if !isTerminal() {
+		fmt.Printf("tmux session %s is ready: tmux attach -t %s\n", watchSession, watchSession)
+		return nil
+	}
+	fmt.Println("Ctrl-b n: next window · Ctrl-b p: previous · Ctrl-b d: leave (logs keep running)")
+	bin, err := exec.LookPath("tmux")
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(bin, []string{"tmux", "attach", "-t", watchSession}, os.Environ())
 }
 
 func (e *env) macModels() {
@@ -165,7 +210,7 @@ func (e *env) up() error {
 		return err
 	}
 	fmt.Printf("building %s (first build takes a few minutes)...\n", image)
-	if _, err := e.out(nil, "docker", "build", "-q", "-t", image, "."); err != nil {
+	if err := e.build(); err != nil {
 		return err
 	}
 	okLine("image %s", image)
@@ -192,6 +237,49 @@ func (e *env) up() error {
 	}
 	fmt.Println("UI: http://localhost:8080")
 	return nil
+}
+
+// build runs docker build with its full output kept in data/docker-build.log; on a failure it
+// prints the lines that say why (the error and what led to it) and where to see the whole build.
+func (e *env) build() error {
+	logPath := e.path("data", "docker-build.log")
+	if err := os.MkdirAll(e.path("data"), 0o755); err != nil {
+		return err
+	}
+	c := e.cmd("docker", "build", "--progress=plain", "-t", image, ".")
+	out, err := c.CombinedOutput()
+	os.WriteFile(logPath, out, 0o644)
+	if err == nil {
+		return nil
+	}
+	fmt.Println("[!!] the image build failed. What Docker said:")
+	for _, line := range buildErrorLines(string(out), 25) {
+		fmt.Println("     " + line)
+	}
+	fmt.Println("     full log: data/docker-build.log · Docker Desktop: Builds tab (or the link above)")
+	return fmt.Errorf("docker build failed (%v)", err)
+}
+
+// buildErrorLines: the last n lines of a plain-progress docker build log, from the first line
+// that names an error onward when there is one (that is where the cause is).
+func buildErrorLines(log string, n int) []string {
+	lines := strings.Split(strings.TrimRight(log, "\n"), "\n")
+	start := len(lines) - n
+	for i, l := range lines {
+		if strings.Contains(l, "ERROR") || strings.Contains(l, "error:") {
+			if i < start || start < 0 {
+				start = i - 3
+			}
+			break
+		}
+	}
+	if start < 0 {
+		start = 0
+	}
+	if len(lines)-start > n*2 {
+		start = len(lines) - n*2
+	}
+	return lines[start:]
 }
 
 func (e *env) down() error {

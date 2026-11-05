@@ -35,6 +35,8 @@ import { judgeRequirements, judgeSettled, loadVerdicts, needsJudgeCount, openReq
 import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
+import { newSpellings } from "./tailor/ideal.ts";
+import { addSynonym } from "./lists.ts";
 import { renderRecord } from "./render/render.ts";
 import { atsCheck } from "./render/ats.ts";
 import { compareReport } from "./render/ats-report.ts";
@@ -262,7 +264,11 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   const companyOf = companies(d);
   const result = await tailorJob(d, reqWithFocus, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
     { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf }, notes });
-  return { ...result, judge: stats, edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id) };
+  // The JD's spellings of the candidate's skills go to profile/synonyms.yaml for later jobs.
+  const learned = result.resume_id && result.decision !== "not_tailored"
+    ? newSpellings(req.keywords, bank, extra).filter(([alias, to]) => addSynonym(alias, to)).map(([alias, to]) => `${alias}: ${to}`)
+    : [];
+  return { ...result, learned_spellings: learned, judge: stats, edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id) };
 }
 
 export function withFocus<T extends { must_have: string[] }>(req: T, focus: string[] = []): T {

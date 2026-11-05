@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse } from "yaml";
+import { parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 
 // Editable lists: defaults in api/config/*.yaml (committed, generic), the user's additions
@@ -52,6 +52,42 @@ export function synonyms(): Record<string, string> {
     }
     return out;
   });
+}
+
+// The same lookup ignoring spaces and dots ("React JS", "React.js" and "reactjs" are one key),
+// for spellings the lists do not have word for word.
+export function looseSynonyms(): Map<string, string> {
+  const files = [join(CONFIG, "synonyms.yaml"), join(profileDir(), "synonyms.yaml")];
+  return cached(["loose", ...files], () => {
+    const syn = synonyms();
+    const out = new Map<string, string>();
+    for (const to of Object.values(syn)) out.set(skillKey(to), to);
+    for (const [from, to] of Object.entries(syn)) out.set(skillKey(from), to);
+    return out;
+  });
+}
+
+// Learns a spelling: profile/synonyms.yaml gets "alias: term" (the user's file; its comments
+// are kept). Returns false when there is nothing to add.
+export function addSynonym(alias: string, term: string): boolean {
+  const from = alias.trim().toLowerCase().replace(/\s+/g, " ");
+  const to = term.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!from || !to || from === to || synonyms()[from] === to) return false;
+  const file = join(profileDir(), "synonyms.yaml");
+  if (existsSync(file)) {
+    const doc = parseDocument(readFileSync(file, "utf8"));
+    if (doc.errors.length) throw new Error(`${file}: ${doc.errors[0].message.split("\n")[0]}`);
+    if (doc.contents === null) writeFileSync(file, stringify({ [from]: to }));
+    else {
+      doc.set(from, to);
+      writeFileSync(file, doc.toString());
+    }
+  } else {
+    mkdirSync(profileDir(), { recursive: true });
+    writeFileSync(file, "# Your synonyms: alias -> the term it means. Gaps tab answers add here; these win over api/config.\n" + stringify({ [from]: to }));
+  }
+  cache.clear();
+  return true;
 }
 
 export const SKILL_GROUPS = ["languages", "frameworks", "tools", "domains"] as const;

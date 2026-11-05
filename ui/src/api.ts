@@ -54,15 +54,16 @@ export type ScoreDetail = {
 };
 export type ScoreError = { error: string; message: string };
 
-export type GapKind = "must" | "nice" | "keyword";
+export type GapKind = "must" | "theme" | "nice" | "keyword";
 export type GapAnswer = "have" | "other_name" | "learnable" | "no";
 export type GapHelp = { meaning: string; similar_terms: string[]; related: { bullet_id: string; why: string }[]; questions: string[] };
-export type Gap = { kind: GapKind; requirement: string; help: GapHelp | null; answer: GapAnswer | null; outcome: string | null; updated_at: string | null };
-export type GapList = { gaps: Gap[]; years: string | null; entries: { id: string; title: string; company: string | null; dates: string }[] };
+export type Gap = { kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null; answer: GapAnswer | null; outcome: string | null; updated_at: string | null };
+export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: { id: string; title: string; company: string | null; dates: string }[] };
 export type Draft = { text: string; tags: string[]; codes: string[] };
 export type AnswerBody = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
+  as_skill?: boolean; entry_ids?: string[];
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -112,7 +113,7 @@ export const api = {
   draft: (id: string, body: { kind: GapKind; requirement: string; entry_id: string; story: string; proof?: string }) =>
     call<Draft>("POST", `/ui/jobs/${id}/gaps/draft`, body),
   answer: (id: string, body: AnswerBody) =>
-    call<{ outcome: string; bullet_id: string | null; rescore_batch: number }>("POST", `/ui/jobs/${id}/gaps/answer`, body),
+    call<{ outcome: string; bullet_id: string | null; rescore_batch: number; rescore_error?: string | null }>("POST", `/ui/jobs/${id}/gaps/answer`, body),
   rescore: (id: string) => call<{ rescore_batch: number }>("POST", `/ui/jobs/${id}/rescore`),
   prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`)
 };

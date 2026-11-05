@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -92,8 +93,14 @@ func (s *Store) Done(taskID int64, result json.RawMessage) error {
 		final = true
 	}
 	if next != "" {
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO queue_tasks (batch_id, job_id, stage, state, created_at, updated_at)
-			VALUES (?, ?, ?, 'queued', ?, ?)`, t.BatchID, t.JobID, next, now, now); err != nil {
+		// A rescore's tailor keeps its version (rescore-<batch>), so a job tailored before can be
+		// tailored again; every other next stage keeps the default version, as before.
+		version := ""
+		if strings.HasPrefix(t.PromptVersion, "rescore-") {
+			version = t.PromptVersion
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO queue_tasks (batch_id, job_id, stage, prompt_version, state, created_at, updated_at)
+			VALUES (?, ?, ?, ?, 'queued', ?, ?)`, t.BatchID, t.JobID, next, version, now, now); err != nil {
 			return fmt.Errorf("done: %w", err)
 		}
 	}

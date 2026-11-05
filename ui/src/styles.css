@@ -240,3 +240,18 @@ td.bad { color: var(--bad); font-weight: 700; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+.rescore-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.roles { margin-top: 6px; }
+.role-check { display: flex; align-items: center; gap: 6px; margin: 2px 0; font-size: 13px; }
+.gap .role-check input { width: auto; margin: 0; }

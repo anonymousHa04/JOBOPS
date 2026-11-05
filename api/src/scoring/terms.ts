@@ -1,12 +1,12 @@
 // Term normalization for deterministic matching of JD wording against the bank.
-import { synonyms } from "../lists.ts";
+import { looseSynonyms, skillKey, synonyms } from "../lists.ts";
 
 // Synonyms live in api/config/synonyms.yaml (defaults) and profile/synonyms.yaml (yours).
 export { synonyms } from "../lists.ts";
 
 export function norm(s: string): string {
   const t = s.toLowerCase().trim().replace(/\s+/g, " ").replace(/[.,;:!?]+$/, "");
-  return synonyms()[t] ?? t;
+  return synonyms()[t] ?? looseSynonyms().get(skillKey(t)) ?? t;
 }
 
 function escape(s: string): string {

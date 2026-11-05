@@ -122,6 +122,9 @@ export const PreferencesSchema = z.object({
     // Page limit for a tailored resume; unset: one page up to 8 years of experience, else two.
     max_pages: z.number().int().min(1).max(3).optional(),
   }),
+  // Words given as reasons when deleting jobs (UI): jd-search skips a posting whose title or
+  // description has one as a whole word.
+  skip_keywords: z.array(z.string()).default([]),
 });
 
 // One tailored resume per JD (engine-algorithm.md §7): the YAML in profile/records/ is the

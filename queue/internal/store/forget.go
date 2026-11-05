@@ -22,5 +22,8 @@ func (s *Store) Forget(jobID string) (int, error) {
 	if _, err := tx.Exec(`DELETE FROM job_filter WHERE job_id = ?`, jobID); err != nil {
 		return 0, fmt.Errorf("forget: %w", err)
 	}
+	if _, err := tx.Exec(`DELETE FROM kept_jobs WHERE job_id = ?`, jobID); err != nil {
+		return 0, fmt.Errorf("forget: %w", err)
+	}
 	return int(n), tx.Commit()
 }

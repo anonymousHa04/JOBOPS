@@ -41,6 +41,9 @@ type Prefs struct {
 		Include []Company `yaml:"include"`
 		Exclude []string  `yaml:"exclude"`
 	} `yaml:"companies"`
+	// Words the user gave as reasons when deleting jobs (UI): a posting whose title or
+	// description has one, as a whole word, is skipped.
+	SkipKeywords []string `yaml:"skip_keywords"`
 }
 
 type Role struct {
@@ -68,7 +71,7 @@ func Load(path string) (Prefs, error) {
 var openRe = regexp.MustCompile(`\b(india|anywhere|worldwide|global|apac|asia)\b`)
 
 // Match reports whether a posting fits; reason names the first failed check:
-// title, seniority, seniority_include, language, location, compensation.
+// title, seniority, seniority_include, language, keyword: <word>, location, compensation.
 // A posting whose list gives no location (and that will be described) is not rejected for it yet;
 // the pay check runs only once there is a description.
 func Match(p Prefs, post sources.Posting) (bool, string) {
@@ -109,6 +112,9 @@ func match(p Prefs, post sources.Posting, locationUnknown bool) (bool, string) {
 	if !languageOK(p, title) {
 		return false, "language"
 	}
+	if k := SkipKeyword(p, post); k != "" {
+		return false, "keyword: " + k
+	}
 	if !locationUnknown && !locationMatches(p, post) {
 		return false, "location"
 	}
@@ -116,6 +122,21 @@ func match(p Prefs, post sources.Posting, locationUnknown bool) (bool, string) {
 		return false, "compensation"
 	}
 	return true, ""
+}
+
+// SkipKeyword returns the first of the user's skip keywords (from deleted jobs) that the
+// posting's title or description has as a whole word, or "". A posting listed without its
+// description is checked on the title now and on the description once it has one.
+func SkipKeyword(p Prefs, post sources.Posting) string {
+	title := strings.ToLower(post.Title)
+	desc := strings.ToLower(post.Description)
+	for _, w := range p.SkipKeywords {
+		k := strings.ToLower(strings.TrimSpace(w))
+		if hasWord(title, k) || hasWord(desc, k) {
+			return k
+		}
+	}
+	return ""
 }
 
 // titleMatches: the title names a role or alias; anyLevel when a matching role has any_level.

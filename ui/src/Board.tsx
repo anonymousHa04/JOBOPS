@@ -5,15 +5,26 @@ import type { AppStatus, Card, Pipeline } from "./api";
 
 const PIPELINE: Pipeline[] = ["new", "parsing", "parsed", "scoring", "to_tailor", "tailoring", "tailored", "not_tailored", "failed", "skipped"];
 
-function JobCard({ job, onOpen, draggable }: { job: Card; onOpen: (id: string) => void; draggable?: boolean }) {
+// Columns whose cards can be ticked for "Delete N selected" (top bar).
+export const SELECTABLE: Pipeline[] = ["tailored", "not_tailored", "skipped"];
+
+function JobCard({ job, onOpen, draggable, selected, onToggle }: {
+  job: Card; onOpen: (id: string) => void; draggable?: boolean; selected?: boolean; onToggle?: (id: string) => void;
+}) {
   return (
     <div
-      className={`card state-${job.state}`}
+      className={`card state-${job.state}${selected ? " selected" : ""}`}
       onClick={() => onOpen(job.id)}
       draggable={draggable}
       onDragStart={(e) => { e.dataTransfer.setData("text/job", job.id); e.dataTransfer.effectAllowed = "move"; }}
     >
-      <div className="card-title">{job.title}</div>
+      <div className="card-title">
+        {onToggle && (
+          <input type="checkbox" className="card-check" checked={!!selected} title="Tick to delete with others (top bar)"
+            onClick={(e) => e.stopPropagation()} onChange={() => onToggle(job.id)} />
+        )}
+        {job.title}
+      </div>
       <div className="card-sub">{job.company}{job.location ? ` · ${job.location}` : ""}</div>
       <div className="card-meta">
         {job.score !== null && <span className={`score-pill ${bandClass(job.band)}`}>{job.score.toFixed(1)}</span>}
@@ -29,7 +40,10 @@ function JobCard({ job, onOpen, draggable }: { job: Card; onOpen: (id: string) =
   );
 }
 
-export function PipelineBoard({ jobs, showSkipped, onOpen }: { jobs: Card[]; showSkipped: boolean; onOpen: (id: string) => void }) {
+export function PipelineBoard({ jobs, showSkipped, onOpen, selected, onSelect }: {
+  jobs: Card[]; showSkipped: boolean; onOpen: (id: string) => void;
+  selected: Set<string>; onSelect: (ids: string[], on: boolean) => void;
+}) {
   // Parsing and Tailoring appear only while they hold jobs; Skipped only when asked for.
   const cols = PIPELINE.filter((p) => p !== "skipped" || showSkipped);
   return (
@@ -39,9 +53,21 @@ export function PipelineBoard({ jobs, showSkipped, onOpen }: { jobs: Card[]; sho
         if ((p === "parsing" || p === "tailoring") && !list.length) return null;
         return (
           <section className={`column col-${p}`} key={p}>
-            <header className="col-head"><span>{STATE_LABEL[p]}</span><span className="count">{list.length}</span></header>
+            <header className="col-head">
+              <span>
+                {SELECTABLE.includes(p) && list.length > 0 && (
+                  <input type="checkbox" className="card-check" title="Tick every job in this column"
+                    checked={list.every((j) => selected.has(j.id))} onChange={(e) => onSelect(list.map((j) => j.id), e.target.checked)} />
+                )}
+                {STATE_LABEL[p]}
+              </span>
+              <span className="count">{list.length}</span>
+            </header>
             <div className="col-body">
-              {list.map((j) => <JobCard key={j.id} job={j} onOpen={onOpen} />)}
+              {list.map((j) => (
+                <JobCard key={j.id} job={j} onOpen={onOpen}
+                  {...(SELECTABLE.includes(p) ? { selected: selected.has(j.id), onToggle: (id: string) => onSelect([id], !selected.has(id)) } : {})} />
+              ))}
               {!list.length && <div className="empty">Nothing here</div>}
             </div>
           </section>

@@ -62,3 +62,8 @@ tasks:
     env: JOBOPS_REWORD_MODEL
     timeout_s: 180
     max_tokens: 800
+  gap_match:    # Gaps tab: is a new gap the same ask as one answered on another job (JD wording only)
+    model: qwen2.5:7b
+    env: JOBOPS_JUDGE_MODEL
+    timeout_s: 60
+    max_tokens: 120

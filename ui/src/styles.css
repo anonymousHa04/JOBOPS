@@ -38,7 +38,7 @@ h4 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spac
 .tab:hover { background: var(--bg-3); color: var(--text); }
 .tab.active { color: var(--accent); background: var(--accent-bg); }
 
-.toolbar { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .search { width: 320px; }
 input, select, textarea { background: var(--bg-3); border: 1px solid var(--line); color: var(--text); border-radius: var(--radius); padding: 7px 10px; font: inherit; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -264,3 +264,13 @@ td.bad { color: var(--bad); font-weight: 700; }
 .tailor-box.ready { border-color: var(--ok, #3fb950); }
 .tailor-last { flex-basis: 100%; }
 .tailor-last.bad { color: var(--bad); }
+
+/* "Why delete it?" in the job drawer */
+.delete-panel { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; padding: 10px 12px; border: 1px solid var(--bad); border-radius: var(--radius); }
+.delete-panel h4 { margin: 0; }
+.delete-panel .btn { margin: 2px 4px 2px 0; }
+.delete-panel.skip-delete { flex-basis: 100%; }
+.skip-list { max-height: 260px; overflow-y: auto; margin: 0; padding-left: 18px; }
+/* Board selection for "Delete N selected" */
+.card-check { margin: 0 6px 0 0; vertical-align: middle; cursor: pointer; }
+.card.selected { outline: 1px solid var(--bad); }

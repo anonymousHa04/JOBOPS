@@ -20,13 +20,15 @@ type Verdict struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// FilterCandidates lists the stored jobs a batch could still take: no final task and nothing
-// queued or leased. The fetch step checks them against the current preferences.
+// FilterCandidates lists the stored jobs a batch could still take: no final task, nothing
+// queued or leased, and not kept by the user (a kept job is never skipped by the preferences).
+// The fetch step checks them against the current preferences.
 func (s *Store) FilterCandidates() ([]JobText, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.Query(`SELECT id, title, COALESCE(location, ''), description FROM jobs
 		WHERE id NOT IN (SELECT job_id FROM queue_tasks WHERE final = 1 OR state IN ('queued', 'leased'))
+		AND id NOT IN (SELECT job_id FROM kept_jobs)
 		ORDER BY first_seen_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("filter candidates: %w", err)

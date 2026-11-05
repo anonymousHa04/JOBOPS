@@ -1,13 +1,16 @@
 // Gaps tab of the job drawer: what the bank does not show for this job, what each item means and
 // where the user may already have it (local model), and their answers. Only the user's own facts
 // become bullets; the guard flags any draft that adds to them.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { Gap, GapAnswer, GapList, GapHelp, Draft } from "./api";
+import type { AnswerBody, Gap, GapAnswer, GapList, GapHelp, Draft, Previous, EarlierInput } from "./api";
 import { RescoreBar } from "./Rescore";
 import { TailorBox } from "./Tailor";
 
-type Answered = { outcome: string; rescore_batch: number; rescore_error?: string | null };
+type Answered = { outcome: string; rescore_batch: number; rescore_error?: string | null; rescore_skipped?: boolean };
+
+const ANSWER_LABEL: Record<GapAnswer, string> = { have: "Yes, done it", other_name: "Under another name", learnable: "Could learn it", no: "No" };
+const whereFrom = (p: { from_job: string | null; company: string; title: string }) => (p.from_job && p.company ? `${p.company} · ${p.title}` : p.title);
 
 export function GapsView({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [list, setList] = useState<GapList | null>(null);
@@ -16,16 +19,58 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
   const [watch, setWatch] = useState<number | null>(null); // a re-score batch to follow
   const [explaining, setExplaining] = useState<string | null>(null);
   const [loads, setLoads] = useState(0); // bumps on every reload, so the tailor box rechecks
-
-  const load = () => {
-    setLoads((n) => n + 1);
-    api.gaps(id)
-      .then(setList)
-      .catch((e: Error) => setErr(e.message));
+  const [memory, setMemory] = useState<string | null>(null); // what earlier answers did here
+  const [matching, setMatching] = useState<string | null>(null);
+  const [auto, setAuto] = useState<boolean | null>(null); // fill exact earlier answers automatically
+  useEffect(() => {
+    api.gapSettings().then((s) => setAuto(s.auto_carry)).catch(() => setAuto(null));
+  }, []);
+  const toggleAuto = (on: boolean) => {
+    api.setGapSettings(on).then((s) => {
+      setAuto(s.auto_carry);
+      if (s.auto_carry) {
+        // Turned on: carry what matches now.
+        void api.carry(id).then((c) => { if (c.carried > 0) { setMemory(`${c.carried} earlier answer${c.carried === 1 ? "" : "s"} carried`); onChanged(); } void load(); });
+      }
+    }).catch((e: Error) => setErr(e.message));
   };
 
+  const load = (): Promise<GapList | null> => {
+    setLoads((n) => n + 1);
+    return api.gaps(id)
+      .then((l) => { setList(l); return l; })
+      .catch((e: Error) => { setErr(e.message); return null; });
+  };
+
+  // On open: carry the exact earlier answers, then let the local model check the similar ones
+  // in the background. Both are remembered, so the next open is instant.
+  const shownId = useRef(id);
+  shownId.current = id;
   useEffect(() => {
-    load();
+    let gone = false;
+    setMemory(null);
+    setMatching(null);
+    void (async () => {
+      const c = await api.carry(id).catch(() => null);
+      // The carry is written even when this run was cancelled (React runs effects twice in
+      // development): report it as long as the drawer still shows this job.
+      if (shownId.current !== id) return;
+      if (c && c.carried > 0) {
+        setMemory(`${c.carried} answer${c.carried === 1 ? "" : "s"} carried from your earlier answers (each shows where from; Undo if it does not apply here)`
+          + (c.rescore_batch > 0 ? ` · re-scoring (batch ${c.rescore_batch})` : c.rescore_batch === -1 ? " · queue server down: re-score later" : ""));
+        if (c.rescore_batch > 0) setWatch(c.rescore_batch);
+        onChanged();
+      }
+      if (gone) return;
+      const l = await load();
+      if (gone || !l || !l.gaps.some((g) => !g.answer && g.reuse.similar.some((p) => p.match === "overlap"))) return;
+      setMatching("Checking similar earlier answers with the local model…");
+      const m = await api.matchSimilar(id).catch((e: Error) => ({ gaps: 0, checked: 0, same: 0, failed: 1, error: e.message }));
+      if (gone) return;
+      setMatching(m.error ? `Similar earlier answers were not checked by the model (${m.error}). They show as "not checked".` : null);
+      void load();
+    })();
+    return () => { gone = true; };
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (err) {
@@ -38,7 +83,7 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
 
   const { gaps, not_asked, years, entries } = list;
   const answered = (r: Answered) => {
-    setNote(r.outcome + (r.rescore_error ? " · re-score failed: " + r.rescore_error
+    setNote(r.outcome + (r.rescore_skipped ? "" : r.rescore_error ? " · re-score failed: " + r.rescore_error
       : r.rescore_batch > 0 ? " · re-scoring (batch " + r.rescore_batch + ")"
       : r.rescore_batch === -1 ? " · queue server down: re-score from the Batches tab later"
       : " · a score or tailor task is already queued for this job; it uses the new bullet"));
@@ -62,7 +107,7 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
   return (
     <div>
       <div className="muted small">
-        Everything red on the Score tab for this job. For each one: see what it means, where you may already have it, then answer. A new bullet or skill re-scores the job. Once it reaches 75 and every question has an answer, it is ready for tailor: start it with Tailor now (the job stays in its column until then).
+        Everything red on the Score tab for this job. For each one: see what it means, where you may already have it, then answer. A new bullet or skill re-scores the job. Once it reaches 75 it is ready for tailor, even with questions still open: start it with Tailor now (the job stays in its column until then).
       </div>
       <RescoreBar id={id} watch={watch} onDone={() => { setWatch(null); load(); onChanged(); }} />
       <TailorBox id={id} refresh={loads} onChanged={onChanged} />
@@ -72,6 +117,14 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
         </button>
       )}
       {years && <div className="banner">Years: {years} (years are the one hard limit; answers here cannot change them)</div>}
+      {auto !== null && (
+        <label className="role-check small">
+          <input type="checkbox" checked={auto} onChange={(e) => toggleAuto(e.target.checked)} />
+          Fill exact matches from my earlier answers automatically (off: they are only suggested here, to use or edit)
+        </label>
+      )}
+      {memory && <div className="banner ok">{memory}</div>}
+      {matching && <div className="banner">{matching}</div>}
       {note && <div className="banner ok">{note}</div>}
       {gaps.length === 0 && not_asked.length === 0 && <div className="banner">No gaps: every requirement of this job is covered.</div>}
       {groups.map(([kind, title]) => {
@@ -79,7 +132,7 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
         return items.length ? (
           <div key={kind}>
             <h4>{title}</h4>
-            {items.map((gap) => <GapRow key={gap.kind + gap.requirement + (gap.help ? ":h" : "")} id={id} gap={gap} entries={entries} onAnswered={answered} />)}
+            {items.map((gap) => <GapRow key={gap.kind + gap.requirement + (gap.help ? ":h" : "")} id={id} gap={gap} entries={entries} onAnswered={answered} onUndone={() => { void load(); onChanged(); }} />)}
           </div>
         ) : null;
       })}
@@ -98,7 +151,86 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
   );
 }
 
-function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entries: GapList["entries"]; onAnswered: (r: Answered) => void }) {
+// Earlier answers to similar asks on other jobs: accept one to use it here (that pair is then
+// carried automatically), or say it is not the same (never proposed again).
+// An exact earlier answer is listed here only when it was not filled in (automatic filling is
+// off, or Undo was used for this job). "Use my earlier answer" only fills the form below.
+// "Add previous response and rescore": the earlier answer submitted again for this gap, in this
+// job's wording. A keyword answered "under another name" keeps that name; any other "have"
+// becomes a skill with the earlier story and roles (never a second copy of a bullet). Returns
+// the answer body, or why it cannot be sent as it is.
+function previousBody(gap: Gap, i: EarlierInput, known: Set<string>): AnswerBody | string {
+  if (i.answer === "other_name" && gap.kind === "keyword" && i.same_as.trim()) {
+    return { kind: gap.kind, requirement: gap.requirement, answer: "other_name", same_as: i.same_as, story: i.story || undefined };
+  }
+  const roles = i.entry_ids.filter((x) => known.has(x));
+  if (!i.story.trim()) return "The earlier answer has no story to reuse: use the edit button first.";
+  if (!roles.length) return "The earlier answer's roles are no longer in your bank: use the edit button first.";
+  return { kind: gap.kind, requirement: gap.requirement, answer: "have", as_skill: true, entry_ids: roles, story: i.story, proof: i.proof || undefined };
+}
+const PREVIOUS_TITLE = (gap: Gap) => gap.kind === "keyword"
+  ? "Saves it as a skill under this job's spelling and re-scores: the keyword then matches and leaves the gaps."
+  : "Drafts a bullet for this requirement from your earlier story (local model), then shows it with 'Add skill and bullet point': a bullet counts 0.85, a skill alone 0.3.";
+
+function Similar({ id, gap, known, onAnswered, onPrefill, onDraftPrevious }: {
+  id: string; gap: Gap; known: Set<string>; onAnswered: (r: Answered) => void;
+  onPrefill: (i: EarlierInput) => void; onDraftPrevious: (i: EarlierInput, fromRequirement: string | null) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [gone, setGone] = useState<string[]>([]);
+  const keyOf = (p: Previous) => `${p.from_job ?? ""}\u0000${p.requirement}`;
+  const all = [...(gap.reuse.exact ? [gap.reuse.exact] : []), ...gap.reuse.similar];
+  const shown = all.filter((p) => !gone.includes(keyOf(p)));
+  if (gap.answer || !shown.length) return null;
+  const decide = (p: Previous, accept: boolean) => {
+    setBusy(true);
+    setErr(null);
+    api.reuse(id, { kind: gap.kind, requirement: gap.requirement, from_job: p.from_job, from_requirement: p.requirement, accept })
+      .then((r) => (accept ? onAnswered(r) : setGone((g) => [...g, keyOf(p)])))
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(false));
+  };
+  // Submits the earlier answer for this gap and re-scores. For a similar (not the same) ask it
+  // first records that the asks are the same, so the pair is carried from now on.
+  const submitPrevious = (p: Previous) => {
+    // A sentence needs a bullet to count: draft it now and let the user check it before saving.
+    if (gap.kind !== "keyword") { onDraftPrevious(p.input!, p.match === "exact" ? null : p.requirement); return; }
+    const body = previousBody(gap, p.input!, known);
+    if (typeof body === "string") { setErr(body); return; }
+    setBusy(true);
+    setErr(null);
+    const same = p.match === "exact" ? Promise.resolve(null)
+      : api.reuse(id, { kind: gap.kind, requirement: gap.requirement, from_job: p.from_job, from_requirement: p.requirement, accept: true });
+    same.then((first) => api.answer(id, body).then((r) => onAnswered(first && first.rescore_batch > 0 ? { ...r, rescore_batch: first.rescore_batch } : r)))
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="gap-help">
+      <div>You answered this{gap.reuse.exact ? "" : " or a similar ask"} before:</div>
+      <ul>
+        {shown.map((p) => (
+          <li key={keyOf(p)}>
+            <b>{ANSWER_LABEL[p.answer]}</b> to "{p.requirement}" <span className="muted small">({whereFrom(p)}{p.outcome ? `: ${p.outcome}` : ""})</span>{" "}
+            <span className="chip">{p.match === "exact" ? "same ask" : p.match === "learned" ? "you said: same ask" : p.match === "model" ? "local model: same ask" : "not checked"}</span>{" "}
+            <button className="btn tiny" disabled={busy} onClick={() => decide(p, true)}>{p.match === "exact" || p.match === "learned" ? "Use this answer" : "Same ask: use this answer"}</button>
+            {p.input && (
+              <>
+                <button className="btn tiny accent" disabled={busy} title={PREVIOUS_TITLE(gap)} onClick={() => submitPrevious(p)}>Add previous response and rescore</button>
+                <button className="btn tiny" disabled={busy} onClick={() => onPrefill(p.input!)}>Use my earlier answer (edit first)</button>
+              </>
+            )}
+            <button className="btn ghost tiny" disabled={busy} onClick={() => decide(p, false)}>{p.match === "exact" ? "Not for this job" : "Not the same"}</button>
+          </li>
+        ))}
+      </ul>
+      {err && <div className="banner error">{err}</div>}
+    </div>
+  );
+}
+
+function GapRow({ id, gap, entries, onAnswered, onUndone }: { id: string; gap: Gap; entries: GapList["entries"]; onAnswered: (r: Answered) => void; onUndone: () => void }) {
   const [help, setHelp] = useState<GapHelp | null>(gap.help);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -137,11 +269,49 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
     p.then(then).catch((e: Error) => setErr(e.message)).finally(() => setBusy(null));
   };
 
+  const known = new Set(entries.map((e) => e.id)); // role ids still in the bank
+  // Fills the answer form from an earlier answer's story, proof and roles (roles no longer in
+  // the bank are dropped). Nothing is saved until the user drafts and saves, or adds the skill.
+  const prefill = (i: EarlierInput) => {
+    setMode(i.answer === "other_name" && gap.kind === "keyword" ? "other_name" : "have");
+    setStory(i.story);
+    setProof(i.proof);
+    setSameAs(i.same_as || sameAs);
+    const roles = i.entry_ids.filter((x) => known.has(x));
+    if (roles.length) setChecked(roles);
+    setDraft(null);
+    setWithSkill(false);
+    setFromPrev(null);
+  };
+
+  // "Add previous response and rescore" on a sentence: fill the form, draft the bullet at once
+  // (no Draft click), under the earlier roles' job with the fewest bullets. The user checks the
+  // draft, then saves the bullet and the skill together.
+  const [withSkill, setWithSkill] = useState(false);
+  const [fromPrev, setFromPrev] = useState<string | null>(null);
+  const draftPrevious = (i: EarlierInput, fromRequirement: string | null) => {
+    prefill(i);
+    if (!filled(i.story)) { setErr("The earlier answer has no story to draft from: write it below, then Draft a bullet."); return; }
+    const roles = entries.filter((e) => i.entry_ids.includes(e.id) && !e.project);
+    const target = roles.sort((a, b) => a.bullets - b.bullets || (b.end ?? -1) - (a.end ?? -1))[0]?.id;
+    if (!target) { setErr("None of the earlier roles is a job in your bank now: check a job below, then Draft a bullet."); return; }
+    setChosen(target);
+    setWithSkill(true);
+    setFromPrev(fromRequirement);
+    run("draft", api.draft(id, { kind: gap.kind, requirement: gap.requirement, entry_id: target, story: i.story, proof: i.proof || undefined }), (d) => {
+      setDraft(d);
+      setText(d.text);
+      setExtras([]);
+    });
+  };
+
   const handleAnswer = (answer: GapAnswer) => {
     if (answer === "learnable" || answer === "no") {
       run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer }), onAnswered);
     } else {
       setMode(answer);
+      setWithSkill(false);
+      setFromPrev(null);
     }
   };
 
@@ -157,7 +327,8 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
 
   const handleSave = () => {
     if (filled(text)) {
-      run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", entry_id: entry, text, tags: draft?.tags, story, proof: proof || undefined, entry_ids: checked, extra_skills: extras }), onAnswered);
+      run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", entry_id: entry, text, tags: draft?.tags, story, proof: proof || undefined, entry_ids: checked, extra_skills: extras,
+        ...(withSkill ? { with_skill: true } : {}), ...(fromPrev ? { from_previous: { from_requirement: fromPrev } } : {}) }), onAnswered);
     }
   };
 
@@ -167,8 +338,33 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
         <span className="chip">{gap.kind}</span>
         <b>{gap.requirement}</b>
         {gap.outcome && <span className="muted small">Answered: {gap.outcome}</span>}
+        {gap.carried_from && (
+          <button className="btn ghost tiny" disabled={busy === "undo"}
+            onClick={() => run("undo", api.undoCarry(id, gap.requirement), onUndone)}>
+            Undo (does not apply here)
+          </button>
+        )}
+        {gap.carried_from && gap.carried_input && (
+          <button className="btn tiny accent" disabled={busy === "answer" || busy === "draft"} title={PREVIOUS_TITLE(gap)} onClick={() => {
+            if (gap.kind !== "keyword") { draftPrevious(gap.carried_input!, null); return; }
+            const body = previousBody(gap, gap.carried_input!, known);
+            if (typeof body === "string") setErr(body);
+            else run("answer", api.answer(id, body), onAnswered);
+          }}>
+            {busy === "answer" ? "Saving…" : busy === "draft" ? "Drafting…" : "Add previous response and rescore"}
+          </button>
+        )}
+        {gap.carried_from && gap.carried_input && (
+          <button className="btn ghost tiny" onClick={() => prefill(gap.carried_input!)}
+            title="Opens the form with that answer's story, proof and roles, e.g. to draft a bullet for this job's wording (a bullet counts 0.85, a skill 0.3)">
+            Edit / improve
+          </button>
+        )}
       </div>
       {gap.note && <div className="muted small">{gap.note}</div>}
+      <Similar id={id} gap={gap} known={known} onAnswered={onAnswered} onPrefill={prefill} onDraftPrevious={draftPrevious} />
+      {busy === "draft" && withSkill && <div className="muted small">Drafting a bullet from your earlier answer (local model)…</div>}
+      {gap.declined && !gap.answer && <div className="muted small">You undid the earlier answer for this job: answer it below.</div>}
       {help === null && (
         <button className="btn tiny" onClick={() => run("help", api.gapHelp(id, gap.kind, gap.requirement), setHelp)} disabled={busy === "help"}>
           {busy === "help" ? "Asking the local model…" : "Explain and find related experience"}
@@ -263,7 +459,7 @@ function GapRow({ id, gap, entries, onAnswered }: { id: string; gap: Gap; entrie
                 </div>
               )}
               <button className="btn tiny" onClick={handleSave} disabled={!filled(text) || busy === "answer"}>
-                {"Add bullet" + (checked.length > 1 ? " + skill" : "") + (extras.length ? ` + ${extras.length} more skill${extras.length === 1 ? "" : "s"}` : "") + " and re-score"}
+                {(withSkill ? "Add skill and bullet point" : "Add bullet" + (checked.length > 1 ? " + skill" : "")) + (extras.length ? ` + ${extras.length} more skill${extras.length === 1 ? "" : "s"}` : "") + " and re-score"}
               </button>
             </div>
           )}

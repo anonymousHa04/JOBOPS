@@ -57,6 +57,9 @@ func Open(path string) (*Store, error) {
 		CREATE TABLE IF NOT EXISTS job_filter (
 			job_id TEXT PRIMARY KEY, ok INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '', checked_at TEXT NOT NULL
 		);
+		-- Jobs the user keeps whatever the preferences say (UI: Keep this job): the preference
+		-- check leaves them out, so a skip word added later never skips them. Same DDL in api/src/db.ts.
+		CREATE TABLE IF NOT EXISTS kept_jobs (job_id TEXT PRIMARY KEY, kept_at TEXT NOT NULL);
 	`); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}

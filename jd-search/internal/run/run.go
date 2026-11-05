@@ -189,6 +189,9 @@ func describe(ctx context.Context, prefs filter.Prefs, p sources.Posting) (sourc
 		ok, reason := filter.Match(prefs, p)
 		return p, ok, reason
 	}
+	if k := filter.SkipKeyword(prefs, p); k != "" {
+		return p, false, "keyword: " + k
+	}
 	if p.Description != "" && !filter.PayOK(prefs, p.Description) {
 		return p, false, "compensation"
 	}

@@ -6,6 +6,8 @@ import { AppBoard, PipelineBoard } from "./Board";
 import { JobDrawer } from "./JobDrawer";
 import type { Tab } from "./JobDrawer";
 import { Batches } from "./Batches";
+import { SkipDelete } from "./SkipDelete";
+import { BulkDelete } from "./BulkDelete";
 
 type View = "pipeline" | "applications" | "batches";
 
@@ -18,6 +20,13 @@ export function App() {
   const openJob = (id: string, tab?: Tab) => { setOpenTab(tab); setOpen(id); };
   const [query, setQuery] = useState("");
   const [showSkipped, setShowSkipped] = useState(false);
+  // Jobs ticked on the board (Tailored, Not tailored, Skipped) for "Delete N selected".
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const select = (ids: string[], on: boolean) => setSelected((cur) => {
+    const next = new Set(cur);
+    for (const id of ids) if (on) next.add(id); else next.delete(id);
+    return next;
+  });
 
   const load = useCallback(() => {
     api.board().then((j) => { setJobs(j); setError(null); }).catch((e: Error) => setError(e.message));
@@ -25,6 +34,13 @@ export function App() {
 
   useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
   useEffect(() => { location.hash = view; }, [view]);
+
+  // A ticked job that left the board (deleted, moved to another column) is no longer ticked.
+  useEffect(() => {
+    if (!jobs) return;
+    const ok = new Set(jobs.filter((j) => ["tailored", "not_tailored", "skipped"].includes(j.state)).map((j) => j.id));
+    setSelected((cur) => ([...cur].every((id) => ok.has(id)) ? cur : new Set([...cur].filter((id) => ok.has(id)))));
+  }, [jobs]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -59,13 +75,15 @@ export function App() {
           <span className="muted">{counts.total} jobs{counts.failed ? ` · ${counts.failed} failed` : ""}</span>
           <button className="btn ghost" onClick={load}>Refresh</button>
           <RescoreAll refresh={jobs} onDone={load} />
+          <SkipDelete refresh={jobs} onDone={load} />
+          {view === "pipeline" && <BulkDelete selected={[...selected]} onClear={() => setSelected(new Set())} onDone={load} />}
         </div>
       )}
 
       <main className="content">
         {error && <div className="banner error">API not reachable: {error}. Start it with <code>node api/src/server.ts</code>.</div>}
         {!jobs && !error && <div className="muted pad">Loading…</div>}
-        {jobs && view === "pipeline" && <PipelineBoard jobs={shown} showSkipped={showSkipped} onOpen={openJob} />}
+        {jobs && view === "pipeline" && <PipelineBoard jobs={shown} showSkipped={showSkipped} onOpen={openJob} selected={selected} onSelect={select} />}
         {jobs && view === "applications" && <AppBoard jobs={shown} onOpen={openJob} onChanged={load} />}
         {view === "batches" && <Batches onOpen={openJob} onChanged={load} />}
       </main>

@@ -7,15 +7,25 @@ import { loadRequirements } from "../requirements/parse.ts";
 import { loadVerdicts } from "../scoring/judge.ts";
 import { bankTermFor, scoreRequirements, span, yearsAsked } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
+import { carriedInput, reuseFor } from "./gap-memory.ts";
+import type { CarriedFrom, EarlierInput, Reuse } from "./gap-memory.ts";
 
 export type GapKind = "must" | "theme" | "nice" | "keyword";
 export type GapAnswer = "have" | "other_name" | "learnable" | "no";
 export type GapHelp = { meaning: string; similar_terms: string[]; related: { bullet_id: string; why: string }[]; questions: string[] };
-export type Gap = { kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null; answer: GapAnswer | null; outcome: string | null; updated_at: string | null };
+export type Gap = {
+  kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null;
+  answer: GapAnswer | null; outcome: string | null; updated_at: string | null;
+  carried_from: CarriedFrom | null; // the answer was carried from another job's answer
+  carried_input: EarlierInput | null; // what that earlier answer typed ("Edit / improve" fills the form)
+  declined: boolean;               // the user undid a carried answer here: not carried again
+  reuse: Reuse;                     // earlier answers on other jobs (gap-memory.ts)
+};
 export type AnswerInput = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
   as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
+  with_skill?: boolean; // a bullet answer also saves the skill, even with one role checked
 };
 export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
 
@@ -32,7 +42,7 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
   const extra = loadSkillsExtra();
   const r = scoreRequirements(req, bank, extra, undefined, jobId, loadVerdicts(db, req, bank, extra));
 
-  const rows = db.prepare("SELECT requirement, kind, help, answer, outcome, updated_at FROM gap_notes WHERE job_id = ?").all(jobId) as { requirement: string; kind: string; help: string | null; answer: string | null; outcome: string | null; updated_at: string }[];
+  const rows = db.prepare("SELECT requirement, kind, help, answer, outcome, updated_at, carried_from, input FROM gap_notes WHERE job_id = ?").all(jobId) as { requirement: string; kind: string; help: string | null; answer: string | null; outcome: string | null; updated_at: string; carried_from: string | null; input: string | null }[];
   const map = new Map(rows.map(row => [row.requirement, row]));
 
   const list: Gap[] = [];
@@ -55,12 +65,19 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
     else if (i.source === "index_no_judge") note = "Not judged yet: it counts as 0 until the judge runs. Re-score to run it.";
     else if (i.soft) note = "A soft skill: scored as a responsibility, never caps the score.";
     const row = map.get(i.requirement);
+    const carried = row?.carried_from && row.carried_from !== "declined" ? (JSON.parse(row.carried_from) as CarriedFrom) : null;
     list.push({
       kind, requirement: i.requirement, note, known_as: knownAs,
       help: row?.help ? (JSON.parse(row.help) as GapHelp) : null,
-      answer: (row?.answer ?? null) as GapAnswer | null, outcome: row?.outcome ?? null, updated_at: row?.updated_at ?? null
+      answer: (row?.answer ?? null) as GapAnswer | null, outcome: row?.outcome ?? null, updated_at: row?.updated_at ?? null,
+      carried_from: carried,
+      carried_input: carried && row ? carriedInput(db, { ...row, answer: row.answer as GapAnswer | null }) : null,
+      declined: row?.carried_from === "declined", reuse: { exact: null, similar: [] }
     });
   }
+  // Earlier answers on other jobs, for the open gaps only.
+  const reuse = reuseFor(db, jobId, list.filter((g) => !g.answer));
+  for (const g of list) g.reuse = reuse.get(g.requirement) ?? g.reuse;
 
   // project, bullets and end let the UI place a drafted bullet: under the checked job (never a
   // project) with the fewest bullets; on a tie, the most recent one.
@@ -117,8 +134,8 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       outcome = `bullet ${bullet_id} added`;
       // Other checked roles: the requirement is also saved as a skill, with every checked role as
       // context (the bullet is the evidence at one of them).
-      const others = (input.entry_ids ?? []).filter(filled);
-      if (others.length > 1) {
+      const others = [...new Set([...(input.entry_ids ?? []), ...(input.with_skill ? [input.entry_id] : [])].filter(filled))];
+      if (others.length > 1 || (input.with_skill && others.length > 0)) {
         const bank = loadBank();
         const roles = bank ? [...bank.roles, ...bank.projects] : [];
         const names = others.map((id) => {
@@ -126,7 +143,7 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
           return e ? (e.company ? `${e.title} at ${e.company}` : e.title) : id;
         });
         addSkill(input.requirement, "have", `answer ${today}: ${input.story} (used at: ${names.join("; ")}; bullet ${bullet_id})`);
-        outcome += `; skill added (used at ${others.length} roles)`;
+        outcome += `; skill added (used at ${others.length} role${others.length === 1 ? "" : "s"})`;
       }
       // Skills the user's own story names, that they ticked under the draft.
       const extras = [...new Set((input.extra_skills ?? []).map((s) => s.trim()).filter(Boolean))]
@@ -161,7 +178,13 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
   }
 
   const updated_at = new Date().toISOString();
-  db.prepare("INSERT INTO gap_notes (job_id, requirement, kind, answer, outcome, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (job_id, requirement) DO UPDATE SET answer = excluded.answer, outcome = excluded.outcome, updated_at = excluded.updated_at").run(jobId, input.requirement, input.kind, input.answer, outcome, updated_at);
+  // What the user typed, so another job's form can be filled from it (gap-memory.ts).
+  const typed = input.answer === "have" || input.answer === "other_name" ? JSON.stringify({
+    answer: input.answer, story: input.story ?? "", proof: input.proof ?? "", same_as: input.same_as ?? "",
+    entry_ids: [...new Set([...(input.entry_ids ?? []), ...(input.entry_id ? [input.entry_id] : [])].filter(filled))]
+  }) : null;
+  // An answer given here replaces a carried one (and its carried_from mark).
+  db.prepare("INSERT INTO gap_notes (job_id, requirement, kind, answer, outcome, carried_from, input, updated_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?) ON CONFLICT (job_id, requirement) DO UPDATE SET answer = excluded.answer, outcome = excluded.outcome, carried_from = NULL, input = excluded.input, updated_at = excluded.updated_at").run(jobId, input.requirement, input.kind, input.answer, outcome, typed, updated_at);
 
   return { outcome, bullet_id };
 }

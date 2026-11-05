@@ -89,6 +89,21 @@ export function openDb(path: string): Db {
       deleted_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS deleted_jobs_hash ON deleted_jobs (content_hash);
+    -- Gaps tab answer memory: whether two gap asks (normalized text, a <= b) take the same
+    -- answer. The local model proposes, the user decides: a user row is never overwritten by
+    -- the model. A user "same" carries answers automatically from then on.
+    -- Keep this job (UI): the preference check leaves it out (a skip word added later never skips
+    -- it) and a bulk delete never takes it. Same DDL in queue/internal/store/db.go.
+    CREATE TABLE IF NOT EXISTS kept_jobs (job_id TEXT PRIMARY KEY, kept_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS gap_links (
+      a TEXT NOT NULL,
+      b TEXT NOT NULL,
+      verdict TEXT NOT NULL CHECK (verdict IN ('same', 'different')),
+      source TEXT NOT NULL CHECK (source IN ('model', 'user')),
+      model TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (a, b)
+    );
   `);
   // gap_notes first allowed only must, nice and keyword; responsibilities (theme) came later.
   // SQLite cannot change a CHECK, so an old table is rebuilt once with its rows kept.
@@ -102,6 +117,17 @@ export function openDb(path: string): Db {
       DROP TABLE gap_notes_old;
       COMMIT;`);
   }
+  // carried_from: an answer copied from another job's answer (JSON {job_id, requirement}), or
+  // "declined" when the user undid a carried answer for this job (it is not carried again).
+  const gapCols = db.prepare("SELECT name FROM pragma_table_info('gap_notes')").all() as { name: string }[];
+  if (!gapCols.some((c) => c.name === "carried_from")) db.exec("ALTER TABLE gap_notes ADD COLUMN carried_from TEXT");
+  // input: what the user typed with a "have" or "other name" answer (story, proof, roles, the
+  // other name), as JSON, so a later job can fill its form from it.
+  if (!gapCols.some((c) => c.name === "input")) db.exec("ALTER TABLE gap_notes ADD COLUMN input TEXT");
+  // Why the user deleted a job (UI): a note and the skip keywords they gave (JSON list).
+  const delCols = db.prepare("SELECT name FROM pragma_table_info('deleted_jobs')").all() as { name: string }[];
+  if (!delCols.some((c) => c.name === "reason")) db.exec("ALTER TABLE deleted_jobs ADD COLUMN reason TEXT");
+  if (!delCols.some((c) => c.name === "keywords")) db.exec("ALTER TABLE deleted_jobs ADD COLUMN keywords TEXT");
   return db;
 }
 

@@ -202,6 +202,40 @@ function seqAt(doc: Document, path: string[]) {
   return node;
 }
 
+// A word that would also drop the user's own target roles (a word of a role title or alias, or
+// a seniority word they require): "engineer" or "senior" would skip every job.
+export function roleWords(p: Preferences): Set<string> {
+  const words = new Set<string>();
+  for (const t of [...p.roles.flatMap((r) => [r.title, ...r.aliases]), ...p.seniority.include]) {
+    for (const w of t.toLowerCase().split(/[^a-z0-9+#.]+/)) if (w) words.add(w);
+    words.add(t.trim().toLowerCase());
+  }
+  return words;
+}
+
+// Adds skip keywords (reasons given when deleting a job). Words already listed are skipped;
+// words of the user's own target roles are refused, so a delete cannot hide every job.
+// Returns the words added and the words refused.
+export function addSkipKeywords(words: string[]): { added: string[]; refused: string[] } {
+  const refused: string[] = [];
+  const added = editPreferences((p, doc) => {
+    const known = new Set(p.skip_keywords.map((w) => w.trim().toLowerCase()));
+    const mine = roleWords(p);
+    const add: string[] = [];
+    for (const w of [...new Set(words.map((x) => x.trim().toLowerCase().replace(/\s+/g, " ")))]) {
+      if (!w || known.has(w)) continue;
+      if (mine.has(w) || w.split(" ").every((x) => mine.has(x))) { refused.push(w); continue; }
+      add.push(w);
+    }
+    if (!add.length) return [];
+    const list = doc.getIn(["skip_keywords"]);
+    if (isSeq(list)) add.forEach((w) => list.add(doc.createNode(w)));
+    else doc.setIn(["skip_keywords"], doc.createNode([...p.skip_keywords, ...add]));
+    return add;
+  });
+  return { added, refused };
+}
+
 // A target role and its aliases ("SDE 3", "SDE III"); an alias already present is skipped.
 export function addRole(title: string, aliases: string[]): string[] {
   return editPreferences((p, doc) => {
@@ -386,6 +420,15 @@ export function recordLearnable(skill: string, learnable: boolean, jobId: string
   extra.learnable = extra.learnable.filter((a) => !(a.skill === key && a.job_id === jobId));
   extra.learnable.push({ skill: key, learnable, job_id: jobId, answered_at: new Date().toISOString() });
   saveSkillsExtra(extra);
+}
+
+// Removes one JD's learnable answer (the user undid an answer carried from another job).
+export function forgetLearnable(skill: string, jobId: string): void {
+  const extra = loadSkillsExtra();
+  const key = skill.trim().toLowerCase();
+  const before = extra.learnable.length;
+  extra.learnable = extra.learnable.filter((a) => !(a.skill === key && a.job_id === jobId));
+  if (extra.learnable.length !== before) saveSkillsExtra(extra);
 }
 
 export function vocabulary(b: Bank, extra: SkillsExtra): Set<string> {

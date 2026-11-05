@@ -37,6 +37,7 @@ export type JobDetail = {
     last_run_at: string | null; latest: boolean;
   }[];
   application: Application;
+  kept: boolean; // Keep this job: never skipped by skip words, never in a bulk delete
 };
 
 export type Kind = "must" | "theme" | "nice" | "keyword";
@@ -62,7 +63,38 @@ export type ScoreError = { error: string; message: string };
 export type GapKind = "must" | "theme" | "nice" | "keyword";
 export type GapAnswer = "have" | "other_name" | "learnable" | "no";
 export type GapHelp = { meaning: string; similar_terms: string[]; related: { bullet_id: string; why: string }[]; questions: string[] };
-export type Gap = { kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null; answer: GapAnswer | null; outcome: string | null; updated_at: string | null };
+// An answer given on another job (or in the skills list: from_job null). match: exact (same
+// ask), learned (a pair you confirmed), model (the judge says same; yours to confirm), overlap
+// (shares key words; not checked by the model yet).
+export type Previous = {
+  from_job: string | null; company: string; title: string; requirement: string; kind: GapKind | null;
+  answer: GapAnswer; outcome: string | null; match: "exact" | "learned" | "model" | "overlap";
+  input: EarlierInput | null;
+};
+// What was typed with an earlier "have" or "other name" answer, to fill a form from.
+export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string };
+export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Previous["match"] };
+export type Gap = {
+  kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null;
+  answer: GapAnswer | null; outcome: string | null; updated_at: string | null;
+  carried_from: CarriedFrom | null; carried_input: EarlierInput | null; declined: boolean;
+  reuse: { exact: Previous | null; similar: Previous[] };
+};
+// "Why delete it?": suggested words (the title's, the JD's keywords), the skip words already
+// saved, and the words of your own target roles (never allowed as skip words).
+// Jobs with one of your skip words (title or description); kept: marked applied/interview/offer,
+// never in a bulk delete.
+// A ticked board job in the delete panel: resumes it would lose, tracking status, keep mark.
+export type BulkItem = { id: string; title: string; company: string; resumes: number; status: string | null; kept: boolean };
+export type SkipMatch = { id: string; title: string; company: string; word: string; status: string | null; resumes: number };
+export type SkipMatches = { keywords: string[]; jobs: SkipMatch[]; kept: SkipMatch[] };
+export type DeleteHints ={ title: string[]; keywords: string[]; current: string[]; protected: string[] };
+export type DeleteResult = {
+  deleted: boolean; resumes: number; files: number; tasks: number;
+  keywords_added: string[]; keywords_refused: string[]; keywords_error: string | null;
+};
+export type MatchStats ={ gaps: number; checked: number; same: number; failed: number; error: string | null };
+export type Rescored = { rescore_batch: number; rescore_error?: string | null; rescore_skipped?: boolean };
 export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
 export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: GapEntry[] };
 export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[] };
@@ -70,6 +102,8 @@ export type AnswerBody = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
   as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
+  with_skill?: boolean; // the bullet answer also saves the skill
+  from_previous?: { from_requirement: string }; // answered from an earlier answer to that ask
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -108,7 +142,15 @@ export const api = {
   addTask: (id: string, text: string) => call<Application>("POST", `/ui/jobs/${id}/tasks`, { text }),
   patchTask: (id: string, taskId: string, patch: { done?: boolean; remove?: boolean }) =>
     call<Application>("PATCH", `/ui/jobs/${id}/tasks/${taskId}`, patch),
-  deleteJob: (id: string) => call<{ deleted: boolean; resumes: number; files: number; tasks: number }>("DELETE", `/ui/jobs/${id}`),
+  skipMatches: () => call<SkipMatches>("GET", "/ui/skip-matches"),
+  bulkPreview: (ids: string[]) => call<BulkItem[]>("POST", "/ui/jobs/bulk-delete/preview", { ids }),
+  bulkDelete: (ids: string[], include_applied: boolean) =>
+    call<{ deleted: number; resumes: number; left_applied: number; refused: { title: string; company: string; message: string }[] }>("POST", "/ui/jobs/bulk-delete", { ids, include_applied }),
+  keepJob: (id: string, keep: boolean) => call<{ kept: boolean }>("POST", `/ui/jobs/${id}/keep`, { keep }),
+  deleteSkipMatches: (ids: string[]) =>
+    call<{ deleted: number; resumes: number; files: number; refused: { title: string; company: string; message: string }[]; skipped: number }>("POST", "/ui/skip-matches/delete", { ids }),
+  deleteHints: (id: string) => call<DeleteHints>("GET", `/ui/jobs/${id}/delete-hints`),
+  deleteJob: (id: string, why: { reason?: string; keywords?: string[] } = {}) => call<DeleteResult>("DELETE", `/ui/jobs/${id}`, why),
   batches: () => call<Batch[]>("GET", "/batches"),
   batch: (id: number) => call<Batch>("GET", `/batches/${id}`),
   startBatch: (limit: number) => call<{ batch_id: number }>("POST", "/batches", { limit }),
@@ -121,6 +163,13 @@ export const api = {
     call<Draft>("POST", `/ui/jobs/${id}/gaps/draft`, body),
   answer: (id: string, body: AnswerBody) =>
     call<{ outcome: string; bullet_id: string | null; rescore_batch: number; rescore_error?: string | null }>("POST", `/ui/jobs/${id}/gaps/answer`, body),
+  gapSettings: () => call<{ auto_carry: boolean }>("GET", "/ui/gaps/settings"),
+  setGapSettings: (auto_carry: boolean) => call<{ auto_carry: boolean }>("POST", "/ui/gaps/settings", { auto_carry }),
+  carry: (id: string) => call<{ carried: number } & Rescored>("POST", `/ui/jobs/${id}/gaps/carry`),
+  matchSimilar: (id: string) => call<MatchStats>("POST", `/ui/jobs/${id}/gaps/match`),
+  reuse: (id: string, body: { kind: GapKind; requirement: string; from_job: string | null; from_requirement: string; accept: boolean }) =>
+    call<{ outcome: string } & Rescored>("POST", `/ui/jobs/${id}/gaps/reuse`, body),
+  undoCarry: (id: string, requirement: string) => call<{ ok: boolean }>("POST", `/ui/jobs/${id}/gaps/undo`, { requirement }),
   rescore: (id: string) => call<{ rescore_batch: number }>("POST", `/ui/jobs/${id}/rescore`),
   prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`),
   tailorStatus: (id: string) => call<TailorStatus>("GET", `/ui/jobs/${id}/tailor`),

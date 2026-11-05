@@ -1,6 +1,6 @@
 // Tailor now and Rescore all (UI). A rescore only updates a job's score; tailoring starts when
-// the user asks for it, once the job reaches a tailoring band and every gap question has an
-// answer. Rescore all re-scores the jobs below the tailoring bands after the user's files
+// the user asks for it, once the job reaches a tailoring band (75+); open gap questions do not
+// block it. Rescore all re-scores the jobs below the tailoring bands after the user's files
 // (bank, added skills, spellings) changed since the last Rescore all.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -30,7 +30,7 @@ export type LastTailor = { at: string; state: string; ok: boolean; message: stri
 export type TailorStatus = {
   score: number | null; band: string | null;
   open_questions: number; tailored: boolean; busy: boolean;
-  ready: boolean;      // "Ready for tailor": score 75+, every question answered, the tailor would make a resume, not tailored yet
+  ready: boolean;      // "Ready for tailor": score 75+, the tailor would make a resume, not tailored yet (open gap questions do not block)
   can_tailor: boolean; // the button is enabled (also Re-tailor for a tailored job)
   reasons: string[];   // why the button is disabled
   plan: ResumePlan | null;
@@ -94,13 +94,14 @@ export function tailorStatus(db: Db, jobId: string): TailorStatus {
   if (busy) reasons.push(`The job is ${d.state}: wait for it to finish.`);
   if (score === null) reasons.push("Not scored yet.");
   else if (!inBand) reasons.push(`Score ${score.toFixed(1)} (${band}): tailoring needs 75 (moderate) or more.`);
-  if (!tailored && open > 0) reasons.push(`${open} question${open === 1 ? "" : "s"} still open in the Gaps tab.`);
+  // Open gap questions never block (user, 2026-11-06): at 75+ the user may tailor now; answering
+  // them can still raise the score and change the resume (the Tailor box says so).
   if (inBand && plan && !planOk) {
     if (plan.decision === "blocked") reasons.push(`Open risk questions stop the tailor: ${plan.open_risks.join(", ")}.`);
     else reasons.push(`The tailor would not make a resume: ${plan.reason}.`);
   }
   if (inBand && !plan) reasons.push("Could not work out the resume the tailor would build (no bank or not parsed).");
-  const can = !busy && inBand && planOk && (tailored || open === 0);
+  const can = !busy && inBand && planOk;
   return {
     score, band, open_questions: open, tailored, busy, ready: can && !tailored, can_tailor: can, reasons, plan,
     last: lastTailor(d.tasks)

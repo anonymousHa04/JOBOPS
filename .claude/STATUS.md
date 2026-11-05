@@ -3,13 +3,16 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-04, Milestone 8 (containers, local Kubernetes, gateway, CI) built on
-branch `milestone-8`, uncommitted. JobOps now runs in Docker Desktop's Kubernetes: `bin/jobops
+Last updated: 2026-11-05, Milestone 8 (containers, local Kubernetes, gateway, CI) on branch
+`milestone-8`, committed by the user (f1f93d4, ad3e005, then the M3/M7 follow-ups 4262c90,
+0be4ea0, a929afb: Gaps tab, JD spelling, click-to-tailor, Rescore all, one score, job delete).
+Deployed and checked by the user (Atlassian and Schneider jobs fine). JobOps now runs in Docker Desktop's Kubernetes: `bin/jobops
 status`, UI at localhost:8080 (`RUNBOOK-M8.md`); `bin/jobops start` brings everything up in one
 command (checked from cold, 2026-11-05: 78 s). `bin/jobops` is now a Go program (`ctl/`, 2026-11-05;
 shell version kept at `.agent-logs/jobops.shell-version.sh`): a real supervisor keeps the
 port-forwards alive; `ctl` has no tests yet (test plan waits for the user). The local tmux stack is stopped: run one or the
-other, never both. Next: commit and merge M8 when the user says, first CI run, then Milestone 6.
+other, never both. Next: deploy the Gaps answer memory (built, uncommitted), then its tests
+with the other open test plans, first CI run, merge M8 into `dev`, then Milestone 6.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -68,7 +71,60 @@ other, never both. Next: commit and merge M8 when the user says, first CI run, t
     `api/src/ui/`. Queue sweep: parsed jobs no batch scored are scored every 2 minutes
     (`JOBOPS_SWEEP_EVERY`, 0 = off; `POST /batches/sweep`). First sweep (2026-11-04): 41 jobs
     scored, all not_tailored (best Okta Core Frontier 77.3 moderate, blocked by another check).
-  - **Milestone 8: containers and local Kubernetes** (branch `milestone-8`, uncommitted; written
+  - **M3/M7 follow-ups on `milestone-8`** (2026-11-05, manager-written, committed by the user):
+    - Gaps tab lists every red Score item. Years and degree items go under "Not asked here".
+      "Other name" saves to `profile/synonyms.yaml`. "Draft a bullet" puts it under the checked
+      job with the fewest bullets.
+    - Tailored resumes use the JD's spelling, and new spellings are learned.
+    - Tailoring starts only on a click: `retailor-<batch>` tasks; rescore never chains to tailor.
+      Tailor now needs only 75+ and a dry run that would make a resume. Open gap questions no
+      longer block it (user, 2026-11-06): they show as a note in the Tailor box.
+    - Rescore all runs when the bank fingerprint changes (`ui_state`).
+    - One score: the whole-bank score gates `decide`. The picker covers musts, then
+      responsibilities, then nice-to-haves. Spec in m3-notes `engine-algorithm.md` §4.
+    - Delete a job: drawer button, Go `POST /forget`, table `deleted_jobs`. Refused while a task
+      is leased.
+    - Delete reasons (user, 2026-11-06; manager-written, jd-search Go included):
+      - **Why delete it?** (`ui/src/DeleteJob.tsx`, in place of `window.confirm`) offers the
+        title's words and the JD's keywords as chips, a box for your own words, and a note.
+      - The words go to `preferences.yaml` `skip_keywords` (`addSkipKeywords`, which keeps
+        comments) and to `deleted_jobs.reason`/`keywords`.
+      - Words of your own target roles or seniority words are refused (`roleWords`), so a
+        delete cannot hide every job.
+      - jd-search skips a posting whose title or description has a skip word as a whole word
+        (`filter.SkipKeyword`, reason `keyword: <word>`), on new fetches and in the stored-job
+        re-check before each batch.
+      - Checked with Playwright and `jd-search check` on demo data.
+      - The suggestions are this job's red Gaps keywords plus its title words. "Already on
+        your skip list" shows only the saved words this job has.
+      - Top bar **Delete N jobs with skip words** (`ui/src/SkipDelete.tsx`; routes
+        `GET /ui/skip-matches`, `POST /ui/skip-matches/delete`) counts live: title or
+        description, whole words. A confirm panel lists each job with the word it matched,
+        then each is deleted through `deleteJob`, with reason `skip word: <w>`.
+      - Jobs marked applied, interview or offer are never bulk-deleted; they are listed apart.
+        Checked with Playwright on demo data.
+      - Incident 2026-11-06 01:11 IST: the first bulk delete (before the tailored-job checks)
+        removed 60 jobs, including two tailored ones: Databricks Senior SWE (Infra) `117457f0…`
+        and Okta Workflows `e4e6644d…`.
+        - Restored from `data/backups/jobops-20261106-011023.db`: jobs, requirements, 16 gap
+          answers, the Databricks tracking row. Both removed from `deleted_jobs` and marked kept.
+        - Their 4 resumes (YAML and PDF) are lost: no snapshots, Time Machine not mounted.
+          Next: Re-score, then Tailor now.
+        - The live DB just before the restore: `jobops-20261106-011723.db`.
+      - Board selection (user, 2026-11-06): cards in Tailored, Not tailored and Skipped have
+        a checkbox, and each of those column headers ticks the whole column.
+        - **Delete N selected** in the top bar (`ui/src/BulkDelete.tsx`; routes
+          `POST /ui/jobs/bulk-delete/preview` and `/ui/jobs/bulk-delete`) opens a confirm panel:
+          tailored jobs with their resume counts, kept jobs marked.
+        - Applied, interview and offer jobs are deleted only with an extra tick, otherwise left.
+        - Checked with Playwright on demo data.
+      - **Keep this job** (drawer toggle; table `kept_jobs` in both `db.ts` and the queue's
+        `db.go`): a kept job is left out of the stored-job preference check
+        (`FilterCandidates`) and of the bulk delete. Delete and forget drop the mark.
+      - Each job in the panel has a checkbox, and only ticked jobs are deleted. Tailored jobs
+        (`resumes` > 0) are listed first, marked "tailored · N resumes", with a **Keep tailored
+        jobs** toggle (user, 2026-11-06).
+  - **Milestone 8: containers and local Kubernetes** (branch `milestone-8`, committed; written
     by the manager on the user's request, no local coders). One image `jobops:dev` (`Dockerfile`,
     allow-list `.dockerignore`; Chromium, typst, poppler). `infra/k8s/` (kustomize): Deployments
     api, queue, worker-laptop, worker-mac, gateway; ClusterIP Services; PVC `jobops-data` (the
@@ -90,8 +146,44 @@ other, never both. Next: commit and merge M8 when the user says, first CI run, t
 
 ## Where to start next
 
-- Next: commit Milestone 8 when the user asks, push, and check the first CI run (it has never
-  run). Then merge into `dev` and the graph update. Then Milestone 6.
+- Built 2026-11-05, uncommitted, waiting for the user's deploy: **Gaps answer memory**
+  (`api/src/ui/gap-memory.ts`).
+  - Exact asks (normalized, synonyms included) take your earlier answer automatically, marked
+    "from <job>", with Undo. Undo marks the gap `declined` for that job.
+  - Similar asks are found by key-word overlap. general7 checks each pair (task `gap_match`, JD
+    wording only), then you accept or reject it.
+  - Every verdict is saved in table `gap_links`, and yours always beat the model's. An accepted
+    pair is carried automatically from then on.
+  - A carried learnable answer is written for the new JD, because `decide` reads it.
+  - Both reuse ways are kept (user, 2026-11-05):
+    - Carried answers have **Edit / improve**, which opens the form filled from the earlier
+      answer (for example, to turn a skill worth 0.3 into a bullet worth 0.85).
+    - Suggestions, and gaps where Undo was used, have **Use my earlier answer**, which fills
+      the form without saving.
+    - The switch "Fill exact matches automatically" (`ui_state` `gaps_auto_carry`, routes
+      `/ui/gaps/settings`) turns suggest-only on for exact matches.
+    - **Add previous response and rescore** (user, 2026-11-05) sends the earlier answer for
+      this gap in this job's wording and re-scores. It goes in as a skill, or as the other
+      name; never as a second bullet. A similar ask is also recorded as "same". A keyword
+      then leaves the gaps.
+    - On a sentence (must-have, responsibility, nice-to-have), the button skips "Draft a bullet":
+      it fills the form and drafts the bullet at once, under the earlier roles' job with the
+      fewest bullets. The user checks the draft, then clicks **Add skill and bullet point and
+      re-score** (`with_skill`: the skill is saved even with one role). A bullet counts 0.85;
+      the skill alone would count 0.3 (engine spec §3, unchanged). `from_previous` records the
+      two asks as the same.
+    - The story, proof, roles and other name are saved in the new column `gap_notes.input`.
+      Older answers are read back from their bullet or skill evidence notes (`parseEvidence`).
+  - New routes `POST /ui/jobs/:id/gaps/carry|match|reuse|undo`. New column
+    `gap_notes.carried_from`.
+- Then: test plans (below, plus answer memory), push, first CI run (never run yet), merge into
+  `dev`, then Milestone 6. Graph updated 2026-11-05 (before answer memory).
+- Test plans waiting for the user's approval, run after the deploy: Gaps routes and prompt,
+  tailor-ready, Rescore all, spelling learning, picker cover passes, one-score decide, delete
+  with `deleted_jobs` and `/forget`, delete reasons with `skip_keywords` (TS and Go `filter`),
+  `ctl`, and keeping `gateway/main_test.go`.
+- Dropped by the user (2026-11-05): queue tasks left behind when the queue is down during a
+  delete.
 - Milestone 8 open items: the gateway unit test (`gateway/main_test.go`, written without an
   approved test plan: ask the user to keep it); opening the port-forwards at login (launchd
   agent, only if the user wants it; until then `bin/jobops ui` after a reboot); PostgreSQL in

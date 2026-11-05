@@ -150,7 +150,9 @@ export function jobDetail(db: Db, id: string) {
     parsed: req ?? null,
     tasks: parsedTasks,
     resumes: resumeState(resumes as ResumeRow[], parsedTasks),
-    application: application(db, id)
+    application: application(db, id),
+    // Keep this job: never skipped by the preferences, never in a bulk delete.
+    kept: !!db.prepare("SELECT 1 FROM kept_jobs WHERE job_id = ?").get(id)
   };
 }
 

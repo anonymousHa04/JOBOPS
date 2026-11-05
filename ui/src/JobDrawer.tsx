@@ -4,6 +4,7 @@ import type { Application, AppStatus, JobDetail, ScoreDetail } from "./api";
 import { ScoreView } from "./Score";
 import { GapsView } from "./Gaps";
 import { TailorBox } from "./Tailor";
+import { DeletePanel } from "./DeleteJob";
 
 export type Tab = "overview" | "score" | "gaps" | "tracking" | "description";
 
@@ -14,9 +15,10 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
   const [copied, setCopied] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false); // "Why delete it?" open
 
   useEffect(() => {
-    setD(null); setScore(null); setScoreErr(null); setErr(null);
+    setD(null); setScore(null); setScoreErr(null); setErr(null); setDeleting(false);
     api.job(id).then(setD).catch((e: Error) => setErr(e.message));
     api.score(id).then(setScore).catch((e: Error) => setScoreErr(e instanceof ApiError ? e.message : String(e)));
   }, [id]);
@@ -49,16 +51,15 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
                 <span className="muted">{d.job.location ?? "No location"}</span>
                 <a href={d.job.source_url} target="_blank" rel="noreferrer">Open posting ↗</a>
                 <button className="btn tiny" title="Copies the job, how it was scored and your gaps (no resume text, no contact details) for Claude or ChatGPT to find your weak points." onClick={() => api.prompt(id).then((r) => navigator.clipboard.writeText(r.prompt)).then(() => setCopied("Copied")).catch((e: Error) => setCopied("Copy failed: " + e.message)).finally(() => setTimeout(() => setCopied(null), 4000))}>{copied ?? "Copy as prompt"}</button>
-                <button className="btn tiny danger" title="Remove this job, its answers and its tailored resumes. A later fetch will not add it back." onClick={() => {
-                  // Two questions for a job you applied to (it has history you may need).
-                  const applied = ["applied", "interview", "offer"].includes(d.application?.status ?? "");
-                  const n = d.resumes.filter((r) => r.decision !== "not_tailored").length;
-                  if (!window.confirm(`Delete "${d.job.title}" at ${d.job.company}?\n\nIts gap answers, tracking${n ? ` and ${n} tailored resume${n === 1 ? "" : "s"} (YAML and PDF)` : ""} are removed. A later fetch will not add it back. This cannot be undone.`)) return;
-                  if (applied && !window.confirm(`You marked this job as ${d.application!.status}. Delete it anyway?`)) return;
-                  api.deleteJob(id).then(() => { onChanged(); onClose(); }).catch((e: Error) => window.alert("Could not delete: " + e.message));
-                }}>Delete this job</button>
+                <button className={`btn tiny${d.kept ? " accent" : ""}`}
+                  title={d.kept ? "Kept: skip words never skip this job and a bulk delete never takes it. Click to undo." : "Keep this job whatever your skip words say: the batch check never skips it and a bulk delete never takes it."}
+                  onClick={() => api.keepJob(id, !d.kept).then((r) => { setD((x) => (x ? { ...x, kept: r.kept } : x)); onChanged(); }).catch(() => undefined)}>
+                  {d.kept ? "Kept ✓" : "Keep this job"}
+                </button>
+                <button className="btn tiny danger" disabled={deleting} title="Remove this job, its answers and its tailored resumes; asks why first, and skips later jobs with the words you pick." onClick={() => setDeleting(true)}>Delete this job</button>
               </div>
             </div>
+            {deleting && <DeletePanel d={d} onCancel={() => setDeleting(false)} onDeleted={() => { onChanged(); onClose(); }} />}
             <div className="muted small prompt-note">Copy as prompt: the job, how it was scored, and your gaps, for a stronger model to find your weak points. No resume text or contact details are included.</div>
             <nav className="drawer-tabs">
               {(["overview", "score", "gaps", "tracking", "description"] as Tab[]).map((t) => (

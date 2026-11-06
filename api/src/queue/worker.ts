@@ -5,7 +5,8 @@ import { db, render, score, tailor, tailorAll } from "../tools.ts";
 import { parseJob } from "../requirements/parse.ts";
 import { modelUp, switchCommands } from "../model/registry.ts";
 import type { Task } from "../model/registry.ts";
-import { done, fail, lease, ping, queueUp, QueueDownError } from "./client.ts";
+import { done, fail, lease, ping, queueUp, queueUrl, QueueDownError } from "./client.ts";
+import { followSse, QUEUE_EVENTS } from "../events/sse.ts";
 
 // score first: it moves jobs forward.
 export const GROUPS: Record<string, string[]> = {
@@ -46,6 +47,27 @@ export function failureCode(err: unknown): string {
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Idle workers wait on the queue's change feed (GET /events) instead of asking for work every
+// few seconds: a task queued, or a slot freed (a task done or failed), wakes them. The timer is
+// only a fallback, for a retry whose backoff ends with no event, or a feed that is down.
+const waiters = new Set<() => void>();
+let feedStarted = false;
+function startFeed(signal: AbortSignal) {
+  if (feedStarted) return;
+  feedStarted = true;
+  followSse(`${queueUrl()}/events`, QUEUE_EVENTS, (name, data) => {
+    if (name !== "ready" && data.state === "leased") return; // takes work, frees nothing
+    for (const wake of [...waiters]) wake();
+  }, { signal });
+}
+function waitForWork(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const wake = () => { clearTimeout(t); waiters.delete(wake); resolve(); };
+    const t = setTimeout(wake, ms);
+    waiters.add(wake);
+  });
+}
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 300);
 
 export async function runWorker(group: string, opts: { concurrency?: number } = {}) {
@@ -55,11 +77,14 @@ export async function runWorker(group: string, opts: { concurrency?: number } = 
   if (!(await queueUp())) throw new QueueDownError();
 
   let stopping = false;
+  const feed = new AbortController();
+  startFeed(feed.signal);
   // SIGINT: Ctrl-C; SIGTERM: Kubernetes stopping the pod (it waits, then kills).
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.once(sig, () => {
       stopping = true;
       console.error("stopping after the current tasks");
+      for (const wake of [...waiters]) wake(); // idle loops see stopping now, not after 30 s
     });
   }
   const warned = new Map<string, number>();
@@ -85,7 +110,7 @@ export async function runWorker(group: string, opts: { concurrency?: number } = 
         }
         const task = await lease(ready, worker);
         if (!task) {
-          await wait(3_000);
+          await waitForWork(30_000);
           continue;
         }
         const id = task.job_id.slice(0, 8);
@@ -107,5 +132,6 @@ export async function runWorker(group: string, opts: { concurrency?: number } = 
     }
   };
   await Promise.all(Array.from({ length: n }, (_, i) => loop(i + 1)));
+  feed.abort();
   return { stopped: true };
 }

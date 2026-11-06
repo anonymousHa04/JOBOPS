@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+
+	"jobops/queue/internal/events"
+)
 
 // Forget removes a job's queue tasks and its preference-check row, after the user deleted the
 // job (the API removes the jobs row and the rest). Returns how many tasks were removed. A task
@@ -25,5 +29,5 @@ func (s *Store) Forget(jobID string) (int, error) {
 	if _, err := tx.Exec(`DELETE FROM kept_jobs WHERE job_id = ?`, jobID); err != nil {
 		return 0, fmt.Errorf("forget: %w", err)
 	}
-	return int(n), tx.Commit()
+	return int(n), s.commit(tx, events.Event{Kind: "job", JobID: jobID, State: "forgotten"})
 }

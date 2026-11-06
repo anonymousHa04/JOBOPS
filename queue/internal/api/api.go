@@ -80,6 +80,15 @@ func Handler(s *store.Store) http.Handler {
 	workers := &seen{last: map[string]time.Time{}, quiet: map[string]bool{}}
 	go workers.watchQuiet(30 * time.Second)
 
+	// The change feed (Server-Sent Events): the API relays it to the UI; workers wait on it.
+	mux.HandleFunc("GET /events", func(w http.ResponseWriter, r *http.Request) {
+		if s.Events == nil {
+			fail(w, http.StatusServiceUnavailable, "events are off")
+			return
+		}
+		s.Events.ServeSSE(w, r)
+	})
+
 	mux.HandleFunc("POST /workers/ping", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Worker string `json:"worker"`
@@ -216,6 +225,31 @@ func Handler(s *store.Store) http.Handler {
 		}
 		log.Printf("rescore: job %s, batch %d", short(in.JobID), id)
 		send(w, http.StatusOK, map[string]int64{"batch_id": id})
+	})
+
+	// A job the user added by its link (UI): parse it (unless parsed) and score it; no tailor.
+	mux.HandleFunc("POST /add", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			JobID string `json:"job_id"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		if in.JobID == "" {
+			fail(w, http.StatusBadRequest, "job_id is required")
+			return
+		}
+		id, stage, err := s.Add(in.JobID)
+		if errors.Is(err, store.ErrBusy) {
+			fail(w, http.StatusConflict, "job already has an open task")
+			return
+		}
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		log.Printf("add: job %s, batch %d, %s queued", short(in.JobID), id, stage)
+		send(w, http.StatusOK, map[string]any{"batch_id": id, "stage": stage})
 	})
 
 	mux.HandleFunc("POST /tailor", func(w http.ResponseWriter, r *http.Request) {

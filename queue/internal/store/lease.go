@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"jobops/queue/internal/events"
 )
 
 // Lease hands out the next ready task of the first stage (in the given order) whose group is
@@ -44,7 +46,7 @@ func (s *Store) Lease(stages []string, worker string) (*Task, error) {
 		}
 		t.State = "leased"
 		t.Attempts++
-		return t, tx.Commit()
+		return t, s.commit(tx, taskEvent(t, t.Stage, "leased"))
 	}
 	return nil, nil
 }
@@ -72,11 +74,14 @@ func (s *Store) Done(taskID int64, result json.RawMessage) error {
 	}
 	next := ""
 	final := false
+	evs := []events.Event{taskEvent(t, t.Stage, "done")}
 	switch t.Stage {
 	case "fetch":
-		if _, err := s.queueJobs(tx, t.BatchID); err != nil {
+		ids, err := s.queueJobs(tx, t.BatchID)
+		if err != nil {
 			return err
 		}
+		evs = append(evs, jobsQueued(t.BatchID, ids)...)
 	case "parse":
 		next = "score"
 	case "score":
@@ -84,8 +89,9 @@ func (s *Store) Done(taskID int64, result json.RawMessage) error {
 			Decision string `json:"decision"`
 		}
 		_ = json.Unmarshal(result, &r)
-		// A rescore only updates the score: the user starts tailoring from the UI (Tailor now).
-		if strings.HasPrefix(t.PromptVersion, "rescore-") {
+		// A rescore, or a job added by its link, only updates the score: the user starts
+		// tailoring from the UI (Tailor now).
+		if strings.HasPrefix(t.PromptVersion, "rescore-") || strings.HasPrefix(t.PromptVersion, "add-") {
 			final = true
 		} else if r.Decision == "reuse" || r.Decision == "adapt" {
 			next = "tailor"
@@ -97,22 +103,24 @@ func (s *Store) Done(taskID int64, result json.RawMessage) error {
 	}
 	if next != "" {
 		// A rescore's tailor keeps its version (rescore-<batch>), so a job tailored before can be
-		// tailored again; every other next stage keeps the default version, as before.
+		// tailored again; an added job's score keeps add-<batch> (so that score is final); every
+		// other next stage keeps the default version, as before.
 		version := ""
-		if strings.HasPrefix(t.PromptVersion, "rescore-") {
+		if strings.HasPrefix(t.PromptVersion, "rescore-") || strings.HasPrefix(t.PromptVersion, "add-") {
 			version = t.PromptVersion
 		}
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO queue_tasks (batch_id, job_id, stage, prompt_version, state, created_at, updated_at)
 			VALUES (?, ?, ?, ?, 'queued', ?, ?)`, t.BatchID, t.JobID, next, version, now, now); err != nil {
 			return fmt.Errorf("done: %w", err)
 		}
+		evs = append(evs, taskEvent(t, next, "queued"))
 	}
 	if final {
 		if _, err := tx.Exec(`UPDATE queue_tasks SET final = 1 WHERE id = ?`, taskID); err != nil {
 			return fmt.Errorf("done: %w", err)
 		}
 	}
-	return tx.Commit()
+	return s.commit(tx, evs...)
 }
 
 // Fail retries a timeout or an unreachable server with backoff (30 s, 60 s) while attempts
@@ -133,17 +141,20 @@ func (s *Store) Fail(taskID int64, code, detail string) error {
 		detail = detail[:300]
 	}
 	now := s.ts(0)
+	ev := taskEvent(t, t.Stage, "failed")
+	var more []events.Event
 	if (code == "timeout" || code == "unavailable") && t.Attempts < MaxAttempts {
+		ev.State = "queued" // retried after the backoff
 		backoff := 30 * time.Second << (t.Attempts - 1)
 		_, err = tx.Exec(`UPDATE queue_tasks SET state = 'queued', retry_at = ?, lease_until = NULL,
 			error_code = ?, error_detail = ?, updated_at = ? WHERE id = ?`, s.ts(backoff), code, detail, now, taskID)
 	} else {
-		err = s.failTask(tx, t, code, detail)
+		more, err = s.failTask(tx, t, code, detail)
 	}
 	if err != nil {
 		return fmt.Errorf("fail: %w", err)
 	}
-	return tx.Commit()
+	return s.commit(tx, append([]events.Event{ev}, more...)...)
 }
 
 // ExpireLeases returns tasks whose worker went away to the queue (or fails them after
@@ -170,30 +181,46 @@ func (s *Store) ExpireLeases() (int, error) {
 		expired = append(expired, t)
 	}
 	rows.Close()
+	var evs []events.Event
 	for _, t := range expired {
+		state := "queued"
 		if t.Attempts >= MaxAttempts {
-			err = s.failTask(tx, t, "lease_expired", "the worker did not report back in time")
+			state = "failed"
+			var more []events.Event
+			more, err = s.failTask(tx, t, "lease_expired", "the worker did not report back in time")
+			evs = append(evs, more...)
 		} else {
 			_, err = tx.Exec(`UPDATE queue_tasks SET state = 'queued', lease_until = NULL, updated_at = ? WHERE id = ?`, s.ts(0), t.ID)
 		}
 		if err != nil {
 			return 0, fmt.Errorf("expire: %w", err)
 		}
+		evs = append(evs, taskEvent(t, t.Stage, state))
 	}
-	return len(expired), tx.Commit()
+	return len(expired), s.commit(tx, evs...)
 }
 
 // failTask marks a task failed; a failed search still queues the jobs already stored.
-func (s *Store) failTask(tx *sql.Tx, t *Task, code, detail string) error {
+// It returns the events for the jobs a failed fetch queued.
+func (s *Store) failTask(tx *sql.Tx, t *Task, code, detail string) ([]events.Event, error) {
 	if _, err := tx.Exec(`UPDATE queue_tasks SET state = 'failed', lease_until = NULL, error_code = ?,
 		error_detail = ?, updated_at = ? WHERE id = ?`, code, detail, s.ts(0), t.ID); err != nil {
-		return err
+		return nil, err
 	}
 	if t.Stage == "fetch" {
-		_, err := s.queueJobs(tx, t.BatchID)
-		return err
+		ids, err := s.queueJobs(tx, t.BatchID)
+		return jobsQueued(t.BatchID, ids), err
 	}
-	return nil
+	return nil, nil
+}
+
+// jobsQueued: one event per job a batch's fetch step queued (the UI moves each card).
+func jobsQueued(batchID int64, ids []string) []events.Event {
+	evs := make([]events.Event, 0, len(ids)+1)
+	for _, id := range ids {
+		evs = append(evs, events.Event{Kind: "task", JobID: id, BatchID: batchID, Stage: "parse", State: "queued"})
+	}
+	return append(evs, events.Event{Kind: "batch", BatchID: batchID, State: "queued"})
 }
 
 const taskCols = `id, batch_id, job_id, stage, prompt_version, state, attempts,

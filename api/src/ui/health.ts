@@ -19,7 +19,7 @@ function running(pattern: string): Promise<boolean> {
 }
 
 // In the cluster each worker runs in its own pod, so pgrep cannot see it: ask the queue when the
-// group last leased or pinged (a worker does one or the other at least every 15 s).
+// group last leased or pinged (an idle worker leases at least every 30 s: it waits on the queue's change feed, with a 30 s fallback).
 const inCluster = process.env.JOBOPS_IN_CLUSTER === "1";
 async function worker(group: string): Promise<boolean> {
   if (!inCluster) return running(`cli.ts worker ${group}`);

@@ -3,7 +3,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db.ts";
-import { addPrepTask, APP_STATUSES, board, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
+import { addPrepTask, APP_STATUSES, board, boardCard, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
 import { health } from "./health.ts";
 import { QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
 import { markRescoredAll, rescoreAllStatus, rescoreCandidates, tailorStatus } from "./tailor-ready.ts";
@@ -11,6 +11,7 @@ import { draftBullet, gapHelp } from "./gap-model.ts";
 import { answerGap, gapList } from "./gaps.ts";
 import { autoCarry, carryAnswers, declineCarried, linkSame, matchSimilar, reuseAnswer, setAutoCarry } from "./gap-memory.ts";
 import { analysisPrompt } from "./prompt.ts";
+import { addByLink, AddRefused } from "./add-job.ts";
 import { event, shortId, warnEvent } from "../log.ts";
 import { bulkDelete, bulkPreview, deleteHints, deleteJob, DeleteRefused, deleteSkipMatches, setKept, skipMatches } from "../jobs/delete.ts";
 
@@ -44,6 +45,8 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 
 export function uiRoutes(app: FastifyInstance, db: Db): void {
   app.get("/ui/board", async () => ({ jobs: board(db) }));
+  // One card, for the change feed: { job: null } when the job is gone (deleted).
+  app.get<{ Params: { id: string } }>("/ui/board/:id", async (request) => ({ job: boardCard(db, request.params.id) }));
 
   app.get("/ui/health", async () => ({ services: await health() }));
 
@@ -164,6 +167,18 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
     warnEvent(`ui error${body.data.where ? ` (${body.data.where})` : ""}: ${body.data.message.replace(/\s+/g, " ").slice(0, 600)}`);
     return { ok: true };
+  });
+
+  // Add a job by its link (top bar): fetch, store, keep, queue parse and score (no tailor).
+  app.post<{ Body: unknown }>("/ui/jobs/add", async (request, reply) => {
+    const body = z.object({ url: z.string().trim().min(1).max(2000) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body", message: "Paste a job link." });
+    try {
+      return await addByLink(db, body.data.url);
+    } catch (err) {
+      if (err instanceof AddRefused) return reply.status(400).send({ error: "add_refused", message: message(err) });
+      return reply.status(500).send({ error: "add_failed", message: message(err) });
+    }
   });
 
   // Whether exact earlier answers are filled in automatically (default) or only proposed.

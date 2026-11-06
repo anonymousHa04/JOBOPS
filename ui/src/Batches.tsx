@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, fmtDate } from "./api";
+import { onChange } from "./events";
 import type { Batch } from "./api";
 
 const STAGES = ["fetch", "parse", "score", "tailor"];
@@ -15,23 +16,38 @@ export function Batches({ onOpen, onChanged }: { onOpen: (id: string) => void; o
   const loadList = useCallback(() => {
     api.batches().then((b) => { setList(b); setSel((s) => s ?? b[0]?.id ?? null); }).catch((e: Error) => { setList([]); setMsg({ kind: "error", text: e.message }); });
   }, []);
-  useEffect(() => { loadList(); }, [loadList]);
+  // No polling: the list and the selected batch are read again when the change feed names a
+  // batch (a task of it changed, or a new batch started), at most once per 300 ms.
+  useEffect(() => {
+    loadList();
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const off = onChange((c) => {
+      if (c.kind !== "resync" && (c.batch_id === undefined || c.batch_id === 0)) return;
+      if (t) return;
+      t = setTimeout(() => { t = null; loadList(); }, 300);
+    });
+    return () => { off(); if (t) clearTimeout(t); };
+  }, [loadList]);
 
-  // Poll the selected batch every 3 s while it runs.
   useEffect(() => {
     if (sel === null) return;
     let stop = false;
     let wasRunning = false;
+    let t: ReturnType<typeof setTimeout> | null = null;
     const tick = () => api.batch(sel).then((b) => {
       if (stop) return;
       setCur(b);
-      if (wasRunning && !b.running) { loadList(); onChanged(); }
+      if (wasRunning && !b.running) onChanged();
       wasRunning = b.running;
     }).catch(() => undefined);
     tick();
-    const t = setInterval(tick, 3000);
-    return () => { stop = true; clearInterval(t); };
-  }, [sel, loadList, onChanged]);
+    const off = onChange((c) => {
+      if (c.kind !== "resync" && c.batch_id !== sel) return;
+      if (t) return;
+      t = setTimeout(() => { t = null; tick(); }, 300);
+    });
+    return () => { stop = true; off(); if (t) clearTimeout(t); };
+  }, [sel, onChanged]);
 
   const start = async () => {
     setBusy(true); setMsg(null);

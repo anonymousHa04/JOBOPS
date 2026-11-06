@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+
+	"jobops/queue/internal/events"
+)
 
 // Sweep scores leftovers: every parsed job that no batch has scored (parsed by hand with
 // jd parse or job add, or before the queue existed). It queues a score task for up to max
@@ -55,11 +59,13 @@ func (s *Store) Sweep(max int) (int64, int, error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("sweep: %w", err)
 	}
+	evs := make([]events.Event, 0, len(ids))
 	for _, id := range ids {
 		if _, err := tx.Exec(`INSERT OR IGNORE INTO queue_tasks (batch_id, job_id, stage, state, created_at, updated_at)
 			VALUES (?, ?, 'score', 'queued', ?, ?)`, batchID, id, now, now); err != nil {
 			return 0, 0, fmt.Errorf("sweep: %w", err)
 		}
+		evs = append(evs, events.Event{Kind: "task", JobID: id, BatchID: batchID, Stage: "score", State: "queued"})
 	}
-	return batchID, len(ids), tx.Commit()
+	return batchID, len(ids), s.commit(tx, evs...)
 }

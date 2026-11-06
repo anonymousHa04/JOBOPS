@@ -129,6 +129,21 @@ export function board(db: Db): Card[] {
   });
 }
 
+// One board card (the UI's change feed re-reads only the job that changed); null: no such job.
+export function boardCard(db: Db, id: string): Card | null {
+  const j = db.prepare("SELECT id, title, company, location, source_name, first_seen_at FROM jobs WHERE id = ?").get(id) as
+    { id: string; title: string; company: string; location: string | null; source_name: string | null; first_seen_at: string } | undefined;
+  if (!j) return null;
+  const parsed = !!db.prepare("SELECT 1 FROM job_requirements WHERE job_id = ? LIMIT 1").get(id);
+  const tailored = !!db.prepare("SELECT 1 FROM resume_records WHERE jd_id = ? AND decision != 'not_tailored' LIMIT 1").get(id);
+  const app = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(id) as { status: AppStatus } | undefined;
+  const open = (db.prepare("SELECT COUNT(*) AS n FROM application_tasks WHERE job_id = ? AND done = 0").get(id) as { n: number }).n;
+  const f = filters(db, id).get(id);
+  const skipped = !!f && !f.ok;
+  const p = pipelineOf(tasksByJob(db, id).get(id) ?? [], parsed, tailored, skipped);
+  return { ...j, ...p, skip_reason: skipped ? f.reason : null, application: app?.status ?? null, open_tasks: open };
+}
+
 export function jobDetail(db: Db, id: string) {
   const job = db.prepare(
     "SELECT id, title, company, location, source_url, source_name, employment_type, seniority, posted_at, first_seen_at, last_seen_at, description FROM jobs WHERE id = ?"

@@ -115,6 +115,12 @@ export type Batch = {
   tailored: number; skipped?: Record<string, number>;
 };
 
+// A job added by its link: queued for parse/score (batch_id), or why not (queue_note).
+export type AddedJob = {
+  job_id: string; company: string; title: string; created: boolean;
+  batch_id: number | null; stage: string | null; queue_note: string | null;
+};
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
@@ -135,6 +141,9 @@ export class ApiError extends Error {
 
 export const api = {
   board: () => call<{ jobs: Card[] }>("GET", "/ui/board").then((r) => r.jobs),
+  // One card (the change feed re-reads only the job that changed); null: the job is gone.
+  card: (id: string) => call<{ job: Card | null }>("GET", `/ui/board/${id}`).then((r) => r.job),
+  addJob: (url: string) => call<AddedJob>("POST", "/ui/jobs/add", { url }),
   health: () => call<{ services: Service[] }>("GET", "/ui/health").then((r) => r.services),
   job: (id: string) => call<JobDetail>("GET", `/ui/jobs/${id}`),
   score: (id: string) => call<ScoreDetail>("GET", `/ui/jobs/${id}/score`),

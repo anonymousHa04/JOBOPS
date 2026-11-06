@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { Card } from "./api";
 import { HealthBar } from "./HealthBar";
@@ -8,6 +8,8 @@ import type { Tab } from "./JobDrawer";
 import { Batches } from "./Batches";
 import { SkipDelete } from "./SkipDelete";
 import { BulkDelete } from "./BulkDelete";
+import { AddJob } from "./AddJob";
+import { onChange } from "./events";
 
 type View = "pipeline" | "applications" | "batches";
 
@@ -28,11 +30,55 @@ export function App() {
     return next;
   });
 
+  const lastLoad = useRef(0);
   const load = useCallback(() => {
+    lastLoad.current = Date.now();
     api.board().then((j) => { setJobs(j); setError(null); }).catch((e: Error) => setError(e.message));
   }, []);
 
-  useEffect(() => { load(); const t = setInterval(load, 15000); return () => clearInterval(t); }, [load]);
+  // No polling: the board loads once, then the change feed moves single cards. A change names
+  // a job: only that card is read again (GET /ui/board/:id) and put in place, or removed when
+  // the job is gone. A resync (the feed (re)connected, so changes may have been missed), a
+  // preference check (it can skip many jobs at once) or a burst of many jobs reloads once.
+  const pending = useRef(new Set<string>());
+  const flushT = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshCards = useCallback((ids: string[]) => {
+    for (const id of ids) {
+      api.card(id).then((c) => setJobs((cur) => {
+        if (!cur) return cur;
+        const i = cur.findIndex((j) => j.id === id);
+        if (!c) return i < 0 ? cur : cur.filter((j) => j.id !== id);
+        if (i < 0) return [c, ...cur];
+        const next = cur.slice();
+        next[i] = c;
+        return next;
+      })).catch(() => undefined);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+    const off = onChange((c) => {
+      if (c.kind === "resync" || c.kind === "filter") {
+        // The first "ready" arrives right after the first load: no second load for it.
+        if (c.kind === "filter" || Date.now() - lastLoad.current > 2000) { pending.current.clear(); load(); }
+        return;
+      }
+      if (!c.job_id) return;
+      pending.current.add(c.job_id);
+      if (flushT.current) return;
+      // Changes come in bursts (a task done, then the next one queued): one read per card.
+      flushT.current = setTimeout(() => {
+        flushT.current = null;
+        const ids = [...pending.current];
+        pending.current.clear();
+        if (ids.length > 25) load(); else refreshCards(ids);
+      }, 250);
+    });
+    return () => { off(); if (flushT.current) clearTimeout(flushT.current); };
+  }, [load, refreshCards]);
+  // Children report their own writes; the change feed already moves those cards.
+  const changed = useCallback(() => undefined, []);
+  const changedJob = useCallback((id: string) => refreshCards([id]), [refreshCards]);
   useEffect(() => { location.hash = view; }, [view]);
 
   // A ticked job that left the board (deleted, moved to another column) is no longer ticked.
@@ -72,11 +118,12 @@ export function App() {
           {view === "pipeline" && (
             <label className="check"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Show skipped</label>
           )}
+          {view === "pipeline" && <AddJob onAdded={(id) => { changedJob(id); openJob(id); }} />}
           <span className="muted">{counts.total} jobs{counts.failed ? ` · ${counts.failed} failed` : ""}</span>
           <button className="btn ghost" onClick={load}>Refresh</button>
-          <RescoreAll refresh={jobs} onDone={load} />
-          <SkipDelete refresh={jobs} onDone={load} />
-          {view === "pipeline" && <BulkDelete selected={[...selected]} onClear={() => setSelected(new Set())} onDone={load} />}
+          <RescoreAll refresh={jobs} onDone={changed} />
+          <SkipDelete refresh={jobs} onDone={changed} />
+          {view === "pipeline" && <BulkDelete selected={[...selected]} onClear={() => setSelected(new Set())} onDone={changed} />}
         </div>
       )}
 
@@ -84,11 +131,11 @@ export function App() {
         {error && <div className="banner error">API not reachable: {error}. Start it with <code>node api/src/server.ts</code>.</div>}
         {!jobs && !error && <div className="muted pad">Loading…</div>}
         {jobs && view === "pipeline" && <PipelineBoard jobs={shown} showSkipped={showSkipped} onOpen={openJob} selected={selected} onSelect={select} />}
-        {jobs && view === "applications" && <AppBoard jobs={shown} onOpen={openJob} onChanged={load} />}
-        {view === "batches" && <Batches onOpen={openJob} onChanged={load} />}
+        {jobs && view === "applications" && <AppBoard jobs={shown} onOpen={openJob} onChanged={changed} />}
+        {view === "batches" && <Batches onOpen={openJob} onChanged={changed} />}
       </main>
 
-      {open && <JobDrawer key={open + (openTab ?? "")} id={open} initialTab={openTab} onClose={() => setOpen(null)} onChanged={load} />}
+      {open && <JobDrawer key={open + (openTab ?? "")} id={open} initialTab={openTab} onClose={() => setOpen(null)} onChanged={() => changedJob(open)} />}
     </div>
   );
 }

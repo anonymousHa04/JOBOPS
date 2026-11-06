@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+
+	"jobops/queue/internal/events"
 
 	_ "modernc.org/sqlite"
 )
@@ -25,6 +28,28 @@ type Store struct {
 	db  *sql.DB
 	mu  sync.Mutex
 	now func() time.Time
+	// Events gets a change event after every commit that moves a job or batch (nil: none).
+	Events *events.Hub
+}
+
+// commit commits tx, then publishes the events (only when the commit worked).
+func (s *Store) commit(tx *sql.Tx, evs ...events.Event) error {
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, e := range evs {
+		s.Events.Publish(e)
+	}
+	return nil
+}
+
+// taskEvent: a task changed state. A fetch task's job_id is "batch:<n>", not a job.
+func taskEvent(t *Task, stage, state string) events.Event {
+	e := events.Event{Kind: "task", BatchID: t.BatchID, Stage: stage, State: state}
+	if !strings.HasPrefix(t.JobID, "batch:") {
+		e.JobID = t.JobID
+	}
+	return e
 }
 
 func Open(path string) (*Store, error) {

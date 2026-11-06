@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+
+	"jobops/queue/internal/events"
 )
 
 // StartBatch records a batch and queues its fetch task. limit 0 means MaxLimit.
@@ -34,43 +36,43 @@ func (s *Store) StartBatch(limit int, parseVersion string) (int64, error) {
 		VALUES (?, ?, 'fetch', 'queued', ?, ?)`, id, fmt.Sprintf("batch:%d", id), now, now); err != nil {
 		return 0, fmt.Errorf("start batch: %w", err)
 	}
-	return id, tx.Commit()
+	return id, s.commit(tx, events.Event{Kind: "batch", BatchID: id, Stage: "fetch", State: "queued"})
 }
 
 // queueJobs runs when a batch's fetch task ends: it takes up to the batch's limit of jobs,
 // newest first, skipping finished jobs, jobs already queued in a running batch, and jobs the
 // last preference check rejected (job_filter; a job never checked is taken). Failed
-// tasks are queued again; a new job gets a parse task.
-func (s *Store) queueJobs(tx *sql.Tx, batchID int64) (int, error) {
+// tasks are queued again; a new job gets a parse task. Returns the ids of the jobs taken.
+func (s *Store) queueJobs(tx *sql.Tx, batchID int64) ([]string, error) {
 	var limit int
 	var version string
 	if err := tx.QueryRow(`SELECT limit_n, parse_version FROM queue_batches WHERE id = ?`, batchID).Scan(&limit, &version); err != nil {
-		return 0, fmt.Errorf("queue jobs: %w", err)
+		return nil, fmt.Errorf("queue jobs: %w", err)
 	}
 	// Read the ids first: one connection, so no statement runs while rows are open.
 	rows, err := tx.Query(`SELECT id FROM jobs WHERE id NOT IN (SELECT job_id FROM job_filter WHERE ok = 0)
 		ORDER BY first_seen_at DESC`)
 	if err != nil {
-		return 0, fmt.Errorf("queue jobs: %w", err)
+		return nil, fmt.Errorf("queue jobs: %w", err)
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("queue jobs: %w", err)
+			return nil, fmt.Errorf("queue jobs: %w", err)
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("queue jobs: %w", err)
+		return nil, fmt.Errorf("queue jobs: %w", err)
 	}
 
 	now := s.ts(0)
-	taken := 0
+	var taken []string
 	for _, id := range ids {
-		if taken >= limit {
+		if len(taken) >= limit {
 			break
 		}
 		var final, active, failed, done int
@@ -78,7 +80,7 @@ func (s *Store) queueJobs(tx *sql.Tx, batchID int64) (int, error) {
 			COALESCE(SUM(final = 1), 0), COALESCE(SUM(state IN ('queued', 'leased')), 0),
 			COALESCE(SUM(state = 'failed'), 0), COALESCE(SUM(state = 'done'), 0)
 			FROM queue_tasks WHERE job_id = ?`, id).Scan(&final, &active, &failed, &done); err != nil {
-			return 0, fmt.Errorf("queue jobs: %w", err)
+			return nil, fmt.Errorf("queue jobs: %w", err)
 		}
 		switch {
 		case final > 0 || active > 0:
@@ -87,7 +89,7 @@ func (s *Store) queueJobs(tx *sql.Tx, batchID int64) (int, error) {
 			if _, err := tx.Exec(`UPDATE queue_tasks SET state = 'queued', attempts = 0, retry_at = NULL,
 				error_code = NULL, error_detail = NULL, batch_id = ?, updated_at = ? WHERE job_id = ? AND state = 'failed'`,
 				batchID, now, id); err != nil {
-				return 0, fmt.Errorf("queue jobs: %w", err)
+				return nil, fmt.Errorf("queue jobs: %w", err)
 			}
 		case done > 0:
 			// Done tasks but nothing open, failed or final: not a job this batch can move.
@@ -95,10 +97,10 @@ func (s *Store) queueJobs(tx *sql.Tx, batchID int64) (int, error) {
 		default:
 			if _, err := tx.Exec(`INSERT OR IGNORE INTO queue_tasks (batch_id, job_id, stage, prompt_version, state, created_at, updated_at)
 				VALUES (?, ?, 'parse', ?, 'queued', ?, ?)`, batchID, id, version, now, now); err != nil {
-				return 0, fmt.Errorf("queue jobs: %w", err)
+				return nil, fmt.Errorf("queue jobs: %w", err)
 			}
 		}
-		taken++
+		taken = append(taken, id)
 	}
 	return taken, nil
 }
@@ -113,5 +115,8 @@ func (s *Store) RetryBatch(batchID int64) (int, error) {
 		return 0, fmt.Errorf("retry batch: %w", err)
 	}
 	n, err := res.RowsAffected()
+	if err == nil && n > 0 {
+		s.Events.Publish(events.Event{Kind: "batch", BatchID: batchID, State: "queued"})
+	}
 	return int(n), err
 }

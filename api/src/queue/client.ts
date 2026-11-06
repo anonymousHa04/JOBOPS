@@ -46,7 +46,9 @@ export const rescore = (jobId: string) => call<{ batch_id: number }>("POST", "/r
 export const rescoreJobs = (jobIds: string[]) => call<{ batch_id: number; queued: number }>("POST", "/rescore", { job_ids: jobIds });
 // Tailor now: one tailor task (batch 0 when a score or tailor task is already open).
 export const tailorNow = (jobId: string) => call<{ batch_id: number }>("POST", "/tailor", { job_id: jobId });
-export const retryBatch = (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`);
+// A job added by its link (UI): parse (unless parsed) and score, never tailor. 409 while busy.
+export const addJob = (jobId: string) => call<{ batch_id: number; stage: string }>("POST", "/add", { job_id: jobId });
+export const retryBatch =(id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`);
 export const ping = (worker: string) => call<void>("POST", "/workers/ping", { worker });
 // When each worker group last asked for work or pinged (ISO times, by group: laptop, mac).
 export const workersSeen = () => call<Record<string, string>>("GET", "/workers");

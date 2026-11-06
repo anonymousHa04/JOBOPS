@@ -12,6 +12,7 @@ import { gapList } from "../ui/gaps.ts";
 import { event, plural, warnEvent } from "../log.ts";
 import { pdfDir } from "../render/render.ts";
 import { recordsDir } from "../tailor/records.ts";
+import { publish } from "../events/bus.ts";
 
 export class DeleteRefused extends Error {}
 
@@ -123,6 +124,7 @@ export async function deleteJob(db: Db, jobId: string, why: DeleteReason = {}): 
   if (added.length) event(`skip words added: ${added.join(", ")}`);
   if (refused.length) event(`skip words refused (your target-role words): ${refused.join(", ")}`);
   if (kwError) warnEvent(`skip words not saved: ${kwError}`);
+  publish({ kind: "job", job_id: jobId, state: "deleted" });
   return { resumes: resumes.length, files, tasks, keywords_added: added, keywords_refused: refused, keywords_error: kwError };
 }
 

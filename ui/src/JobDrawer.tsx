@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { onChange } from "./events";
 import { api, ApiError, APP_LABEL, APP_STATUSES, bandClass, fmtDate, STATE_LABEL } from "./api";
 import type { Application, AppStatus, JobDetail, ScoreDetail } from "./api";
 import { ScoreView } from "./Score";
@@ -21,6 +22,24 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
     setD(null); setScore(null); setScoreErr(null); setErr(null); setDeleting(false);
     api.job(id).then(setD).catch((e: Error) => setErr(e.message));
     api.score(id).then(setScore).catch((e: Error) => setScoreErr(e instanceof ApiError ? e.message : String(e)));
+  }, [id]);
+
+  // The open job changed (a task moved, an answer saved): read its detail and score again, once
+  // per burst. rev re-reads the Tailor box too.
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const off = onChange((c) => {
+      if (c.kind !== "resync" && c.job_id !== id) return;
+      if (t) return;
+      t = setTimeout(() => {
+        t = null;
+        api.job(id).then(setD).catch(() => undefined);
+        api.score(id).then((s) => { setScore(s); setScoreErr(null); }).catch(() => undefined);
+        setRev((r) => r + 1);
+      }, 300);
+    });
+    return () => { off(); if (t) clearTimeout(t); };
   }, [id]);
 
   useEffect(() => {
@@ -67,7 +86,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
               ))}
             </nav>
             <div className="drawer-body">
-              {tab === "overview" && <Overview d={d} score={score} scoreErr={scoreErr} onScore={() => setTab("score")} onChanged={() => { onChanged(); api.job(id).then(setD).catch(() => undefined); }} />}
+              {tab === "overview" && <Overview d={d} score={score} scoreErr={scoreErr} rev={rev} onScore={() => setTab("score")} onChanged={() => { onChanged(); api.job(id).then(setD).catch(() => undefined); }} />}
               {tab === "score" && (score ? <ScoreView d={score} /> : <div className="banner">{scoreErr ?? "Computing…"}</div>)}
               {tab === "gaps" && <GapsView id={id} onChanged={() => { onChanged(); api.score(id).then(setScore).catch(() => undefined); }} />}
               {tab === "tracking" && <Tracking id={id} app={d.application} onChange={setApp} />}
@@ -80,7 +99,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
   );
 }
 
-function Overview({ d, score, scoreErr, onScore, onChanged }: { d: JobDetail; score: ScoreDetail | null; scoreErr: string | null; onScore: () => void; onChanged: () => void }) {
+function Overview({ d, score, scoreErr, rev, onScore, onChanged }: { d: JobDetail; score: ScoreDetail | null; scoreErr: string | null; rev: number; onScore: () => void; onChanged: () => void }) {
   const failed = d.tasks.filter((t) => t.state === "failed");
   return (
     <div className="overview">
@@ -101,7 +120,7 @@ function Overview({ d, score, scoreErr, onScore, onChanged }: { d: JobDetail; sc
         {d.state === "tailored" && <div>A tailored resume exists (below).</div>}
         {d.state === "not_tailored" && d.ready_to_tailor && <div>Re-scored into a tailoring band ({d.decision}). It stays here until you start tailoring.</div>}
         {d.state === "not_tailored" && !d.ready_to_tailor && (score?.reasons.length ? <ul>{score.reasons.map((r) => <li key={r}>{r}</li>)}</ul> : <div>Score below the tailoring bands.</div>)}
-        {(d.state === "not_tailored" || d.state === "tailored") && <TailorBox id={d.job.id as string} refresh={0} onChanged={onChanged} />}
+        {(d.state === "not_tailored" || d.state === "tailored") && <TailorBox id={d.job.id as string} refresh={rev} onChanged={onChanged} />}
         {score && <button className="btn link" onClick={onScore}>See how the score was calculated →</button>}
         {scoreErr && d.parsed && <div className="muted small">Score: {scoreErr}</div>}
       </div>

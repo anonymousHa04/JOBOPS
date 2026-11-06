@@ -137,6 +137,33 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
       - Each job in the panel has a checkbox, and only ticked jobs are deleted. Tailored jobs
         (`resumes` > 0) are listed first, marked "tailored · N resumes", with a **Keep tailored
         jobs** toggle (user, 2026-11-06).
+  - **Add a job by link** (user, 2026-11-06, manager-written on `milestone-8`, uncommitted, not
+    deployed): toolbar box "Paste a job link…" (`ui/src/AddJob.tsx`, `POST /ui/jobs/add`,
+    `api/src/ui/add-job.ts`). Fetches with `fetchJob` (Greenhouse, Lever, Ashby, Workday,
+    SmartRecruiters, careers pages), stores it, marks it kept, and queues an `add` batch (queue
+    `POST /add`, `store.Add`): parse, then score, which is final (no tailor; Tailor now stays a
+    click). LinkedIn, Naukri, Indeed, Glassdoor, foundit/Monster, Instahyre, iimjobs, hirist and
+    Wellfound links are refused. Checked on demo data (curl, the queue chain by hand, Playwright).
+    Tests not written: test plan waits for the user.
+  - **Change feed, no polling** (user, 2026-11-06, manager-written on `milestone-8`, uncommitted,
+    not deployed). Every wait follows Server-Sent Events; health checks still poll (user).
+    - Queue: `internal/events` hub; the store publishes after each commit (task queued, leased,
+      done, failed; batches; forget; preference check), one event per job a fetch queues.
+      `GET /events` streams it. The fetch loop waits on it (30 s fallback for retry backoff).
+    - API: `api/src/events/` (SSE client on the npm `eventsource` package, MIT, added by the
+      user's choice 2026-11-06; bus). It relays the queue's feed and adds its own writes
+      (any write with a job in the path; add, deletes and new `/jobs` publish their own).
+      `GET /ui/events` for the browser; `GET /ui/board/:id` returns one card.
+    - Workers: idle loops wait on the queue's feed (30 s fallback); SIGTERM wakes them.
+    - UI (`ui/src/events.ts`): one EventSource per tab. The board re-reads only the changed card
+      (more than 25 at once, a preference check, or a reconnect: one full load). Batches tab, the
+      open drawer and Re-score follow it too. No setInterval left except the health bar.
+    - Gateway: `statusWriter.Unwrap`, without which the proxy buffered the stream.
+    - Checked on demo data: events through the gateway about 20 ms after a queue change;
+      Playwright: a card moved Parsing → Scoring → Not tailored in about 0.6 s with one full load
+      (two in Vite dev: StrictMode), the drawer followed a lease. Tests wait for the user's plan.
+    - Open (older code, not changed): a failed task shows in Failed only when `final = 1`, and
+      `failTask` never sets it. Ask the user whether that is intended.
   - **Milestone 8: containers and local Kubernetes** (branch `milestone-8`, committed; written
     by the manager on the user's request, no local coders). One image `jobops:dev` (`Dockerfile`,
     allow-list `.dockerignore`; Chromium, typst, poppler). `infra/k8s/` (kustomize): Deployments

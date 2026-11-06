@@ -274,3 +274,9 @@ td.bad { color: var(--bad); font-weight: 700; }
 /* Board selection for "Delete N selected" */
 .card-check { margin: 0 6px 0 0; vertical-align: middle; cursor: pointer; }
 .card.selected { outline: 1px solid var(--bad); }
+
+/* Toolbar: Add a job by link */
+.add-job { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.add-job-url { width: 280px; }
+.add-job-note { max-width: 520px; }
+.add-job-note.error { color: var(--bad); font-size: 0.9em; }

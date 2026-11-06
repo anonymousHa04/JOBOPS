@@ -4,7 +4,7 @@
 # Update it whenever an item changes state. States: done | in_progress | todo | blocked.
 # Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
 updated: 2026-11-04
-branch: dev (milestone-7 merged; next milestone-8)
+branch: milestone-8 (Milestone 8 done 2026-11-06; merge into dev by the user, then milestone-6)
 
 environment:
   - id: env-llama-cpp
@@ -207,6 +207,7 @@ milestone_6:
     state: todo
     what: "contacts (LinkedIn Connections.csv + profile/contacts.yaml) and outreach drafts; plan .claude/specs/plan-milestone-6.md, phase A specs plan-m6-a.md approved, not run; after Milestone 8"
 milestone_8_done: "2026-11-04 (manager wrote it on the user's request; branch milestone-8, uncommitted): one image jobops:dev (Dockerfile, allow-list .dockerignore, Chromium/typst/poppler); infra/k8s kustomize on Docker Desktop kubeadm (Deployments api, queue, worker-laptop, worker-mac, gateway; ClusterIP Services; PVC jobops-data; profile hostPath; Secret from .env; ConfigMap jobops-cluster); gateway/ Go (ui/dist + /api proxy); bin/jobops up/down/status/logs/cli/ui/db-import/db-backup; 8080 and 3000 port-forwards on 127.0.0.1; queue worker heartbeat; CI .github/workflows/ci.yml; RUNBOOK-M8.md; checked: pods replaced after delete, UI through gateway, cli in cluster, 130-job DB imported"
+milestone_8_closed: "2026-11-06 (user): plus on milestone-8: Go bin/jobops (ctl/), Gaps tab and answer memory (gap-memory.ts, gap_links, carry/match/reuse/undo, Add previous response and rescore), click-to-tailor at 75+ (open gaps no longer block), one score, delete with reasons -> preferences skip_keywords (jd-search filter.SkipKeyword), Keep this job (kept_jobs), bulk deletes (skip keywords; Skipped column selection), readable logs (api log.ts, queue events and worker up/quiet, gateway writes, ui client-log); incident: 2 tailored jobs bulk-deleted and restored from backup, resumes lost; wider search (seed list + Adzuna/Jooble) built and reverted by the user; next: user commits/merges, first CI run, test plans, Milestone 6"
 milestone_8_open:
   - id: m8-ci-first-run
     state: todo

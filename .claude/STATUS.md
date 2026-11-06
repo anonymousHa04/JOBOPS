@@ -3,16 +3,14 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-05, Milestone 8 (containers, local Kubernetes, gateway, CI) on branch
-`milestone-8`, committed by the user (f1f93d4, ad3e005, then the M3/M7 follow-ups 4262c90,
-0be4ea0, a929afb: Gaps tab, JD spelling, click-to-tailor, Rescore all, one score, job delete).
-Deployed and checked by the user (Atlassian and Schneider jobs fine). JobOps now runs in Docker Desktop's Kubernetes: `bin/jobops
-status`, UI at localhost:8080 (`RUNBOOK-M8.md`); `bin/jobops start` brings everything up in one
-command (checked from cold, 2026-11-05: 78 s). `bin/jobops` is now a Go program (`ctl/`, 2026-11-05;
-shell version kept at `.agent-logs/jobops.shell-version.sh`): a real supervisor keeps the
-port-forwards alive; `ctl` has no tests yet (test plan waits for the user). The local tmux stack is stopped: run one or the
-other, never both. Next: deploy the Gaps answer memory (built, uncommitted), then its tests
-with the other open test plans, first CI run, merge M8 into `dev`, then Milestone 6.
+Last updated: 2026-11-06. **Milestone 8 is done** (user, 2026-11-06): containers, local Kubernetes,
+gateway, CI workflow, the Go `bin/jobops` (`ctl/`), plus the M3/M7 follow-ups built on branch
+`milestone-8` (Gaps tab and answer memory, click-to-tailor, one score, delete with reasons and skip
+keywords, Keep this job, bulk deletes, readable logs for `bin/jobops watch`). JobOps runs in Docker
+Desktop's Kubernetes: UI at localhost:8080 (`RUNBOOK-M8.md`), `bin/jobops start` brings everything
+up (78 s from cold). The local tmux stack is stopped: run one or the other, never both.
+Next: the user commits what is still uncommitted and merges `milestone-8` into `dev`; the first
+CI run (needs a push); the open test plans (each needs the user's approval); then Milestone 6.
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
@@ -161,8 +159,12 @@ with the other open test plans, first CI run, merge M8 into `dev`, then Mileston
 
 ## Where to start next
 
-- Built 2026-11-05, uncommitted, waiting for the user's deploy: **Gaps answer memory**
-  (`api/src/ui/gap-memory.ts`).
+- Milestone 8 is done. Still uncommitted on `milestone-8` (the user commits): the 2026-11-05/06
+  work below and in "Where things are" (answer memory, delete reasons, skip keywords, Keep this
+  job, bulk deletes, logging). Deployed by the user except the last UI changes (Skipped-only
+  checkboxes, the always-shown skip-keyword button): redeploy with `bin/jobops db-backup &&
+  bin/jobops up`.
+- **Gaps answer memory** (`api/src/ui/gap-memory.ts`, deployed and used by the user).
   - Exact asks (normalized, synonyms included) take your earlier answer automatically, marked
     "from <job>", with Undo. Undo marks the gap `declined` for that job.
   - Similar asks are found by key-word overlap. general7 checks each pair (task `gap_match`, JD
@@ -191,15 +193,22 @@ with the other open test plans, first CI run, merge M8 into `dev`, then Mileston
       Older answers are read back from their bullet or skill evidence notes (`parseEvidence`).
   - New routes `POST /ui/jobs/:id/gaps/carry|match|reuse|undo`. New column
     `gap_notes.carried_from`.
-- Then: test plans (below, plus answer memory), push, first CI run (never run yet), merge into
-  `dev`, then Milestone 6. Graph updated 2026-11-05 (before answer memory).
+- Then: commit and merge into `dev` (user), push, first CI run (never run yet), the test plans
+  below, then Milestone 6. Graph updated at the end of Milestone 8 (2026-11-06).
+- Two restored jobs (Databricks Senior SWE (Infra), Okta Workflows) have no resumes: Re-score,
+  then Tailor now. Their original resume files are lost unless the Time Machine disk has them.
+- Finding more jobs: `companies.include` is a test list. A wider search (a seed company list plus
+  Adzuna/Jooble discovery) was built and then reverted by the user on 2026-11-06. The approach is
+  still open.
 - Test plans waiting for the user's approval, run after the deploy: Gaps routes and prompt,
   tailor-ready, Rescore all, spelling learning, picker cover passes, one-score decide, delete
   with `deleted_jobs` and `/forget`, delete reasons with `skip_keywords` (TS and Go `filter`),
-  `ctl`, and keeping `gateway/main_test.go`.
+  answer memory (carry, match, reuse, undo), Keep this job (`kept_jobs`, queue
+  `FilterCandidates`), bulk deletes, the new log lines, `ctl`, and keeping
+  `gateway/main_test.go`.
 - Dropped by the user (2026-11-05): queue tasks left behind when the queue is down during a
   delete.
-- Milestone 8 open items: the gateway unit test (`gateway/main_test.go`, written without an
+- Milestone 8 leftovers (not blocking): the gateway unit test (`gateway/main_test.go`, written without an
   approved test plan: ask the user to keep it); opening the port-forwards at login (launchd
   agent, only if the user wants it; until then `bin/jobops ui` after a reboot); PostgreSQL in
   place of SQLite later (user choice).

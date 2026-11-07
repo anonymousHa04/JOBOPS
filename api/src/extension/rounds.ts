@@ -1,7 +1,7 @@
 // The score record of one job's report loop (ids, scores, requirement names; never text) and
 // the engine score of a resume record.
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import type { Db } from "../db.ts";
@@ -14,7 +14,14 @@ import { latestRecord, reportsDir } from "./reports.ts";
 import type { ResumeRecord } from "../profile/schema.ts";
 
 export type RoundEntry = { version: number; resume_id: string; engine_score: number; chat_score: number | null; needs_facts: string[] };
-export type Loop = { job_id: string; source: string; versions: RoundEntry[]; best: { version: number; resume_id: string; engine_score: number } | null; stopped: null | "no_gain" | "round_limit" | "error" };
+type Version = { version: number; resume_id: string; engine_score: number };
+// stopped: covered (nothing left the loop can fix), no_change (a round changed nothing),
+// repeat (a round made a version the check already had), round_limit, error; no_gain is from loops before 2026-11-07. candidate: the best version when
+// it scores the same or higher than the resume the check started from, waiting for your choice
+// (decision).
+export type Loop = { job_id: string; source: string; versions: RoundEntry[]; best: Version | null;
+  stopped: null | "covered" | "no_change" | "repeat" | "no_gain" | "round_limit" | "error";
+  candidate?: Version | null; decision?: null | "new" | "previous" | "chosen"; chosen?: string };
 
 export function engineScore(db: Db, jobId: string, record: ResumeRecord): number {
   const req = loadRequirements(db, jobId);
@@ -50,13 +57,17 @@ export function loadLoop(jobId: string, source: string): Loop | null {
       resume_id: z.string(),
       engine_score: z.number()
     }).nullable(),
-    stopped: z.union([z.literal(null), z.literal("no_gain"), z.literal("round_limit"), z.literal("error")])
+    stopped: z.union([z.literal(null), z.literal("covered"), z.literal("no_change"), z.literal("repeat"), z.literal("no_gain"), z.literal("round_limit"), z.literal("error")]),
+    candidate: z.object({ version: z.number(), resume_id: z.string(), engine_score: z.number() }).nullable().optional(),
+    decision: z.union([z.literal(null), z.literal("new"), z.literal("previous"), z.literal("chosen")]).optional(),
+    chosen: z.string().optional()
   }).safeParse(JSON.parse(content));
   return result.success ? result.data : null;
 }
 
 export function saveLoop(loop: Loop): void {
   const path = loopPath(loop.job_id, loop.source);
+  mkdirSync(reportsDir(), { recursive: true });
   writeFileSync(path, JSON.stringify(loop, null, 1));
 }
 
@@ -105,6 +116,8 @@ export function summary(loop: Loop) {
   return {
     rounds: loop.versions,
     best: loop.best,
-    stopped: loop.stopped
+    stopped: loop.stopped,
+    candidate: loop.candidate ?? null,
+    decision: loop.decision ?? null
   };
 }

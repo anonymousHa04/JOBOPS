@@ -76,6 +76,7 @@ export type EarlierInput = { answer: GapAnswer; story: string; proof: string; en
 export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Previous["match"] };
 export type Gap = {
   kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null;
+  help_queued: boolean; // its explanation is queued or running (Mac worker, one at a time)
   answer: GapAnswer | null; outcome: string | null; updated_at: string | null;
   carried_from: CarriedFrom | null; carried_input: EarlierInput | null; declined: boolean;
   reuse: { exact: Previous | null; similar: Previous[] };
@@ -115,6 +116,30 @@ export type Batch = {
   tailored: number; skipped?: Record<string, number>;
 };
 
+// Check tab: the resume against the job's score, the chat check's rounds and report.
+type Line = { id: string; text: string };
+export type CheckRound = {
+  version: number; resume_id: string; engine_score: number; chat_score: number | null; kept: boolean; current: boolean;
+  added: Line[]; removed: Line[]; reworded: { id: string; before: string; after: string }[];
+};
+export type ResumeRow = {
+  resume_id: string; made_by: string; engine_score: number; chat_score: number | null;
+  created_at: string; pdf: boolean; current: boolean;
+};
+export type CheckView = {
+  resumes: ResumeRow[];
+  job_score: number | null;
+  resume: null | { resume_id: string; decision: string; engine_score: number; job_score: number; pdf: boolean;
+    lost: { requirement: string; kind: string; job_credit: number; resume_credit: number }[] };
+  loops: {
+    source: string; stopped: string | null; rounds: CheckRound[];
+    candidate: null | { resume_id: string; engine_score: number; start_score: number; added: Line[]; removed: Line[]; reworded: { id: string; before: string; after: string }[] };
+    decision: null | "new" | "previous" | "chosen"; chosen: string | null;
+  }[];
+  reports: { source: string; fit_score: number | null; missed_gaps: { requirement: string; why: string }[];
+    bullet_notes: { bullet_id: string; note: string }[]; from_memory: { fact: string; fills_gap: string }[] }[];
+};
+
 // A job added by its link: queued for parse/score (batch_id), or why not (queue_note).
 export type AddedJob = {
   job_id: string; company: string; title: string; created: boolean;
@@ -142,6 +167,13 @@ export class ApiError extends Error {
 export const api = {
   board: () => call<{ jobs: Card[] }>("GET", "/ui/board").then((r) => r.jobs),
   // One card (the change feed re-reads only the job that changed); null: the job is gone.
+  check: (id: string) => call<CheckView>("GET", `/ui/jobs/${id}/check`),
+  // End of a check: "new" / "previous", or any version by resume_id (Choose this). Re-scores.
+  decideCheck: (id: string, source: string, choice: { use?: "new" | "previous"; resume_id?: string }) =>
+    call<{ resume_id: string; version: number; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/check/decide`, { source, ...choice }),
+  chooseResume: (id: string, rid: string) =>
+    call<{ resume_id: string; pdf_error: string | null; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/resumes/${encodeURIComponent(rid)}/choose`),
+  pdfUrl: (resumeId: string) => `/api/ui/resumes/${encodeURIComponent(resumeId)}/pdf`,
   card: (id: string) => call<{ job: Card | null }>("GET", `/ui/board/${id}`).then((r) => r.job),
   addJob: (url: string) => call<AddedJob>("POST", "/ui/jobs/add", { url }),
   health: () => call<{ services: Service[] }>("GET", "/ui/health").then((r) => r.services),
@@ -167,8 +199,11 @@ export const api = {
   sweep: () => call<{ batch_id: number; queued: number }>("POST", "/batches/sweep"),
   retryBatch: (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`),
   gaps: (id: string) => call<GapList>("GET", `/ui/jobs/${id}/gaps`),
+  // A saved explanation ({ help }), or queued for the Mac worker ({ queued }): the change feed
+  // says when it is saved.
   gapHelp: (id: string, kind: GapKind, requirement: string, refresh = false) =>
-    call<GapHelp>("POST", `/ui/jobs/${id}/gaps/help`, { kind, requirement, refresh }),
+    call<{ help?: GapHelp; queued?: boolean; batch_id?: number }>("POST", `/ui/jobs/${id}/gaps/help`, { kind, requirement, refresh }),
+  gapHelpAll: (id: string) => call<{ queued: number; batch_id: number }>("POST", `/ui/jobs/${id}/gaps/help-all`),
   draft: (id: string, body: { kind: GapKind; requirement: string; entry_id: string; story: string; proof?: string }) =>
     call<Draft>("POST", `/ui/jobs/${id}/gaps/draft`, body),
   answer: (id: string, body: AnswerBody) =>

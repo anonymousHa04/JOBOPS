@@ -7,27 +7,45 @@ import { modelUp, switchCommands } from "../model/registry.ts";
 import type { Task } from "../model/registry.ts";
 import { done, fail, lease, ping, queueUp, queueUrl, QueueDownError } from "./client.ts";
 import { followSse, QUEUE_EVENTS } from "../events/sse.ts";
+import type { Db } from "../db.ts";
+import { gapHelp } from "../ui/gap-model.ts";
+import { gapKey } from "../ui/gap-related.ts";
+import type { VectorSearch } from "../ui/gap-related.ts";
+import { gapList } from "../ui/gaps.ts";
 
-// score first: it moves jobs forward.
+// score first: it moves jobs forward. On the Mac, gap help first: someone is waiting for it.
 export const GROUPS: Record<string, string[]> = {
-  laptop: ["score", "parse"], mac: ["tailor"], parse: ["parse"], score: ["score"], tailor: ["tailor"]
+  laptop: ["score", "parse"], mac: ["gap_help", "tailor"], parse: ["parse"], score: ["score"], tailor: ["tailor"],
+  gap_help: ["gap_help"]
 };
-const MODEL: Record<string, Task> = { parse: "jd_parse", score: "judge", tailor: "reword" };
+const MODEL: Record<string, Task> = { parse: "jd_parse", score: "judge", tailor: "reword", gap_help: "gap_help" };
 
-export async function runStage(stage: string, jobId: string): Promise<Record<string, unknown>> {
+// version: the task's prompt_version (a gap_help task's is gap-<key>-<batch>). d and gapOpts
+// are for tests (a test database, a fake vector search).
+export async function runStage(stage: string, jobId: string, version = "", d: Db = db(),
+  gapOpts: { search?: VectorSearch } = {}): Promise<Record<string, unknown>> {
+  if (stage === "gap_help") {
+    // Which gap: the one whose key is in the version. Gone (answered, or no longer red after a
+    // re-score): nothing to explain.
+    const key = version.split("-")[1] ?? "";
+    const gap = gapList(d, jobId).gaps.find((g) => gapKey(g.requirement) === key);
+    if (!gap) return { explained: false };
+    const help = await gapHelp(d, jobId, gap.kind, gap.requirement, { refresh: true, search: gapOpts.search });
+    return { explained: true, related: help.related.length };
+  }
   if (stage === "parse") {
-    const s = await parseJob(db(), jobId);
+    const s = await parseJob(d, jobId);
     return { keywords: s.keywords, must_have: s.must_have, cached: s.cached, reused_from: s.reused_from ?? null };
   }
   if (stage === "score") {
-    const r = await score(db(), jobId, true);
-    const plan = tailorAll(db(), { jobId }).rows[0];
+    const r = await score(d, jobId, true);
+    const plan = tailorAll(d, { jobId }).rows[0];
     return { score: r.score, band: r.band, decision: plan?.decision ?? null };
   }
   if (stage === "tailor") {
-    const t = await tailor(db(), jobId);
+    const t = await tailor(d, jobId);
     if (!("created" in t)) throw new Error("tailor returned a dry run");
-    const pdf = t.resume_id && t.decision !== "not_tailored" ? await render(db(), t.resume_id) : null;
+    const pdf = t.resume_id && t.decision !== "not_tailored" ? await render(d, t.resume_id) : null;
     // Why a PDF failed: the typst error, or the parse-back issue codes (no resume text).
     const why = pdf && !pdf.ok ? (pdf.error ?? [...new Set(pdf.issues.map((i) => `${i.code} (${i.extractor})`))].join(", ")) : null;
     // reason: why the tailor decided as it did (a not_tailored or blocked run makes no resume,
@@ -115,7 +133,7 @@ export async function runWorker(group: string, opts: { concurrency?: number } = 
         }
         const id = task.job_id.slice(0, 8);
         try {
-          const result = await runStage(task.stage, task.job_id);
+          const result = await runStage(task.stage, task.job_id, task.prompt_version);
           await done(task.id, result);
           console.log(`${task.stage} ${id} done ${result.score ?? result.decision ?? ""}`);
         } catch (err) {

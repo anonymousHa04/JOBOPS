@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { onChange } from "./events";
+import { CheckView } from "./Check";
 import { api, ApiError, APP_LABEL, APP_STATUSES, bandClass, fmtDate, STATE_LABEL } from "./api";
 import type { Application, AppStatus, JobDetail, ScoreDetail } from "./api";
 import { ScoreView } from "./Score";
@@ -7,7 +8,7 @@ import { GapsView } from "./Gaps";
 import { TailorBox } from "./Tailor";
 import { DeletePanel } from "./DeleteJob";
 
-export type Tab = "overview" | "score" | "gaps" | "tracking" | "description";
+export type Tab = "overview" | "score" | "gaps" | "check" | "tracking" | "description";
 
 export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; initialTab?: Tab; onClose: () => void; onChanged: () => void }) {
   const [d, setD] = useState<JobDetail | null>(null);
@@ -27,6 +28,11 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
   // The open job changed (a task moved, an answer saved): read its detail and score again, once
   // per burst. rev re-reads the Tailor box too.
   const [rev, setRev] = useState(0);
+  // The current resume's own score (header), from the Check view; none before tailoring.
+  const [resumeScore, setResumeScore] = useState<number | null>(null);
+  useEffect(() => {
+    api.check(id).then((v) => setResumeScore(v.resume?.engine_score ?? null)).catch(() => setResumeScore(null));
+  }, [id, rev]);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | null = null;
     const off = onChange((c) => {
@@ -63,8 +69,20 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
               <h2>{d.job.title}</h2>
               <div className="head-meta">
                 <span className={`status-chip state-${d.state}`}>{STATE_LABEL[d.state]}</span>
+                {/* Two scores, labelled: the job's (whole bank) and the current resume's (its bullets only). */}
                 {(score?.score ?? d.score) != null && (
-                  <span className={`score-pill ${bandClass(score?.band ?? d.band)}`}>{(score?.score ?? d.score)!.toFixed(1)}</span>
+                  <span className="score-label">
+                    Job score <span className={`score-pill ${bandClass(score?.band ?? d.band)}`}>{(score?.score ?? d.score)!.toFixed(1)}</span>
+                    <span className="score-what">all your experience</span>
+                    <span className="info" tabIndex={0}>ⓘ<span className="tip">How well your whole bank (every bullet and skill you have) matches this job. It decides Tailor now (75 or more). A resume reaches it only if every piece of evidence fits on the page.</span></span>
+                  </span>
+                )}
+                {resumeScore != null && (
+                  <span className="score-label">
+                    Resume <span className={`score-pill ${bandClass(score?.band ?? d.band)}`}>{resumeScore.toFixed(1)}</span>
+                    <span className="score-what">only the bullets on your current resume</span>
+                    <span className="info" tabIndex={0}>ⓘ<span className="tip">Your current tailored resume, scored on its own bullets. Lower than the job score when some evidence did not fit the page or was reworded away. The Check tab lists what it lost, and your other resumes to choose from.</span></span>
+                  </span>
                 )}
                 {d.application.status && <span className="chip accent">{APP_LABEL[d.application.status]}</span>}
                 <span className="muted">{d.job.location ?? "No location"}</span>
@@ -81,7 +99,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
             {deleting && <DeletePanel d={d} onCancel={() => setDeleting(false)} onDeleted={() => { onChanged(); onClose(); }} />}
             <div className="muted small prompt-note">Copy as prompt: the job, how it was scored, and your gaps, for a stronger model to find your weak points. No resume text or contact details are included.</div>
             <nav className="drawer-tabs">
-              {(["overview", "score", "gaps", "tracking", "description"] as Tab[]).map((t) => (
+              {(["overview", "score", "gaps", "check", "tracking", "description"] as Tab[]).map((t) => (
                 <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
               ))}
             </nav>
@@ -89,6 +107,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
               {tab === "overview" && <Overview d={d} score={score} scoreErr={scoreErr} rev={rev} onScore={() => setTab("score")} onChanged={() => { onChanged(); api.job(id).then(setD).catch(() => undefined); }} />}
               {tab === "score" && (score ? <ScoreView d={score} /> : <div className="banner">{scoreErr ?? "Computing…"}</div>)}
               {tab === "gaps" && <GapsView id={id} onChanged={() => { onChanged(); api.score(id).then(setScore).catch(() => undefined); }} />}
+              {tab === "check" && <CheckView id={id} rev={rev} />}
               {tab === "tracking" && <Tracking id={id} app={d.application} onChange={setApp} />}
               {tab === "description" && <pre className="description">{d.job.description}</pre>}
             </div>

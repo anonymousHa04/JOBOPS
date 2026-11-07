@@ -6,6 +6,7 @@ import { tailor } from "../tools.ts";
 import { gaps, latestRecord } from "./reports.ts";
 import type { Report } from "./reports.ts";
 import { reviewReport } from "./review.ts";
+import { makeCurrent } from "./rounds.ts";
 
 export type FixResult = {
   round: number;
@@ -55,11 +56,17 @@ export async function fixRound(db: Db, jobId: string, round: number, report: Rep
     }
   };
 
+  let made: string | null = null;
   try {
-    await retailor(db, jobId, { force: true, focus, notes });
+    const t = await retailor(db, jobId, { force: true, focus, notes }) as { resume_id?: string | null } | undefined;
+    made = t?.resume_id ?? null;
   } catch (err) {
     return { ...none, error: err instanceof Error ? err.message : String(err) };
   }
+  // The resume this round made. Content equal to an older record comes back as that record
+  // (created: false) without becoming the newest, so the newest record would still be the one
+  // before the round, and a real change looked like none (2026-11-07). Make it current.
+  if (made && latestRecord(db, jobId)?.resume_id !== made) makeCurrent(db, made);
 
   const after = latestRecord(db, jobId);
   const was = new Map((before?.content.bullets ?? []).map((b) => [b.id, b.text]));

@@ -280,3 +280,21 @@ td.bad { color: var(--bad); font-weight: 700; }
 .add-job-url { width: 280px; }
 .add-job-note { max-width: 520px; }
 .add-job-note.error { color: var(--bad); font-size: 0.9em; }
+
+/* Drawer: Check tab */
+.check-tab { display: flex; flex-direction: column; gap: 12px; }
+.check-score { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; }
+.check-score.warn { border-color: var(--warn, #c9a227); }
+.check-run { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.check-changes { border-left: 2px solid var(--line); padding: 4px 10px; margin: 6px 0; }
+.bad { color: var(--bad); }
+.check-choose { border: 1px solid var(--accent); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+/* Drawer header: labelled scores with an info icon (hover for what each one is) */
+.score-label { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.9em; }
+.score-label .score-what { font-size: 0.85em; }
+/* ⓘ: the explanation shows at once on hover or focus (a title tooltip waits ~1 s). */
+.score-label .info { position: relative; cursor: help; opacity: 0.85; }
+.score-label .info .tip { display: none; position: absolute; top: 140%; right: -8px; z-index: 20; width: 300px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-3);
+  color: var(--text); font-size: 0.85rem; line-height: 1.4; white-space: normal; box-shadow: 0 4px 16px #0008; }
+.score-label .info:hover .tip, .score-label .info:focus .tip { display: block; }

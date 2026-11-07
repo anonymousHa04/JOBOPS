@@ -39,30 +39,30 @@ test("makeCurrent: an older record becomes the job's current resume again", asyn
   await app.close();
 });
 
-test("POST /x/fix: no gain stops the loop and keeps the best version current", async () => {
+test("POST /x/fix: when the loop ends, your resume from before the check is current (user chooses after)", async () => {
   const { app, db, id } = await setup({ withRecord: true });
   await postReport(app, id);
   const res = await app.inject({ method: "POST", url: `/x/fix/${id}`, headers: ext, payload: { round: 1, source: "claude" } });
   assert.equal(res.statusCode, 200);
   const { prompt, loop } = res.json();
   assert.equal(loop.rounds[0].version, 0);
-  const second = loop.rounds[1];
-  if (!second || second.engine_score <= loop.rounds[0].engine_score) {
-    // No new version, or one that did not raise the engine score: the loop ends here.
-    assert.equal(prompt, null);
-    assert.ok(loop.stopped === "no_gain" || loop.stopped === "error", `stopped = ${loop.stopped}`);
+  // Ended (nothing left to fix, nothing changed, or an error): the start is current again, and
+  // a version that scored the same or higher waits as the candidate (2026-11-07).
+  if (prompt === null) {
+    assert.ok(["covered", "no_change", "error"].includes(loop.stopped), `stopped = ${loop.stopped}`);
+    assert.equal(latestRecord(db, id)!.resume_id, loop.rounds[0].resume_id);
   }
-  if (prompt === null) assert.equal(latestRecord(db, id)!.resume_id, loop.best.resume_id);
   assert.deepEqual(loadLoop(id, "claude")?.best, loop.best);
   await app.close();
 });
 
-test("POST /x/fix: round 5 with no earlier rounds answers as before", async () => {
+test("POST /x/fix: round 5 is the last fix round: it fixes, then the loop ends (no sixth ask)", async () => {
   const { app, id } = await setup({ withRecord: true });
   await postReport(app, id);
   const res = await app.inject({ method: "POST", url: `/x/fix/${id}`, headers: ext, payload: { round: 5, source: "claude" } });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.json(), { fix: null, prompt: null });
+  assert.equal(res.json().prompt, null);
+  assert.ok(res.json().loop.stopped, "the loop is over");
   await app.close();
 });
 

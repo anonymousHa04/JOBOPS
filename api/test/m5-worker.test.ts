@@ -16,9 +16,9 @@ test("worker: failure codes from error messages", () => {
   assert.equal(failureCode(new Error("parse the JD first: jd parse <job_id>")), "job_error");
 });
 
-test("worker: laptop serves score then parse, mac serves tailor", () => {
+test("worker: laptop serves score then parse, mac serves gap help then tailor", () => {
   assert.deepEqual(GROUPS.laptop, ["score", "parse"]);
-  assert.deepEqual(GROUPS.mac, ["tailor"]);
+  assert.deepEqual(GROUPS.mac, ["gap_help", "tailor"]); // gap help joined the Mac queue (2026-11-07)
 });
 
 // Records method, path and JSON body; /lease answers 204 the first time, then a task.

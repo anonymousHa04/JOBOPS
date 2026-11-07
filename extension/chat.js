@@ -140,15 +140,31 @@ async function clickSendButton(selectors) {
     }
 }
 
+// Waits for the chat's new answer to finish. A long answer (a model that thinks first, then
+// writes a long YAML block) can take many minutes: give up only when nothing has moved (no
+// streaming, no new text) for STALL_MS, or after MAX_MS in all. It was a flat 6 minutes, and a
+// slow follow-up answer was lost (2026-11-07).
+const STALL_MS = 5 * 60 * 1000;
+const MAX_MS = 20 * 60 * 1000;
+
 async function waitForAnswer(answerSelectors, answeringIndicatorSelector, before) {
     return new Promise((resolve, reject) => {
         let lastAnswerText = "";
         let stableCount = 0;
+        const started = Date.now();
+        let moved = Date.now(); // the last time the chat showed progress
 
         const interval = setInterval(() => {
+            if (Date.now() - moved > STALL_MS || Date.now() - started > MAX_MS) {
+                clearInterval(interval);
+                reject(new Error(Date.now() - started > MAX_MS ? "no complete answer in 20 minutes" : "the chat stopped answering (no progress for 5 minutes)"));
+                return;
+            }
+
             const answeringIndicator = document.querySelector(answeringIndicatorSelector.join(", "));
             if (answeringIndicator) {
                 stableCount = 0;
+                moved = Date.now();
                 return;
             }
 
@@ -161,6 +177,7 @@ async function waitForAnswer(answerSelectors, answeringIndicatorSelector, before
             if (lastAnswer && lastAnswerText !== lastAnswer.textContent) {
                 lastAnswerText = lastAnswer.textContent;
                 stableCount = 0;
+                moved = Date.now();
             } else {
                 stableCount++;
             }
@@ -176,10 +193,5 @@ async function waitForAnswer(answerSelectors, answeringIndicatorSelector, before
                 return;
             }
         }, 1000);
-
-        setTimeout(() => {
-            clearInterval(interval);
-            reject(new Error("Answer not found"));
-        }, 360000);
     });
 }

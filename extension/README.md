@@ -28,6 +28,9 @@ record is in profile/reports/<job>.<source>.loop.json.
 2. Sign in to claude.ai or chatgpt.com in Chrome.
 3. Open the popup, pick a job and a chat, click "Get report", and keep the chat tab open until
    the status says "saved".
+4. Or, in the JobOps UI (127.0.0.1:8080), open a tailored job's **Check** tab and click
+   "Check with Claude". The extension's bridge (jobops.js, loaded on the JobOps page only) passes
+   it to the same run, and the tab shows the status, each round's changes and the report.
 
 ## Optional
 Pin the extension id so only this extension can use the API:

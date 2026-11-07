@@ -3,6 +3,7 @@
 // become bullets; the guard flags any draft that adds to them.
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { onChange } from "./events";
 import type { AnswerBody, Gap, GapAnswer, GapList, GapHelp, Draft, Previous, EarlierInput } from "./api";
 import { RescoreBar } from "./Rescore";
 import { TailorBox } from "./Tailor";
@@ -73,6 +74,18 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
     return () => { gone = true; };
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The change feed: this job changed (an explanation saved by the Mac worker, a re-score):
+  // read the list again, once per burst.
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const off = onChange((c) => {
+      if (c.kind !== "resync" && c.job_id !== id) return;
+      if (t) return;
+      t = setTimeout(() => { t = null; void load(); }, 300);
+    });
+    return () => { off(); if (t) clearTimeout(t); };
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (err) {
     return <div className="banner error">{err}</div>;
   }
@@ -92,17 +105,16 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
     onChanged();
   };
   const groups: [Gap["kind"], string][] = [["must", "Must-haves"], ["theme", "Responsibilities"], ["nice", "Nice-to-haves"], ["keyword", "Keywords"]];
-  // Asks the local model about every gap with no explanation and no answer, one at a time.
-  const explainAll = async () => {
-    const todo = gaps.filter((g) => !g.help && !g.answer);
-    for (let i = 0; i < todo.length; i++) {
-      setExplaining(`Explaining ${i + 1} of ${todo.length}…`);
-      await api.gapHelp(id, todo[i].kind, todo[i].requirement).catch(() => null);
-    }
-    setExplaining(null);
-    load();
+  // Queues every gap with no explanation and no answer for the Mac worker, which explains them
+  // one at a time (the 14B has one slot); each one shows as soon as it is saved.
+  const explainAll = () => {
+    setExplaining("Queuing…");
+    api.gapHelpAll(id)
+      .then(() => { setExplaining(null); void load(); })
+      .catch((e: Error) => setExplaining("Could not queue: " + e.message));
   };
-  const unexplained = gaps.filter((g) => !g.help && !g.answer).length;
+  const queuedHelp = gaps.filter((g) => g.help_queued).length;
+  const unexplained = gaps.filter((g) => !g.help && !g.answer && !g.help_queued).length;
 
   return (
     <div>
@@ -112,10 +124,12 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
       <RescoreBar id={id} watch={watch} onDone={() => { setWatch(null); load(); onChanged(); }} />
       <TailorBox id={id} refresh={loads} onChanged={onChanged} />
       {unexplained > 0 && (
-        <button className="btn tiny" disabled={explaining !== null} onClick={() => void explainAll()}>
-          {explaining ?? `Explain all remaining (${unexplained})`}
+        <button className="btn tiny" disabled={explaining === "Queuing…"} onClick={explainAll}>
+          {`Explain all remaining (${unexplained})`}
         </button>
       )}
+      {queuedHelp > 0 && <span className="muted small"> Explaining {queuedHelp} with the local model, one at a time…</span>}
+      {explaining && <span className="muted small"> {explaining}</span>}
       {years && <div className="banner">Years: {years} (years are the one hard limit; answers here cannot change them)</div>}
       {auto !== null && (
         <label className="role-check small">
@@ -132,7 +146,7 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
         return items.length ? (
           <div key={kind}>
             <h4>{title}</h4>
-            {items.map((gap) => <GapRow key={gap.kind + gap.requirement + (gap.help ? ":h" : "")} id={id} gap={gap} entries={entries} onAnswered={answered} onUndone={() => { void load(); onChanged(); }} />)}
+            {items.map((gap) => <GapRow key={gap.kind + gap.requirement + (gap.help ? ":h" : "")} id={id} gap={gap} entries={entries} onAnswered={answered} onUndone={() => { void load(); onChanged(); }} onQueued={() => void load()} />)}
           </div>
         ) : null;
       })}
@@ -230,8 +244,12 @@ function Similar({ id, gap, known, onAnswered, onPrefill, onDraftPrevious }: {
   );
 }
 
-function GapRow({ id, gap, entries, onAnswered, onUndone }: { id: string; gap: Gap; entries: GapList["entries"]; onAnswered: (r: Answered) => void; onUndone: () => void }) {
+function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: string; gap: Gap; entries: GapList["entries"]; onAnswered: (r: Answered) => void; onUndone: () => void; onQueued: () => void }) {
   const [help, setHelp] = useState<GapHelp | null>(gap.help);
+  useEffect(() => { if (gap.help) setHelp(gap.help); }, [gap.help]); // Ask again: the new one
+  // Explain: a saved explanation shows at once; otherwise it is queued (the list shows it).
+  const explain = (refresh: boolean) => run("help", api.gapHelp(id, gap.kind, gap.requirement, refresh),
+    (r) => { if (r.help) setHelp(r.help); else onQueued(); });
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<GapAnswer | null>(null);
@@ -366,8 +384,8 @@ function GapRow({ id, gap, entries, onAnswered, onUndone }: { id: string; gap: G
       {busy === "draft" && withSkill && <div className="muted small">Drafting a bullet from your earlier answer (local model)…</div>}
       {gap.declined && !gap.answer && <div className="muted small">You undid the earlier answer for this job: answer it below.</div>}
       {help === null && (
-        <button className="btn tiny" onClick={() => run("help", api.gapHelp(id, gap.kind, gap.requirement), setHelp)} disabled={busy === "help"}>
-          {busy === "help" ? "Asking the local model…" : "Explain and find related experience"}
+        <button className="btn tiny" onClick={() => explain(false)} disabled={busy === "help" || gap.help_queued}>
+          {gap.help_queued ? "Queued for the local model…" : busy === "help" ? "Queuing…" : "Explain and find related experience"}
         </button>
       )}
       {help !== null && (
@@ -394,8 +412,8 @@ function GapRow({ id, gap, entries, onAnswered, onUndone }: { id: string; gap: G
               </ul>
             </div>
           )}
-          <button className="btn ghost tiny" disabled={busy === "help"} onClick={() => run("help", api.gapHelp(id, gap.kind, gap.requirement, true), setHelp)}>
-            {busy === "help" ? "Asking the local model…" : "Ask again"}
+          <button className="btn ghost tiny" disabled={busy === "help" || gap.help_queued} onClick={() => explain(true)}>
+            {gap.help_queued ? "Asking again (queued)…" : busy === "help" ? "Queuing…" : "Ask again"}
           </button>
         </div>
       )}

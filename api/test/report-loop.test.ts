@@ -41,7 +41,7 @@ test("followUpPrompt: attempt line, the resume, no contact details", async () =>
   await app.close();
 });
 
-test("POST /x/fix: round 5 stops", async () => {
+test("POST /x/fix: round 5 is the last: no sixth ask", async () => {
   const { app, id } = await setup({ withRecord: true });
   await postReport(app, id);
   const res = await app.inject({
@@ -51,6 +51,6 @@ test("POST /x/fix: round 5 stops", async () => {
     payload: { round: 5, source: "claude" }
   });
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.json(), { fix: null, prompt: null });
+  assert.equal(res.json().prompt, null);
   await app.close();
 });

@@ -164,6 +164,80 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
       (two in Vite dev: StrictMode), the drawer followed a lease. Tests wait for the user's plan.
     - Open (older code, not changed): a failed task shows in Failed only when `final = 1`, and
       `failTask` never sets it. Ask the user whether that is intended.
+  - **Gap help through the queue, smaller prompts, general14 on demand** (user, 2026-11-07,
+    manager-written on `milestone-8`, uncommitted, not deployed; tests first, user's request).
+    - Cause of the "Explain all" timeouts: the API called general14 (1 slot) directly while the
+      queue leased up to 3 Mac tasks at once; extra requests waited inside llama-server.
+    - Queue: stage `gap_help` (Mac group, leased before tailor, final when done), `POST /gap-help`
+      (`store.GapHelp`, one task per gap key, open ones not queued twice). Group limits match the
+      servers' slots: 3 and 3 (`JOBOPS_MAC_SLOTS`, `JOBOPS_LAPTOP_SLOTS`). general14 back to 3
+      slots with `-kvu` (`LLM_GENERAL14_SLOTS`, user 2026-11-07); it ran with 1 before.
+    - API: `POST /ui/jobs/:id/gaps/help` returns a saved explanation, else 202 queued;
+      `POST .../gaps/help-all`; gap list `help_queued`. The Mac worker runs it (`runStage`).
+    - Prompt: `api/src/ui/gap-related.ts` picks at most 5 bullets: word match (scoring index) plus
+      Qdrant's nearest (collection `bank_bullets`, re-embedded when the bullets change); none
+      found: the whole bank. Was ~1,770 prompt tokens per call.
+    - general14: `llm.sh` adds `--sleep-idle-seconds ${LLM_GENERAL14_SLEEP:-300}` (frees the model
+      after 5 idle minutes; health stays 200; a request wakes it). Needs a general14 restart.
+      Test: `.claude/bin/test_llm_sleep.sh` (0.5B on port 8099).
+    - Tests: `api/test/gap-queue.test.ts` (12), `queue/internal/store/gap_test.go`; m5-worker's
+      groups test updated. Checked on demo data: Explain all, 3 gaps, fake 14B saw 1 at a time.
+  - **Check tab: Claude check after tailoring** (user, 2026-11-07, manager-written on
+    `milestone-8`, uncommitted, not deployed). User's choices: the loop applies on its own (best
+    engine score kept), the drawer button talks to the extension, flag a score drop and never
+    keep a lower version, Claude by default.
+    - `api/src/ui/check.ts` + `GET /ui/jobs/:id/check`: the current resume's engine score against
+      the job's (whole bank), requirements it lost, each loop round (scores, kept, current, bullets
+      added/removed/reworded), the report's missed gaps, bullet notes and from-memory facts.
+      `GET /ui/resumes/:rid/pdf` serves a stored record's PDF (path from the id only).
+    - `api/src/extension/step.ts` `fixStep` (POST /x/fix): best version always current on return
+      (also after a throw); a new best is rendered to PDF (fix rounds never rendered before).
+      `saveLoop` creates `profile/reports/`.
+    - Extension: bug fixed in background.js (`const { round } = get("loop")` was always
+      undefined, so no fix round ever ran from the popup). New `jobops.js` bridge on the JobOps
+      page (8080, Vite 5173): `check` message starts the run; status forwarded to the page.
+      The user must reload the unpacked extension.
+    - Workflow changed the same day (user): the loop goes on until nothing it can fix is left
+      (`covered`), a round changes nothing (`no_change`), an error, or 5 fix rounds (was 4; the
+      extension now sends round 5). Ties count as kept. Your resume is current again at the end;
+      the best version, if it scores the same or higher, waits as `candidate`. Check tab: "Use new
+      resume" (current + PDF) / "Keep previous" (`POST /ui/jobs/:id/check/decide`, `decideCheck`).
+      Old tests for "round 5 stops" and "no gain keeps the best" were updated to this.
+    - Tests: `api/test/check-step.test.ts` (9). Checked on demo data with Playwright and a
+      stand-in bridge (Chrome no longer loads unpacked extensions in automated runs).
+    - First real check (user, 2026-11-07) stuck at "Fixing (round 1)". Three bugs, each reproduced
+      end to end with the real extension in Chrome for Testing (Playwright's cache), a fake
+      claude.ai over local HTTPS (--host-resolver-rules), the demo API behind a proxy that holds
+      /x/fix like a real round (scratchpad e2e/, not in the repo):
+      1. Chrome stops the extension's service worker after ~30 s idle even while it awaits fetch;
+         a 2-minute fix round lost its answer. Fixed: `keepAlive` in background.js (an API call
+         every 20 s) around saveReport and /x/fix. Shown only with nothing attached to the worker
+         (raw DevTools driver on the page, `cdp-run.mjs`): old stuck, fixed passes at 70 s and 3 min.
+      2. chat.js gave up on an answer after 6 minutes; now 5 minutes without progress, 20 at most.
+         Old failed at 6:04 on a 7-minute answer; fixed saved it.
+      3. A round whose resume equals an older record (same content) did not become the newest, so
+         the loop saw no change. fixRound makes the tailor's own resume current.
+      4. (user, same day) Every attempt sent Claude the same resume: a round that scored lower put
+         the best version back, so the prompt carried it with "No bullets changed" and Claude
+         repeated itself. Now the chat always gets the round's own version and its real changes,
+         the next round builds on it, the best is tracked apart (only it is offered), and a round
+         that recreates a version of this check stops the loop (`repeat`). Nike job's loop file
+         showed it: v0 83.2, v1 82.3, v2 82.3.
+    - Choose this (user, 2026-11-07): each round row of a finished check has a button. The chosen
+      version becomes the resume (PDF made unless it is the starting one), the job is re-scored
+      (queue `/rescore`), and the next Check starts a new chat (`newChat` → extension
+      `forgetChat`). `POST /ui/jobs/:id/check/decide` takes `use` or `resume_id`; loop records
+      `chosen`. Buttons wait until the extension reports done. Checked end to end (cdp-run.mjs
+      CHOOSE=1): round 1 chosen, PDF made, then prompt 3 was the first-time prompt with it.
+    - Resume list (user, same day): the Check tab lists every tailored resume of the job (tailor,
+      re-tailor, check rounds), best engine score first, with Claude's fit score and PDF link (a
+      "whole bank" row was added, then removed at the user's request).
+    - Drawer header (user): "Job score N ⓘ" (whole bank; decides Tailor now) and "Resume N ⓘ" (the
+      current resume's own bullets, from GET /ui/jobs/:id/check), each with a hover explanation,
+      in place of the bare score next to the state chip. Board cards unchanged. Choose this on
+      any row: `POST /ui/jobs/:id/resumes/:rid/choose` (`chooseResume`: own job only, PDF if
+      missing, re-score, checks marked chosen so the next one is a new chat). The rounds table
+      lost its buttons (details only).
   - **Milestone 8: containers and local Kubernetes** (branch `milestone-8`, committed; written
     by the manager on the user's request, no local coders). One image `jobops:dev` (`Dockerfile`,
     allow-list `.dockerignore`; Chromium, typst, poppler). `infra/k8s/` (kustomize): Deployments

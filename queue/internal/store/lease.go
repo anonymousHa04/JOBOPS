@@ -28,7 +28,7 @@ func (s *Store) Lease(stages []string, worker string) (*Task, error) {
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM queue_tasks WHERE state = 'leased' AND stage IN (` + stagesOf(g) + `)`).Scan(&leased); err != nil {
 				return nil, fmt.Errorf("lease: %w", err)
 			}
-			if leased >= groupLimit[g] {
+			if leased >= groupLimit(g) {
 				continue
 			}
 		}
@@ -98,7 +98,7 @@ func (s *Store) Done(taskID int64, result json.RawMessage) error {
 		} else {
 			final = true
 		}
-	case "tailor":
+	case "tailor", "gap_help":
 		final = true
 	}
 	if next != "" {
@@ -252,7 +252,7 @@ func leasedTask(tx *sql.Tx, id int64) (*Task, error) {
 // stagesOf lists a group's stages for an IN (...) clause (fixed names, no user input).
 func stagesOf(group string) string {
 	out := ""
-	for _, st := range []string{"fetch", "parse", "score", "tailor"} {
+	for _, st := range []string{"fetch", "parse", "score", "tailor", "gap_help"} {
 		if groupOf(st) == group {
 			if out != "" {
 				out += ", "

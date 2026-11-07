@@ -68,7 +68,7 @@ has background.js "/x/fix/" "after each saved answer, ask the API to fix and get
 has background.js '"asking"' "status step \"asking\" when the next attempt's prompt is sent"
 has background.js '"fixing"' "status step \"fixing\" while the local models work"
 has background.js '"done"' "final status step \"done\""
-grep -qE '(round|r) *< *5' background.js && ok || bad "background.js must stop after round 5"
+grep -qE '(round|r) *<=? *5' background.js && ok || bad "background.js must stop after round 5"  # 5 fix rounds (user, 2026-11-07)
 fi
 if owns popup.js; then
 has popup.js "job.score != null" "untailored jobs have no score; do not show null"

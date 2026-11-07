@@ -10,6 +10,7 @@ import { norm } from "../scoring/terms.ts";
 import { event, shortId } from "../log.ts";
 import { carriedInput, reuseFor } from "./gap-memory.ts";
 import type { CarriedFrom, EarlierInput, Reuse } from "./gap-memory.ts";
+import { gapKey } from "./gap-related.ts";
 
 export type GapKind = "must" | "theme" | "nice" | "keyword";
 export type GapAnswer = "have" | "other_name" | "learnable" | "no";
@@ -21,6 +22,7 @@ export type Gap = {
   carried_input: EarlierInput | null; // what that earlier answer typed ("Edit / improve" fills the form)
   declined: boolean;               // the user undid a carried answer here: not carried again
   reuse: Reuse;                     // earlier answers on other jobs (gap-memory.ts)
+  help_queued: boolean;             // its explanation is queued or running (stage gap_help)
 };
 export type AnswerInput = {
   kind: GapKind; requirement: string; answer: GapAnswer;
@@ -46,6 +48,7 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
   const rows = db.prepare("SELECT requirement, kind, help, answer, outcome, updated_at, carried_from, input FROM gap_notes WHERE job_id = ?").all(jobId) as { requirement: string; kind: string; help: string | null; answer: string | null; outcome: string | null; updated_at: string; carried_from: string | null; input: string | null }[];
   const map = new Map(rows.map(row => [row.requirement, row]));
 
+  const queued = queuedHelp(db, jobId);
   const list: Gap[] = [];
   const notAsked: NotAsked[] = [];
   for (const i of r.items) {
@@ -73,7 +76,8 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
       answer: (row?.answer ?? null) as GapAnswer | null, outcome: row?.outcome ?? null, updated_at: row?.updated_at ?? null,
       carried_from: carried,
       carried_input: carried && row ? carriedInput(db, { ...row, answer: row.answer as GapAnswer | null }) : null,
-      declined: row?.carried_from === "declined", reuse: { exact: null, similar: [] }
+      declined: row?.carried_from === "declined", reuse: { exact: null, similar: [] },
+      help_queued: queued.has(gapKey(i.requirement))
     });
   }
   // Earlier answers on other jobs, for the open gaps only.
@@ -89,6 +93,15 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
   }));
   const years = r.hard.pass ? null : `asks ${r.hard.years_asked}+ years; I have ${r.hard.years_have}`;
   return { gaps: list, not_asked: notAsked, years, entries };
+}
+
+// Keys of this job's gaps whose explanation is queued or running in the queue (gap_help tasks,
+// prompt_version gap-<key>-<batch>). The queue's table exists only once the queue server ran.
+function queuedHelp(db: Db, jobId: string): Set<string> {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'queue_tasks'").get()) return new Set();
+  const rows = db.prepare("SELECT prompt_version FROM queue_tasks WHERE job_id = ? AND stage = 'gap_help' AND state IN ('queued', 'leased')")
+    .all(jobId) as { prompt_version: string }[];
+  return new Set(rows.map((r) => r.prompt_version.split("-")[1]));
 }
 
 export function cachedHelp(db: Db, jobId: string, requirement: string): GapHelp | null {

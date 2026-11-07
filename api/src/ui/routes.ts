@@ -1,17 +1,23 @@
 // Routes for the web UI (ui/, served by Vite on localhost; it calls these under /api).
 // Local only: the API listens on 127.0.0.1 and there is no login.
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db.ts";
 import { addPrepTask, APP_STATUSES, board, boardCard, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
 import { health } from "./health.ts";
-import { QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
+import { gapHelpTasks, QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
 import { markRescoredAll, rescoreAllStatus, rescoreCandidates, tailorStatus } from "./tailor-ready.ts";
-import { draftBullet, gapHelp } from "./gap-model.ts";
-import { answerGap, gapList } from "./gaps.ts";
+import { draftBullet } from "./gap-model.ts";
+import { gapKey } from "./gap-related.ts";
+import { answerGap, cachedHelp, gapList } from "./gaps.ts";
 import { autoCarry, carryAnswers, declineCarried, linkSame, matchSimilar, reuseAnswer, setAutoCarry } from "./gap-memory.ts";
 import { analysisPrompt } from "./prompt.ts";
 import { addByLink, AddRefused } from "./add-job.ts";
+import { checkView, hasPdf, recordById } from "./check.ts";
+import { chooseResume, decideCheck } from "../extension/step.ts";
+import { pdfDir } from "../render/render.ts";
+import { createReadStream } from "node:fs";
+import { join } from "node:path";
 import { event, shortId, warnEvent } from "../log.ts";
 import { bulkDelete, bulkPreview, deleteHints, deleteJob, DeleteRefused, deleteSkipMatches, setKept, skipMatches } from "../jobs/delete.ts";
 
@@ -42,6 +48,17 @@ const DeleteBody = z.object({
 }).strict();
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+// Queue gap help for these requirements of a job (202), or say the queue is down (503).
+async function queueHelp(reply: FastifyReply, jobId: string, requirements: string[]) {
+  try {
+    const r = await gapHelpTasks(jobId, requirements.map(gapKey));
+    event(`gap help queued (job ${shortId(jobId)}): ${requirements.length} asked, ${r.queued} new, batch ${r.batch_id}`);
+    return reply.status(202).send(requirements.length === 1 ? { queued: true, batch_id: r.batch_id } : { queued: r.queued, batch_id: r.batch_id });
+  } catch (err) {
+    return reply.status(503).send({ error: "queue_down", message: message(err) });
+  }
+}
 
 export function uiRoutes(app: FastifyInstance, db: Db): void {
   app.get("/ui/board", async () => ({ jobs: board(db) }));
@@ -97,15 +114,30 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     }
   });
 
+  // Explain one gap: a saved explanation comes back at once ({ help }). Otherwise (or with
+  // refresh) it is queued for the Mac worker (202 { queued }), which runs one at a time on the
+  // one-slot 14B; the change feed tells the UI when it is saved. Called directly, many clicks
+  // waited behind each other inside llama-server until they timed out.
   app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/gaps/help", async (request, reply) => {
     if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
     const body = HelpBody.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const saved = body.data.refresh ? null : cachedHelp(db, request.params.id, body.data.requirement);
+    if (saved) return { help: saved };
+    return queueHelp(reply, request.params.id, [body.data.requirement]);
+  });
+
+  // Explain all: every gap with no explanation and no answer, one request to the queue.
+  app.post<{ Params: { id: string } }>("/ui/jobs/:id/gaps/help-all", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    let todo: string[];
     try {
-      return await gapHelp(db, request.params.id, body.data.kind, body.data.requirement, { refresh: body.data.refresh });
+      todo = gapList(db, request.params.id).gaps.filter((g) => !g.help && !g.answer && !g.help_queued).map((g) => g.requirement);
     } catch (err) {
-      return reply.status(503).send({ error: "model_failed", message: message(err) });
+      return reply.status(400).send({ error: "no_gaps", message: message(err) });
     }
+    if (!todo.length) return { queued: 0, batch_id: 0 };
+    return queueHelp(reply, request.params.id, todo);
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/gaps/draft", async (request, reply) => {
@@ -167,6 +199,66 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
     warnEvent(`ui error${body.data.where ? ` (${body.data.where})` : ""}: ${body.data.message.replace(/\s+/g, " ").slice(0, 600)}`);
     return { ok: true };
+  });
+
+  // Check tab: the resume against the job's score, the chat check's rounds and report.
+  app.get<{ Params: { id: string } }>("/ui/jobs/:id/check", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    try {
+      return checkView(db, request.params.id);
+    } catch (err) {
+      return reply.status(500).send({ error: "check_failed", message: message(err) });
+    }
+  });
+
+  // Your choice at the end of a check: use the new version (it becomes your resume and gets its
+  // PDF) or keep the previous one.
+  app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/check/decide", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    const body = z.object({ source: z.enum(["claude", "chatgpt"]), use: z.enum(["new", "previous"]).optional(),
+      resume_id: z.string().min(1).max(160).optional() }).strict().safeParse(request.body ?? {});
+    if (!body.success || (!body.data.use && !body.data.resume_id)) return reply.status(400).send({ error: "invalid body" });
+    let r;
+    try {
+      r = await decideCheck(db, request.params.id, body.data.source, { use: body.data.use, resume_id: body.data.resume_id });
+    } catch (err) {
+      return reply.status(409).send({ error: "no_choice", message: message(err) });
+    }
+    event(`check: version ${r.version} chosen (job ${shortId(request.params.id)}): ${r.resume_id}`);
+    // The job is scored again with the chosen resume as its own (Rescore).
+    try {
+      return { ...r, rescore_batch: (await rescore(request.params.id)).batch_id };
+    } catch (err) {
+      return { ...r, rescore_batch: null, rescore_error: message(err) };
+    }
+  });
+
+  // Choose one of the job's resumes (Check tab list): it becomes the resume (PDF made if it has
+  // none), the job is re-scored, and the next check starts a new chat.
+  app.post<{ Params: { id: string; rid: string } }>("/ui/jobs/:id/resumes/:rid/choose", async (request, reply) => {
+    const { id, rid } = request.params;
+    if (!jobExists(db, id)) return reply.status(404).send({ error: "not_found" });
+    let r;
+    try {
+      r = await chooseResume(db, id, rid, undefined, hasPdf);
+    } catch (err) {
+      return reply.status(404).send({ error: "not_found", message: message(err) });
+    }
+    event(`resume chosen (job ${shortId(id)}): ${rid}${r.pdf_error ? ` (PDF failed: ${r.pdf_error})` : ""}`);
+    try {
+      return { resume_id: rid, ...r, rescore_batch: (await rescore(id)).batch_id };
+    } catch (err) {
+      return { resume_id: rid, ...r, rescore_batch: null, rescore_error: message(err) };
+    }
+  });
+
+  // A tailored resume's PDF (opens in the browser). Only ids of stored records: the path comes
+  // from the id, never from the request, so no other file can be read.
+  app.get<{ Params: { rid: string } }>("/ui/resumes/:rid/pdf", async (request, reply) => {
+    const rid = request.params.rid;
+    if (!/^[\w-]{1,120}$/.test(rid) || !recordById(db, rid) || !hasPdf(rid)) return reply.status(404).send({ error: "no_pdf" });
+    return reply.type("application/pdf").header("content-disposition", `inline; filename="${rid}.pdf"`)
+      .send(createReadStream(join(pdfDir(), `${rid}.pdf`)));
   });
 
   // Add a job by its link (top bar): fetch, store, keep, queue parse and score (no tailor).

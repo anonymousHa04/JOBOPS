@@ -3,10 +3,12 @@ import type { Db } from "../db.ts";
 import { generate } from "../model/llm.ts";
 import { loadBank, loadSkillsExtra, vocabulary } from "../profile/bank.ts";
 import { loadRequirements } from "../requirements/parse.ts";
-import { allBullets, bankHasTerm } from "../scoring/score.ts";
+import { bankHasTerm } from "../scoring/score.ts";
 import { checkRewrite } from "../tailor/guard.ts";
 import type { GuardCode } from "../tailor/guard.ts";
 import { cachedHelp, saveHelp } from "./gaps.ts";
+import { relatedBullets } from "./gap-related.ts";
+import type { VectorSearch } from "./gap-related.ts";
 import type { GapHelp, GapKind } from "./gaps.ts";
 
 const MAX_WORDS = 25;
@@ -19,7 +21,7 @@ const HelpSchema = z.object({
 });
 const DraftSchema = z.object({ text: z.string(), tags: z.array(z.string()), skills: z.array(z.string()).default([]) });
 
-export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement: string, opts: { refresh?: boolean; baseUrl?: string } = {}): Promise<GapHelp> {
+export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement: string, opts: { refresh?: boolean; baseUrl?: string; search?: VectorSearch } = {}): Promise<GapHelp> {
   if (!opts.refresh) {
     const cached = cachedHelp(db, jobId, requirement);
     if (cached) return cached;
@@ -29,7 +31,9 @@ export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement:
   if (!bank) throw new Error("no bank; run bank build first");
 
   const role = loadRequirements(db, jobId)?.role ?? "";
-  const list = allBullets(bank).map((b) => b.id + " | " + b.text).join("\n");
+  // Only the bullets that may show it (word match plus Qdrant's nearest), not the whole bank.
+  const related = await relatedBullets(bank, vocabulary(bank, loadSkillsExtra()), requirement, opts.search);
+  const list = related.bullets.map((b) => b.id + " | " + b.text).join("\n");
 
   const prompt = `
     A job (role: ${role}) asks for this ${KIND_LABEL[kind]}: "${requirement}".
@@ -47,7 +51,7 @@ export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement:
   const res = await generate({ task: "gap_help", prompt, schema: HelpSchema, baseUrl: opts.baseUrl });
   if (!res.ok) throw new Error("gap help: " + res.error);
 
-  const ids = new Set(allBullets(bank).map((b) => b.id));
+  const ids = new Set(related.bullets.map((b) => b.id));
   const help: GapHelp = {
     meaning: res.value.meaning.trim().slice(0, 400),
     similar_terms: res.value.similar_terms.filter(term => term.trim() !== "").slice(0, 6),

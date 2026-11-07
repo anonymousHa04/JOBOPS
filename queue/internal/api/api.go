@@ -16,7 +16,7 @@ import (
 	"jobops/queue/internal/store"
 )
 
-var stages = map[string]bool{"fetch": true, "parse": true, "score": true, "tailor": true}
+var stages = map[string]bool{"fetch": true, "parse": true, "score": true, "tailor": true, "gap_help": true}
 
 // seen: when each worker group (laptop, mac) last asked for work or pinged. In memory only:
 // the health bar uses it where pgrep cannot see the workers (each runs in its own pod).
@@ -250,6 +250,30 @@ func Handler(s *store.Store) http.Handler {
 		}
 		log.Printf("add: job %s, batch %d, %s queued", short(in.JobID), id, stage)
 		send(w, http.StatusOK, map[string]any{"batch_id": id, "stage": stage})
+	})
+
+	// Gap help (Gaps tab): one task per gap key, run by the Mac worker one at a time.
+	mux.HandleFunc("POST /gap-help", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			JobID string   `json:"job_id"`
+			Keys  []string `json:"keys"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		if in.JobID == "" || len(in.Keys) == 0 {
+			fail(w, http.StatusBadRequest, "job_id and keys are required")
+			return
+		}
+		id, n, err := s.GapHelp(in.JobID, in.Keys)
+		if err != nil {
+			fail(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if n > 0 {
+			log.Printf("gap help: job %s, batch %d, %d queued", short(in.JobID), id, n)
+		}
+		send(w, http.StatusOK, map[string]int64{"batch_id": id, "queued": int64(n)})
 	})
 
 	mux.HandleFunc("POST /tailor", func(w http.ResponseWriter, r *http.Request) {

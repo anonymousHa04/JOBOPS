@@ -8,6 +8,7 @@ import type { Task } from "../model/registry.ts";
 import { done, fail, lease, ping, queueUp, queueUrl, QueueDownError } from "./client.ts";
 import { followSse, QUEUE_EVENTS } from "../events/sse.ts";
 import type { Db } from "../db.ts";
+import { markerValue, setMarker, takeMarker } from "../db.ts";
 import { gapHelp } from "../ui/gap-model.ts";
 import { gapKey } from "../ui/gap-related.ts";
 import type { VectorSearch } from "../ui/gap-related.ts";
@@ -43,15 +44,29 @@ export async function runStage(stage: string, jobId: string, version = "", d: Db
     return { score: r.score, band: r.band, decision: plan?.decision ?? null };
   }
   if (stage === "tailor") {
-    const t = await tailor(d, jobId);
+    // Re-tailor from scratch (UI): the queue task has no options, so the route leaves a marker.
+    // Its value is the batch id (retailor-<batch>), or "pending" while the route queues it: a
+    // marker for another batch is left alone, so a stale one never changes an unrelated run.
+    const marker = `fresh_tailor:${jobId}`;
+    const value = markerValue(d, marker);
+    const fresh = value !== null && (value === "pending" || version.endsWith(`-${value}`));
+    if (fresh) takeMarker(d, marker);
+    let t;
+    try {
+      t = await tailor(d, jobId, { fresh });
+    } catch (err) {
+      if (fresh) setMarker(d, marker, value!); // a retry of this task is still from scratch
+      throw err;
+    }
     if (!("created" in t)) throw new Error("tailor returned a dry run");
     const pdf = t.resume_id && t.decision !== "not_tailored" ? await render(d, t.resume_id) : null;
     // Why a PDF failed: the typst error, or the parse-back issue codes (no resume text).
-    const why = pdf && !pdf.ok ? (pdf.error ?? [...new Set(pdf.issues.map((i) => `${i.code} (${i.extractor})`))].join(", ")) : null;
+    const why = pdf && !pdf.ok ? (pdf.error ?? [...new Set(pdf.issues.map((i) => i.code !== "bank_gate" ? `${i.code} (${i.extractor})`
+      : i.detail.startsWith("role_dropped: ") ? `role ${i.detail.slice(14)} has no bullet on the resume (bank_gate: role_dropped)` : `bank_gate: ${i.detail}`))].join(", ")) : null;
     // reason: why the tailor decided as it did (a not_tailored or blocked run makes no resume,
     // and the drawer shows this). No score here: the job's score is the score task's.
     return { decision: t.decision, reason: t.reason, resume_id: t.resume_id ?? null, created: t.created,
-      pdf_ok: pdf ? pdf.ok : null, ...(why ? { pdf_issue: why } : {}) };
+      pdf_ok: pdf ? pdf.ok : null, ...(why ? { pdf_issue: why } : {}), ...(t.left_out.length ? { left_out: t.left_out } : {}) };
   }
   throw new Error(`unknown stage ${stage}`);
 }

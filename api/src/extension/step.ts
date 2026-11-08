@@ -28,7 +28,21 @@ export type StepResult = { fix: FixResult | null; prompt: string | null; loop?: 
 // Points of this round's report the loop can act on: valid ones that do not need your facts.
 const actionable = (fix: FixResult) => fix.review.valid - (fix.review.causes.needs_facts ?? 0);
 
+// Fix steps running now, by "<job>:<source>" (one API process): Restart check waits for them.
+const running = new Set<string>();
+export const checkRunning = (jobId: string, source: string) => running.has(`${jobId}:${source}`);
+
 export async function fixStep(db: Db, jobId: string, round: number, source: string, report: Report, deps: StepDeps = {}): Promise<StepResult> {
+  const key = `${jobId}:${source}`;
+  running.add(key);
+  try {
+    return await fixStepRun(db, jobId, round, source, report, deps);
+  } finally {
+    running.delete(key);
+  }
+}
+
+async function fixStepRun(db: Db, jobId: string, round: number, source: string, report: Report, deps: StepDeps): Promise<StepResult> {
   const saved = loadLoop(jobId, source);
   const loop: Loop = round === 1 || !saved ? startLoop(db, jobId, source) : saved;
   const shown = latestRecord(db, jobId);
@@ -71,8 +85,21 @@ export async function fixStep(db: Db, jobId: string, round: number, source: stri
 // with gets its PDF. Returns the resume that is current now.
 export type Choice = { use?: "new" | "previous"; resume_id?: string };
 
+// Render a resume; null when the PDF was made, else why not (the issue codes, bank_gate also
+// with its "<id>: <codes>" detail, never resume text).
+async function renderError(render: (resumeId: string) => Promise<unknown>, resumeId: string): Promise<string | null> {
+  try {
+    const r = await render(resumeId) as { ok?: boolean; error?: string | null; issues?: { code: string; extractor: string; detail: string }[] } | undefined;
+    if (!r || r.ok !== false) return null;
+    const codes = [...new Set((r.issues ?? []).map((i) => i.code === "bank_gate" ? `bank_gate: ${i.detail}` : `${i.code} (${i.extractor})`))].join(", ");
+    return r.error ?? (codes || "the PDF did not pass the checks");
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
 export async function decideCheck(db: Db, jobId: string, source: string, choice: Choice,
-  render: (resumeId: string) => Promise<unknown> = (id) => renderPdf(db, id)): Promise<{ resume_id: string; version: number }> {
+  render: (resumeId: string) => Promise<unknown> = (id) => renderPdf(db, id)): Promise<{ resume_id: string; version: number; pdf_error: string | null }> {
   const loop = loadLoop(jobId, source);
   if (!loop || !loop.stopped) throw new Error("no finished check for this job");
   const start = loop.versions[0];
@@ -81,30 +108,22 @@ export async function decideCheck(db: Db, jobId: string, source: string, choice:
   const v = loop.versions.find((x) => x.resume_id === chosen);
   if (!v) throw new Error("not a version of this check");
   makeCurrent(db, chosen);
-  if (chosen !== start.resume_id) await render(chosen);
+  const pdf_error = chosen !== start.resume_id ? await renderError(render, chosen) : null;
   loop.decision = chosen === start.resume_id ? "previous" : choice.use === "new" ? "new" : "chosen";
   loop.chosen = chosen;
   saveLoop(loop);
-  return { resume_id: chosen, version: v.version };
+  return { resume_id: chosen, version: v.version, pdf_error };
 }
 
-// Choose any tailored resume of the job (the Check tab's list): it becomes the resume, gets its
-// PDF if it has none, and every check of the job is marked chosen, so the next one starts a new
+// Choose any tailored resume of the job (the Check tab's list): it becomes the resume, its PDF
+// is made again (so one made before the bank gate is checked now), and every check of the job is marked chosen, so the next one starts a new
 // chat. Refused for a resume of another job.
 export async function chooseResume(db: Db, jobId: string, resumeId: string,
-  render: (resumeId: string) => Promise<unknown> = (id) => renderPdf(db, id), hasPdf: (id: string) => boolean = () => false): Promise<{ pdf_error: string | null }> {
+  render: (resumeId: string) => Promise<unknown> = (id) => renderPdf(db, id)): Promise<{ pdf_error: string | null }> {
   const row = db.prepare("SELECT 1 FROM resume_records WHERE resume_id = ? AND jd_id = ? AND decision NOT IN ('original', 'not_tailored')").get(resumeId, jobId);
   if (!row) throw new Error("not a resume of this job");
   makeCurrent(db, resumeId);
-  let pdf_error: string | null = null;
-  if (!hasPdf(resumeId)) {
-    try {
-      const r = await render(resumeId) as { ok?: boolean; error?: string | null } | undefined;
-      if (r && r.ok === false) pdf_error = r.error ?? "the PDF did not pass the checks";
-    } catch (err) {
-      pdf_error = err instanceof Error ? err.message : String(err);
-    }
-  }
+  const pdf_error = await renderError(render, resumeId);
   for (const source of ["claude", "chatgpt"]) {
     const loop = loadLoop(jobId, source);
     if (loop) { loop.decision = "chosen"; loop.chosen = resumeId; saveLoop(loop); }

@@ -1,10 +1,11 @@
 // The score record of one job's report loop (ids, scores, requirement names; never text) and
 // the engine score of a resume record.
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import type { Db } from "../db.ts";
+import { hasMarker, setMarker, takeMarker } from "../db.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import { loadBank } from "../profile/bank.ts";
 import { loadSkillsExtra } from "../profile/bank.ts";
@@ -70,6 +71,32 @@ export function saveLoop(loop: Loop): void {
   mkdirSync(reportsDir(), { recursive: true });
   writeFileSync(path, JSON.stringify(loop, null, 1));
 }
+
+// Restart the chat check for one site (UI): the loop file is kept under a timestamped name, and
+// the next prompt the extension fetches for this site says fresh_chat once (a new chat, round 1).
+// Its per-round reports (<job>.<source>.r<n>.yaml) get the same timestamp. The latest report
+// <job>.<source>.yaml stays (bank audit reads its fact flags). Returns the archived loop's name.
+export function restartLoop(db: Db, jobId: string, source: string): string | null {
+  const path = loopPath(jobId, source);
+  let archived: string | null = null;
+  if (existsSync(path)) {
+    const stamp = new Date().toISOString().replace(/:/g, "-");
+    archived = `${jobId}.${source}.loop.${stamp}.json`;
+    renameSync(path, join(reportsDir(), archived));
+    const prefix = `${jobId}.${source}.`;
+    for (const f of readdirSync(reportsDir())) {
+      const round = f.startsWith(prefix) ? f.slice(prefix.length).match(/^(r\d+)\.yaml$/)?.[1] : undefined;
+      if (round) renameSync(join(reportsDir(), f), join(reportsDir(), `${prefix}${round}.${stamp}.yaml`));
+    }
+  }
+  setMarker(db, freshChatKey(jobId, source));
+  return archived;
+}
+
+const freshChatKey = (jobId: string, source: string) => `fresh_chat:${jobId}:${source}`;
+export const hasFreshChat = (db: Db, jobId: string, source: string) => hasMarker(db, freshChatKey(jobId, source));
+// True once after restartLoop, then false.
+export const takeFreshChat = (db: Db, jobId: string, source: string) => takeMarker(db, freshChatKey(jobId, source));
 
 export function startLoop(db: Db, jobId: string, source: string): Loop {
   const record = latestRecord(db, jobId);

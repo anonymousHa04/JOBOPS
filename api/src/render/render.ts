@@ -3,6 +3,8 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Bank, ResumeRecord } from "../profile/schema.ts";
+import { bulletBlocked } from "../profile/gate.ts";
+export { REVIEWED_IGNORES } from "../profile/gate.ts";
 import { parseBack, pdftotext } from "./parseback.ts";
 import type { Issue } from "./parseback.ts";
 
@@ -62,12 +64,40 @@ export function resumeData(record: ResumeRecord, bank: Bank, paper = "a4"): Resu
   };
 }
 
+// The bank gate on a record's bullets, checked on the BANK bullet (its text and evidence):
+// one bank_gate issue per failing bullet, "<id>: <codes>" (an id not in the bank: not_in_bank),
+// and "role_dropped: <entry id>" per job with bank bullets but none in the record.
+export function bankGate(record: ResumeRecord, bank: Bank): Issue[] {
+  const gate: Issue[] = [];
+  for (const rb of record.content.bullets) {
+    const e = [...bank.roles, ...bank.projects].find((x) => x.bullets.some((b) => b.id === rb.id));
+    const b = e?.bullets.find((x) => x.id === rb.id);
+    const codes = e && b ? bulletBlocked(bank, e.id, b) : ["not_in_bank"];
+    if (codes.length) gate.push({ code: "bank_gate", extractor: "gate", detail: `${rb.id}: ${codes.join(",")}` });
+  }
+  // A job with bullets in the bank but none on the resume would leave a hole in the timeline:
+  // blocked, not left off. Career breaks and projects may be left off.
+  const shown = new Set(record.content.bullets.map((b) => b.entry_id));
+  for (const role of bank.roles) {
+    if (role.kind !== "break" && role.bullets.length > 0 && !shown.has(role.id)) {
+      gate.push({ code: "bank_gate", extractor: "gate", detail: `role_dropped: ${role.id}` });
+    }
+  }
+  return gate;
+}
+
 export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; error: string | null };
 
 // Compile in a temp folder (template + data.json only), parse it back, and move the PDF
 // into profile/pdf/<resume_id>.pdf only when every check passes.
 // outDir: where the PDF goes (default profile/pdf); the ATS check's fake resume uses data/ats.
 export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string } = {}): Promise<RenderResult> {
+  // Output gate: a failing record gets no PDF, and an older PDF of it is removed.
+  const gate = bankGate(record, bank);
+  if (gate.length) {
+    rmSync(join(opts.outDir ?? pdfDir(), `${record.resume_id}.pdf`), { force: true });
+    return { ok: false, path: null, issues: gate, error: null };
+  }
   const work = mkdtempSync(join(tmpdir(), "jobops-render-"));
   try {
     const data = resumeData(record, bank, opts.paper);

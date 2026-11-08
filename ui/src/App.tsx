@@ -9,6 +9,7 @@ import { Batches } from "./Batches";
 import { SkipDelete } from "./SkipDelete";
 import { BulkDelete } from "./BulkDelete";
 import { AddJob } from "./AddJob";
+import { AutoCheck } from "./AutoCheck";
 import { onChange } from "./events";
 
 type View = "pipeline" | "applications" | "batches";
@@ -119,6 +120,7 @@ export function App() {
             <label className="check"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Show skipped</label>
           )}
           {view === "pipeline" && <AddJob onAdded={(id) => { changedJob(id); openJob(id); }} />}
+          <AutoCheck />
           <span className="muted">{counts.total} jobs{counts.failed ? ` · ${counts.failed} failed` : ""}</span>
           <button className="btn ghost" onClick={load}>Refresh</button>
           <RescoreAll refresh={jobs} onDone={changed} />

@@ -25,7 +25,8 @@ export type ResumePlan = {
 };
 
 // The last tailor run for this job, so the drawer can say why it did not make a resume.
-export type LastTailor = { at: string; state: string; ok: boolean; message: string };
+// left_out: bank bullets the gate kept off the resume (ids and codes), when the run had any.
+export type LastTailor = { at: string; state: string; ok: boolean; message: string; left_out?: { bullet_id: string; codes: string[] }[] };
 
 export type TailorStatus = {
   score: number | null; band: string | null;
@@ -60,11 +61,13 @@ function lastTailor(tasks: Task[]): LastTailor | null {
   const at = t.updated_at;
   if (t.state === "failed") return { at, state: t.state, ok: false, message: `failed (${t.error_code ?? "error"}): ${t.error_detail ?? "no detail"}` };
   if (t.state !== "done") return { at, state: t.state, ok: true, message: t.state };
-  const r = (t.result ?? {}) as { decision?: string; reason?: string; resume_id?: string | null; created?: boolean; pdf_ok?: boolean | null; pdf_issue?: string };
+  const r = (t.result ?? {}) as { decision?: string; reason?: string; resume_id?: string | null; created?: boolean; pdf_ok?: boolean | null; pdf_issue?: string;
+    left_out?: { bullet_id: string; codes: string[] }[] };
+  const left = r.left_out?.length ? { left_out: r.left_out } : {};
   if (r.decision === "not_tailored") return { at, state: t.state, ok: false, message: `not tailored: ${r.reason ?? "below 75"}.` };
   if (r.decision === "blocked") return { at, state: t.state, ok: false, message: `stopped: ${r.reason ?? "open risk questions"}.` };
-  if (r.pdf_ok === false) return { at, state: t.state, ok: false, message: `resume ${r.resume_id ?? ""} made (${r.decision}), but the PDF failed: ${r.pdf_issue ?? "parse-back check"}.` };
-  return { at, state: t.state, ok: true, message: `resume ${r.resume_id ?? ""} made (${r.decision})${r.created === false ? ", same bullets as before" : ""}.` };
+  if (r.pdf_ok === false) return { at, state: t.state, ok: false, message: `resume ${r.resume_id ?? ""} made (${r.decision}), but the PDF failed: ${r.pdf_issue ?? "parse-back check"}.`, ...left };
+  return { at, state: t.state, ok: true, message: `resume ${r.resume_id ?? ""} made (${r.decision})${r.created === false ? ", same bullets as before" : ""}.`, ...left };
 }
 
 export function tailorStatus(db: Db, jobId: string): TailorStatus {

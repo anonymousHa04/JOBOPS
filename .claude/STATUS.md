@@ -15,6 +15,35 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
 
+## Bank gate (branch `atlassian-resume-fix` from milestone-8, 2026-11-07, uncommitted)
+
+Why: Gaps answers on 2026-11-05 put unsupported bullets into the bank (a 1M claim, MCP before
+2024-11, model wording, copied evidence, the job post's own term). Tailor and render trusted the
+bank, so they reached the Atlassian application on iCIMS. Plan: `.claude/specs/plan-atlassian-fix.md`.
+Code by Claude subagents (the user's choice for this work), with a review and a test run for every step.
+- `api/src/profile/gate.ts`: one deterministic gate. Every bank write (`addBullet`: Gaps, CLI,
+  MCP) blocks with reason codes. A story is required. Render blocks on the hard codes; term_added
+  and scope_raised block unless the bullet is `reviewed` (`bullet review <id>`). The PDF route
+  returns 409 for a failing resume.
+- `bank audit` (read-only) lists failing bullets and skills, plus the chats' `fact_flags`.
+- Gaps form: nothing pre-ticked; you pick the job or project, with its dates; Save is off on a
+  refused draft. Restart options: Re-tailor from scratch, Restart check (new chat at round 1),
+  Start over on a gap.
+- Tailoring never picks a bullet the gate refuses: it takes the next best one and lists the rest
+  as `left_out` in the Tailor box. The score and the skills line count only passing bullets. A job
+  left with no bullets blocks the PDF (`role_dropped`).
+- Tests: `api/test/bank-gate.test.ts`, `api/test/restart.test.ts` (188 pass). Pods rebuilt 2026-11-08.
+- Bank cleaned on 2026-11-07 with the user's OK: 13 bullets removed, 5 rewritten, 32 skills and the
+  `platform engineering` synonym removed; backup in `data/backups/bank-gate-2026-11-07/`.
+- 2026-11-08, from the user's answers: 12 bullets reviewed, 6 rewritten (production peak, Adadda
+  10k at peak, mentoring merged, JobOps "designed; built by AI coding agents under my review",
+  local models exact); "at peak" counts as a scale label. Backup `data/backups/bank-gate-2026-11-08/`.
+  `bank audit` lists only `jobops-ats-parseback`, left out until the parser fix makes "three
+  parsers" true. Tests 189 pass; pods rebuilt.
+- **Next:** the user re-tailors Atlassian from scratch, then we review the draft against Atlassian's
+  five CV tips. Parked: the parser/iCIMS fixes and the OpenResume reader in the pods. The parser/iCIMS
+  fixes are parked (user: "forget the parser for now"). Commit only when the user asks.
+
 ## Where things are
 
 - Branches: `dev` is the development branch; each milestone is a sub-branch merged into
@@ -257,6 +286,27 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
   hand with `C:\llama\start-server.cmd` (never an auto-start task); general14 (bank build,
   rewording; 3 slots, -kvu) on the Mac via `.claude/bin/llm.sh`. Never load general7 on the
   Mac next to general14.
+
+- **Gap answers may name their own requirement** (user, 2026-11-08, on `atlassian-resume-fix`,
+  manager-written, uncommitted). A bullet saved from a Gaps answer keeps which gap it answers in its
+  evidence: `answer YYYY-MM-DD (for: <requirement>): <story>` (`answerEvidence`, `readAnswer` in
+  `api/src/profile/gate.ts`). The bank gate (draft, save, tailor, render) then allows that
+  requirement and its terms (`answerAllows`) though the story does not use the word; any other term
+  the story lacks is still `term_added`, and other bullets are unchanged. Was: "multi-cloud" for a
+  story about AWS + GCP blocked the draft. Tests: 5 in `api/test/bank-gate.test.ts`.
+- **Draft wording** (same day): the draft prompt lists the AI-wording words to avoid; a failed draft's
+  retry names the exact words ("Do not use: ensuring"); a draft still blocked returns `words` and the
+  Gaps message says "Remove or reword: ...". The bank gate's story rule: one listed word used
+  normally in the user's own story ("writing and suggesting code") is not model_wording; a phrase,
+  a rider, a listed word as a comma rider, or two listed words still are. The bullet stays strict.
+  Tests: `api/test/draft-wording.test.ts` (3), 3 more in `bank-gate.test.ts`.
+- **Auto-check after tailor** (user, 2026-11-08): Check tab switch "Check with Claude|ChatGPT after
+  each tailor, for every job" (`ui_state` check_settings, `GET/POST /ui/check/settings`). `ui/src/
+  AutoCheck.tsx` (always mounted): a tailor task done with a new resume (`created` not false, not
+  not_tailored) starts a check in a new chat through the extension bridge (`ui/src/extension.ts`,
+  shared with the Check tab); one at a time, others wait; a localStorage mark stops a second tab
+  starting the same one. Needs a JobOps page open in Chrome. Checked end to end with a real queue
+  and a stand-in bridge (off, on, existing resume, queueing, two tabs). Test: settings route.
 
 ## Where to start next
 

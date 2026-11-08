@@ -131,6 +131,22 @@ export function openDb(path: string): Db {
   return db;
 }
 
+// One-time markers in ui_state (Re-tailor from scratch, Restart check): set by a UI route,
+// taken (read and cleared) once by the step they are for. They survive an API restart.
+export function setMarker(db: Db, key: string, value = "1"): void {
+  db.prepare("INSERT INTO ui_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
+}
+
+export function markerValue(db: Db, key: string): string | null {
+  return (db.prepare("SELECT value FROM ui_state WHERE key = ?").get(key) as { value: string } | undefined)?.value ?? null;
+}
+
+export const hasMarker = (db: Db, key: string) => markerValue(db, key) !== null;
+
+export function takeMarker(db: Db, key: string): boolean {
+  return db.prepare("DELETE FROM ui_state WHERE key = ?").run(key).changes > 0;
+}
+
 const GAP_NOTES = `CREATE TABLE IF NOT EXISTS gap_notes (
       job_id TEXT NOT NULL REFERENCES jobs(id),
       requirement TEXT NOT NULL,

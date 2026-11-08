@@ -1,6 +1,7 @@
 import type { Db } from "../db.ts";
 import { loadBank, loadSkillsExtra, vocabulary } from "../profile/bank.ts";
 import type { Bank, Bullet, SkillsExtra } from "../profile/schema.ts";
+import { blockedBullets, listableExtras } from "../profile/gate.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import type { Requirements } from "../requirements/schema.ts";
 import {
@@ -234,14 +235,16 @@ export function scoreRequirements(
   verdicts: Verdicts = new Map()
 ): ScoreResult {
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
-  const every = allBullets(bank);
+  // Bullets the bank gate refuses are no evidence: the job's score, the tailor's gate and the
+  // skills line all count only what a resume may show (render.ts bankGate).
+  const blocked = blockedBullets(bank);
+  const every = allBullets(bank).filter((b) => !blocked.has(b.id));
+  const extraHave = listableExtras(bank, extra).filter((s) => s.status === "have").map((s) => s.name);
   const bullets = only ? every.filter((b) => only.includes(b.id)) : every;
   const byId = new Map(bullets.map((b) => [b.id, b]));
   const index = buildIndex(bullets, vocab);
   const rec = bulletRecency(bank);
-  const listed = new Set(
-    [...Object.values(bank.skills).flat(), ...extra.skills.filter((s) => s.status === "have").map((s) => s.name)].map(norm)
-  );
+  const listed = new Set([...Object.values(bank.skills).flat(), ...extraHave].map(norm));
   const dontHave = new Set(extra.skills.filter((s) => s.status === "dont_have").map((s) => norm(s.name)));
   const answers = extra.learnable.filter((a) => a.job_id === jobId);
   const learnable = new Set(answers.filter((a) => a.learnable).map((a) => norm(a.skill)));
@@ -320,7 +323,7 @@ export function scoreRequirements(
   // a keyword that also appears in a must-have counts double.
   // The skills as written, not normalised: norm() maps synonyms to one name ("golang" -> "go"),
   // which would hide the exact word an ATS looks for.
-  const written = [...Object.values(bank.skills).flat(), ...extra.skills.filter((s) => s.status === "have").map((s) => s.name)];
+  const written = [...Object.values(bank.skills).flat(), ...extraHave];
   const haystack = [...bullets.map((b) => b.text), ...written].join("\n");
   const mustText = req.must_have.join("\n");
   let kwHit = 0;

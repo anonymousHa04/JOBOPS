@@ -5,6 +5,7 @@ import { riskCheck } from "../scoring/risk.ts";
 import type { Risk } from "../scoring/risk.ts";
 import { needsJudge, scoreRequirements, totalYears } from "../scoring/score.ts";
 import { pageCount } from "../render/render.ts";
+import { blockedBullets } from "../profile/gate.ts";
 import type { Verdicts } from "../scoring/score.ts";
 import { decide, pickStart } from "./decide.ts";
 import type { Decision, StoredRecord } from "./decide.ts";
@@ -50,7 +51,8 @@ export function planJob(
   budget: Budget,
   verdicts: Verdicts,
   force = false,
-  companies?: Companies
+  companies?: Companies,
+  fresh = false
 ): Plan {
   const o = { jobId, verdicts };
   const sc = companies ? sameCompany(companies.company, records, companies.companyOf) : { records: [], versions: 0, warnings: [] };
@@ -58,10 +60,14 @@ export function planJob(
   // (tailorable band); otherwise the best record overall.
   const own = candidates(records, bank).filter((r) => sc.records.includes(r.resume_id));
   const ownBest = pickStart(own, req, bank, extra, o);
-  const start = (ownBest && TAILORED_BANDS.includes(ownBest.score.band) ? ownBest : pickStart(candidates(records, bank), req, bank, extra, o))?.record ?? null;
+  // fresh (Re-tailor from scratch): no earlier record starts this one; the plan builds from the bank.
+  const start = fresh ? null : ((ownBest && TAILORED_BANDS.includes(ownBest.score.band) ? ownBest : pickStart(candidates(records, bank), req, bank, extra, o))?.record ?? null);
   const ideal = idealContent(req, bank, extra, budget, { ...o, start: start?.content });
   const risks = riskCheck(req, bank, extra, ideal.bullets.map((b) => b.id), jobId, verdicts);
-  const decision = decide(ideal, start, req, bank, extra, risks, { ...o, force });
+  // Start bullets the render gate refuses: the start is then adapted, not reused.
+  const blocked = blockedBullets(bank);
+  const startBlocked = (start?.content.bullets ?? []).filter((b) => blocked.has(b.id)).map((b) => b.id);
+  const decision = decide(ideal, start, req, bank, extra, risks, { ...o, force, startBlocked });
   const unjudged = needsJudge(req, bank, extra).filter((r) => !verdicts.has(r)).length;
   return { decision, start, ideal, risks, unjudged, same_company: sc };
 }
@@ -81,6 +87,7 @@ export type TailorResult = {
   created: boolean;
   reworded: RewordLog[];
   lint: Finding[]; // the written record's lint, tenure, and same-company findings
+  left_out: { bullet_id: string; codes: string[] }[]; // bullets the bank gate kept off (ideal.ts)
   error: string | null;
 };
 
@@ -96,9 +103,9 @@ export async function tailorJob(
   extra: SkillsExtra,
   budget: Budget,
   verdicts: Verdicts,
-  opts: { force?: boolean; baseUrl?: string; companies?: Companies; notes?: { bullet_id: string; note: string }[] } = {}
+  opts: { force?: boolean; baseUrl?: string; companies?: Companies; notes?: { bullet_id: string; note: string }[]; fresh?: boolean } = {}
 ): Promise<TailorResult> {
-  const plan = planJob(req, jobId, records, bank, extra, budget, verdicts, opts.force, opts.companies);
+  const plan = planJob(req, jobId, records, bank, extra, budget, verdicts, opts.force, opts.companies, opts.fresh);
   const d = plan.decision;
   const base = {
     job_id: jobId, reason: d.reason, band: d.band, score: d.score, equivalence: d.equivalence,
@@ -107,7 +114,7 @@ export async function tailorJob(
   };
   if (d.risk_gate.blocked) {
     return { ...base, decision: "blocked", reason: `open risks: ${d.risk_gate.open.join(", ")}`,
-      resume_id: null, path: null, created: false, reworded: [], lint: plan.same_company.warnings, error: null };
+      resume_id: null, path: null, created: false, reworded: [], lint: plan.same_company.warnings, left_out: [], error: null };
   }
 
   // The original resume is the first record.
@@ -145,14 +152,15 @@ export async function tailorJob(
     .filter((i) => i.credit > 0 && i.bullet_ids.length && i.kind !== "keyword")
     .map((i) => ({ requirement: i.requirement, bullet_ids: i.bullet_ids }));
 
+  const left_out = d.decision === "not_tailored" ? [] : plan.ideal.left_out ?? [];
   const { record, path, created } = writeRecord(db, bank, {
     jd_id: jobId, source_resume_id: plan.start?.resume_id ?? null, decision: d.decision, reason: d.reason,
     band: d.band, score: d.score, equivalence: d.equivalence, flags: d.flags,
-    review_findings: [], changes, evidence_refs, content,
+    review_findings: [], changes, evidence_refs, content, ...(left_out.length ? { left_out } : {}),
     meta: reworded.length ? { model: rewordModel() } : undefined
   });
   const lint = d.decision === "not_tailored" ? [] : [...lintRecord(record, bank, extra), ...plan.same_company.warnings];
-  return { ...base, decision: d.decision, resume_id: record.resume_id, path, created, reworded, lint, error };
+  return { ...base, decision: d.decision, resume_id: record.resume_id, path, created, reworded, lint, left_out, error };
 }
 
 export type DryRow = {
@@ -179,12 +187,13 @@ export function dryRunAll(
   bank: Bank,
   extra: SkillsExtra,
   budget: Budget,
-  companyOf: (jdId: string) => string | undefined = () => undefined
+  companyOf: (jdId: string) => string | undefined = () => undefined,
+  fresh = false
 ): { rows: DryRow[]; questions: { id: string; question: string; job_ids: string[] }[] } {
   const rows: DryRow[] = [];
   const questions = new Map<string, { id: string; question: string; job_ids: string[] }>();
   for (const j of jobs) {
-    const p = planJob(j.req, j.job_id, records, bank, extra, budget, j.verdicts, false, { company: j.company, companyOf });
+    const p = planJob(j.req, j.job_id, records, bank, extra, budget, j.verdicts, false, { company: j.company, companyOf }, fresh);
     const d = p.decision;
     rows.push({
       job_id: j.job_id, company: j.company, title: j.title, decision: d.decision, band: d.band, score: d.score,

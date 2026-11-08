@@ -7,6 +7,7 @@ import type { Db } from "./db.ts";
 import {
   addBullet,
   removeBullet,
+  markReviewed,
   addSkill,
   removeSkill,
   buildBank,
@@ -38,6 +39,9 @@ import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { newSpellings } from "./tailor/ideal.ts";
 import { addSynonym } from "./lists.ts";
 import { renderRecord } from "./render/render.ts";
+import { gateBullet, names } from "./profile/gate.ts";
+import { listReports, loadReport, SOURCES } from "./extension/reports.ts";
+import type { Source } from "./extension/reports.ts";
 import { atsCheck } from "./render/ats.ts";
 import { compareReport } from "./render/ats-report.ts";
 import type { Reported } from "./render/ats-report.ts";
@@ -76,6 +80,35 @@ export function bankStatus() {
     issues: checkBank(bank, readFileSync(resumeTextPath(), "utf8")).length,
     meta: bank.meta ?? null
   };
+}
+
+// Read-only: every bank bullet and answered skill the bank gate would refuse. Ids and
+// codes only; nothing is changed (the user decides each finding).
+export function bankAudit() {
+  const bank = requireBank();
+  // The chat's fact flags from each job's latest saved report (not the per-round copies).
+  type Flag = { source: string; job_id: string; problem: string; why: string };
+  const chat = new Map<string, Flag[]>();
+  for (const r of listReports()) {
+    if (!SOURCES.includes(r.source as Source) || !r.file.endsWith(`${r.job_id}.${r.source}.yaml`)) continue;
+    for (const f of loadReport(r.job_id, r.source as Source)?.fact_flags ?? [])
+      chat.set(f.bullet_id, [...(chat.get(f.bullet_id) ?? []), { source: r.source, job_id: r.job_id, problem: f.problem, why: f.why }]);
+  }
+  const key = (f: Flag) => `${f.job_id}|${f.source}|${f.problem}|${f.why}`;
+  const bullets = [...bank.roles, ...bank.projects].flatMap((e) =>
+    e.bullets.map((b) => {
+      const codes = gateBullet(bank, e.id, b.text, b.evidence, b.id)
+        .filter((c) => !(b.reviewed && (c === "term_added" || c === "scope_raised")));
+      const flags = (chat.get(b.id) ?? []).sort((x, y) => key(x).localeCompare(key(y)));
+      return { id: b.id, entry: e.id, codes, ...(b.reviewed ? { reviewed: b.reviewed } : {}), ...(flags.length ? { chat: flags } : {}) };
+    }))
+    .filter((b) => b.codes.length || b.chat);
+  // A skill from a Gaps answer is supported only when the answer names it.
+  const skills = loadSkillsExtra().skills
+    .filter((s) => s.status === "have" && s.evidence?.startsWith("answer"))
+    .filter((s) => !names(s.evidence!, s.name.replace(/^experience with /, "")))
+    .map((s) => ({ name: s.name, codes: ["skill_unsupported"] }));
+  return { bullets, skills };
 }
 
 export async function bankBuild() {
@@ -127,6 +160,10 @@ export function bankMarkBreak(entryId: string, title?: string) {
 
 export function bulletRemove(id: string) {
   return removeBullet(id);
+}
+
+export function bulletReview(ids: string[]) {
+  return markReviewed(ids);
 }
 
 export function bankLinks(urls: string[]) {
@@ -242,7 +279,8 @@ export function risk(d: Db, jobId: string) {
 // Tailor one JD (engine-algorithm.md §4): judge first (cached verdicts reused), then
 // decide, ask, reword, and write the record. Needs an approved bank. With dryRun, the
 // decision only: cached verdicts, no model calls, no files.
-export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryRun?: boolean; focus?: string[]; notes?: { bullet_id: string; note: string }[] } = {}) {
+// fresh: Re-tailor from scratch (no earlier record starts it; they stay for history).
+export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryRun?: boolean; focus?: string[]; notes?: { bullet_id: string; note: string }[]; fresh?: boolean } = {}) {
   if (opts.dryRun) return tailorAll(d, { jobId });
   const req = loadRequirements(d, jobId);
   if (!req) throw new Error("parse the JD first: jd parse <job_id>");
@@ -257,13 +295,13 @@ export async function tailor(d: Db, jobId: string, opts: { force?: boolean; dryR
   const { verdicts, stats } = await judgeRequirements(d, req, bank, extra);
   const { focus, notes } = opts;
   const reqWithFocus = withFocus(req, focus);
-  const plan = tailorAll(d, { jobId }).rows[0];
+  const plan = tailorAll(d, { jobId, fresh: opts.fresh }).rows[0];
   if (plan?.decision === "adapt" && plan.to_reword > 0 && (!plan.blocked || opts.force)) {
     await ensureModel("reword", `${plan.to_reword} bullets to reword (the judge's answers are saved; run tailor again after switching)`);
   }
   const companyOf = companies(d);
   const result = await tailorJob(d, reqWithFocus, jobId, records, bank, extra, loadPreferences().tailoring, verdicts,
-    { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf }, notes });
+    { force: opts.force, companies: { company: companyOf(jobId) ?? "", companyOf }, notes, fresh: opts.fresh });
   // The JD's spellings of the candidate's skills go to profile/synonyms.yaml for later jobs.
   const learned = result.resume_id && result.decision !== "not_tailored"
     ? newSpellings(req.keywords, bank, extra).filter(([alias, to]) => addSynonym(alias, to)).map(([alias, to]) => `${alias}: ${to}`)
@@ -294,7 +332,7 @@ export function lint(d: Db, resumeId: string) {
 
 // `tailor --all --dry-run`: the decision table for every parsed JD (or one) and all
 // open risk questions. Requirements still waiting for the judge are counted per row.
-export function tailorAll(d: Db, opts: { jobId?: string } = {}) {
+export function tailorAll(d: Db, opts: { jobId?: string; fresh?: boolean } = {}) {
   const bank = requireBank();
   const extra = loadSkillsExtra();
   const { records, checks } = loadRecords(d, bank);
@@ -313,7 +351,7 @@ export function tailorAll(d: Db, opts: { jobId?: string } = {}) {
     records: records.length,
     edited_records: checks.filter((c) => c.edited).map((c) => c.resume_id),
     stale_records: checks.filter((c) => !c.edited && (c.stale_bank || c.stale_engine)).map((c) => c.resume_id),
-    ...dryRunAll(jobs, records, bank, extra, loadPreferences().tailoring, companies(d))
+    ...dryRunAll(jobs, records, bank, extra, loadPreferences().tailoring, companies(d), opts.fresh)
   };
 }
 

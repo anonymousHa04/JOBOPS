@@ -25,6 +25,13 @@ export const SOURCES = ["claude", "chatgpt"] as const;
 export type Source = (typeof SOURCES)[number];
 
 const line = z.string().trim().min(1).max(300);
+// A bullet whose facts look wrong to the chat. For the user to check; never reworded.
+export const FACT_PROBLEMS = ["number", "date", "role", "wording", "copied", "other"] as const;
+const FactFlag = z.object({ bullet_id: z.string().trim().min(1).max(80), problem: z.enum(FACT_PROBLEMS).catch("other"), why: line });
+export type FactFlag = z.infer<typeof FactFlag>;
+// Lenient: a malformed item is dropped instead of failing the whole report.
+const factFlags = z.preprocess((v) => (Array.isArray(v) ? v.filter((x) => FactFlag.safeParse(x).success).slice(0, 10) : v),
+  z.array(FactFlag).max(10));
 export const ReportSchema = z.object({
   role_summary: z.string().trim().min(1).max(600),
   must_haves_ranked: z.array(z.object({ requirement: line, why_it_matters: line })).max(10),
@@ -39,7 +46,8 @@ export const ReportSchema = z.object({
   already_covered: z.array(z.object({ gap: line, bullet_ids: z.array(z.string().trim().min(1).max(80)).max(6) })).max(8).optional(),
   bullet_notes: z.array(z.object({ bullet_id: z.string().trim().min(1).max(80), note: line })).max(10).optional(),
   // What the chat knows about the candidate from its own memory: unverified, for the user to confirm.
-  from_memory: z.array(z.object({ fact: line, fills_gap: line })).max(8).optional()
+  from_memory: z.array(z.object({ fact: line, fills_gap: line })).max(8).optional(),
+  fact_flags: factFlags.optional()
 }).strict();
 export type Report = z.infer<typeof ReportSchema>;
 
@@ -158,7 +166,11 @@ already_covered:              # listed gaps the resume does cover, at most 6
     bullet_ids: [<ids in square brackets from the resume, e.g. cur-1>]
 bullet_notes:                 # bullets to sharpen for this job, at most 8
   - bullet_id: <id>
-    note: <one sentence of advice; no new facts, numbers, or tools the bullet does not state>`;
+    note: <one sentence of advice; no new facts, numbers, or tools the bullet does not state>
+fact_flags:                   # bullets whose facts look wrong or impossible: a number that conflicts with another bullet, a technology used before it existed, work that fits a different job, model wording, or text copied from another bullet; at most 8; [] if none
+  - bullet_id: <id>           # use the bullet ids shown; do not rewrite them
+    problem: number | date | role | wording | copied | other
+    why: <one sentence>`;
 
 // The prompt for the chat: JD, requirements, the local gap list, and the tailored resume
 // when the job has one (user decision 2026-10-29), so the chat can catch what the local
@@ -284,9 +296,11 @@ export type SaveResult = {
 export async function saveReport(db: Db, jobId: string, source: Source, text: string, opts: { baseUrl?: string; round?: number } = {}): Promise<SaveResult> {
   const j = job(db, jobId);
   const dir = reportsDir();
-  // Attempt number in this job's chat: one more than the last saved report's.
+  // Attempt number in this job's chat: one more than the last saved report's; 1 again for a
+  // loop's first round or when there is no loop file (a new check, or after Restart check).
   const latest = join(dir, `${jobId}.${source}.yaml`);
-  const attempt = existsSync(latest)
+  const fresh = opts.round === 1 || !existsSync(join(dir, `${jobId}.${source}.loop.json`));
+  const attempt = !fresh && existsSync(latest)
     ? (((parse(readFileSync(latest, "utf8")) as { meta?: { attempt?: number } }).meta?.attempt ?? 1) + 1)
     : 1;
   mkdirSync(dir, { recursive: true });

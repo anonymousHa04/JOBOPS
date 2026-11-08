@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { Db } from "../db.ts";
 import { chatFollowUp, chatPrompt, listReports, loadReport, saveReport, SOURCES } from "./reports.ts";
 import { fixStep } from "./step.ts";
+import { hasFreshChat, takeFreshChat } from "./rounds.ts";
 
 export function extensionOrigin(origin: string | undefined): boolean {
   if (!origin) return false;
@@ -79,11 +80,18 @@ export function extensionRoutes(app: FastifyInstance, db: Db): void {
     }
   });
 
-  // ?followup=1&source=claude|chatgpt: the job already has a chat, so send the follow-up
+  // ?source=claude|chatgpt (with followup=1): the job already has a chat, so send the follow-up
   // ("Attempt N: based on your input I made changes") instead of the first prompt.
   app.get<{ Params: { jobId: string }; Querystring: { followup?: string; source?: string } }>("/x/prompt/:jobId", async (request, reply) => {
     try {
       const { followup, source } = request.query;
+      // After Restart check (UI): the first prompt, and the extension forgets its saved chat.
+      // The prompt is built first, so an error does not use up the marker.
+      if (source && hasFreshChat(db, request.params.jobId, source)) {
+        const first = chatPrompt(db, request.params.jobId);
+        takeFreshChat(db, request.params.jobId, source);
+        return reply.send({ ...first, fresh_chat: true });
+      }
       if (followup === "1" && (SOURCES as readonly string[]).includes(source ?? "")) {
         const next = chatFollowUp(db, request.params.jobId, source as (typeof SOURCES)[number]);
         if (next) return reply.send({ job_id: request.params.jobId, followup: true, ...next });

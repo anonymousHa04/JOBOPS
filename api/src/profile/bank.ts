@@ -11,6 +11,7 @@ import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
 import { z } from "zod";
 import { BankSchema, BulletSchema, EntrySchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
 import type { Bank, Preferences, SkillsExtra } from "./schema.ts";
+import { gateBullet } from "./gate.ts";
 
 const profileDir = () => process.env.JOBOPS_PROFILE_DIR ?? "profile";
 export const bankPath = () => join(profileDir(), "bank.yaml");
@@ -380,6 +381,10 @@ export function addBullet(
   const id = opts.topic ? `${entryId}-${opts.topic}` : `${entryId}-${Math.max(0, ...used) + 1}`;
   if ([...bank.roles, ...bank.projects].some((e) => e.bullets.some((b) => b.id === id))) throw new Error(`bullet ${id} exists`);
   const clean = text.trim().replace(/\s+/g, " ");
+  // The bank gate (gate.ts): every writer (Gaps, CLI, MCP) is refused the same way.
+  if (!opts.evidence?.trim()) throw new Error("blocked: no_evidence");
+  const blocked = gateBullet(bank, entryId, clean, opts.evidence);
+  if (blocked.length) throw new Error("blocked: " + blocked.join(", "));
   entry.bullets.push({
     id,
     text: clean,
@@ -403,6 +408,27 @@ export function removeBullet(id: string): { id: string; entry: string } {
   entry.bullets = entry.bullets.filter((b) => b.id !== id);
   saveBank(bank);
   return { id, entry: entry.id };
+}
+
+// Marks bullets reviewed (today) after the user read each against its evidence; saves once.
+// Refuses a bullet with any gate code a review cannot wave through (it needs a rewrite or delete).
+export function markReviewed(ids: string[]): { reviewed: string[]; unknown: string[] } {
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const reviewed: string[] = [];
+  const unknown: string[] = [];
+  const today = new Date().toISOString().slice(0, 10);
+  for (const id of ids) {
+    const e = [...bank.roles, ...bank.projects].find((x) => x.bullets.some((b) => b.id === id));
+    const b = e?.bullets.find((x) => x.id === id);
+    if (!e || !b) { unknown.push(id); continue; }
+    const hard = gateBullet(bank, e.id, b.text, b.evidence, b.id).filter((c) => c !== "term_added" && c !== "scope_raised");
+    if (hard.length) throw new Error(`blocked: ${id}: ${hard.join(",")}`);
+    b.reviewed = today;
+    reviewed.push(id);
+  }
+  if (reviewed.length) saveBank(bank);
+  return { reviewed, unknown };
 }
 
 // Stops a risk question from being asked again.

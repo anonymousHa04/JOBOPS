@@ -18,7 +18,7 @@ import type { ResumeContent } from "./ideal.ts";
 export const recordsDir = () => join(process.env.JOBOPS_PROFILE_DIR ?? "profile", "records");
 
 // Bump when selection or decision logic changes in a way config does not show.
-const ENGINE_LOGIC = "v2: ideal/equivalence/decide (engine-algorithm 4-5); soft must-haves rank as themes, ties by evidence credit";
+const ENGINE_LOGIC = "v3: ideal/equivalence/decide (engine-algorithm 4-5); soft must-haves rank as themes, ties by evidence credit; gate-blocked bullets never chosen";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
 

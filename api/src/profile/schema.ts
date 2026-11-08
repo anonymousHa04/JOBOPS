@@ -11,6 +11,9 @@ export const BulletSchema = z.object({
   source: z.enum(['resume', 'user']).default('resume'),
   // For source: user, the user's answer the bullet is written from ("answer YYYY-MM-DD: ...").
   evidence: z.string().optional(),
+  // YYYY-MM-DD the user read the bullet against its evidence (`bullet review`): its
+  // term_added and scope_raised codes no longer block output.
+  reviewed: z.string().optional(),
 });
 
 // Define Entry schema
@@ -165,6 +168,8 @@ export const ResumeRecordSchema = z.object({
     bullets: z.array(z.object({ id: z.string(), entry_id: z.string(), text: z.string() })),
     skills: z.array(z.string()),
   }),
+  // Bank bullets the bank gate kept off this resume (ids and reason codes, sorted by id).
+  left_out: z.array(z.object({ bullet_id: z.string(), codes: z.array(z.string()) })).optional(),
   hashes: z.object({ content: z.string(), bank: z.string(), engine: z.string() }),
   meta: z.object({
     model: z.string().optional(),

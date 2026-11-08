@@ -51,7 +51,7 @@ export function decide(
   bank: Bank,
   extra: SkillsExtra,
   risks: Risk[],
-  opts: { jobId?: string; verdicts?: Verdicts; force?: boolean } = {}
+  opts: { jobId?: string; verdicts?: Verdicts; force?: boolean; startBlocked?: string[] } = {}
 ): Decision {
   // One score (user, 2026-11-05): the job's, from the whole bank, as on the Score tab. It gates
   // tailoring and is the record's score. The ideal set only decides what goes on the page; its
@@ -73,11 +73,15 @@ export function decide(
     return { decision: "not_tailored", reason: `band ${s.band} (score ${s.score})`,
       band: s.band, score: s.score, equivalence: eq, flags, risk_gate: gate(false) };
   }
-  const reuse = eq !== null && eq >= REUSE_EQUIVALENCE;
+  // A start holding a bullet the render gate refuses is not reused as is: the ideal (without
+  // that bullet) is adapted instead.
+  const startBlocked = opts.startBlocked ?? [];
+  const reuse = eq !== null && eq >= REUSE_EQUIVALENCE && startBlocked.length === 0;
   const blocked = flags.risks.length > 0 && !opts.force && !reuse;
   return {
     decision: reuse ? "reuse" : "adapt",
-    reason: reuse ? `equivalence ${eq} >= ${REUSE_EQUIVALENCE}` : eq === null ? "no starting record" : `equivalence ${eq} < ${REUSE_EQUIVALENCE}`,
+    reason: reuse ? `equivalence ${eq} >= ${REUSE_EQUIVALENCE}` : eq === null ? "no starting record"
+      : startBlocked.length ? `starting record has bullets the bank gate refuses: ${startBlocked.join(", ")}` : `equivalence ${eq} < ${REUSE_EQUIVALENCE}`,
     band: s.band, score: s.score, equivalence: eq, flags,
     // Reuse rewrites nothing, so it never waits on questions; flags still travel with it.
     risk_gate: gate(blocked)

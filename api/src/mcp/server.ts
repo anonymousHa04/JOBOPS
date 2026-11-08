@@ -41,10 +41,11 @@ server.registerTool(
       entry_id: z.string(),
       text: z.string(),
       tags: z.array(z.string()),
-      impact: z.enum(["high", "medium", "low"]).default("medium")
+      impact: z.enum(["high", "medium", "low"]).default("medium"),
+      evidence: z.string().optional() // what the bullet is based on; required by the bank gate
     }
   },
-  ({ entry_id, text, tags, impact }) => reply(() => t.bulletAdd(entry_id, text, tags, impact))
+  ({ entry_id, text, tags, impact, evidence }) => reply(() => t.bulletAdd(entry_id, text, tags, impact, { evidence }))
 );
 
 server.registerTool(

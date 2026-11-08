@@ -101,6 +101,19 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   return issues;
 }
 
+// Layout limits from an iCIMS upload (2026-11-08, gaps-and-rejection-risks.md "ATS parsing"),
+// checked on the render data. Blocking, like the bank gate (plan-parser-icims.md A7).
+export function layoutIssues(data: ResumeData): Issue[] {
+  const issues: Issue[] = [];
+  const entries = [...data.experience, ...data.projects];
+  // iCIMS keeps at most 5 dated entries and drops a random one beyond that. Education not counted.
+  const dated = entries.filter((e) => e.dates.trim()).length;
+  if (dated > 5) issues.push({ code: "too_many_entries", extractor: "layout", detail: `${dated} > 5` });
+  // iCIMS took the name inside parentheses as the employer; a client goes through splitClient.
+  for (const e of entries) if (/[()]/.test(e.company)) issues.push({ code: "company_has_parens", extractor: "layout", detail: e.id });
+  return issues;
+}
+
 // The readers a render must pass, from JOBOPS_PARSE_READERS (comma list). Unset means all
 // three; tests set "pdftotext,pdfjs" because CI has no OpenResume copy.
 export function requiredReaders(): string[] {
@@ -108,7 +121,7 @@ export function requiredReaders(): string[] {
 }
 
 export async function parseBack(pdf: string, data: ResumeData, maxPages: number): Promise<{ ok: boolean; issues: Issue[] }> {
-  const issues: Issue[] = [];
+  const issues: Issue[] = layoutIssues(data);
   const readers = requiredReaders();
   const info = pdfInfo(pdf);
   if (info.pages > maxPages) issues.push({ code: "too_many_pages", extractor: "pdfinfo", detail: `${info.pages} > ${maxPages}` });

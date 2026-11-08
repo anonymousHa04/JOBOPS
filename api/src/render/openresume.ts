@@ -1,11 +1,13 @@
 // Third parse-back reader: OpenResume's resume parser (AGPL-3.0), run from its local copy
-// (.scout/openresume-runner, or JOBOPS_OPENRESUME_DIR), never part of JobOps. It splits
+// (.scout/openresume-runner, or JOBOPS_OPENRESUME_DIR), never part of JobOps: a bundle
+// (dist/parse.mjs, RUNBOOK-M8.md) run with plain node, with pdfjs-dist from the runner's
+// own node_modules, so it runs the same on the Mac and in the pods (hostPath mount). It splits
 // a resume into entries the way many ATS do, by lines and text gaps, so it catches layout
 // problems the plain extractors miss (a career break merged into the next job). Its phone
 // and location patterns are US-only, so those two fields are not compared.
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ResumeData } from "./render.ts";
 import type { Issue } from "./parseback.ts";
 
@@ -19,12 +21,14 @@ export type OpenResumeParsed = {
 const runnerDir = () => process.env.JOBOPS_OPENRESUME_DIR ?? join(import.meta.dirname, "..", "..", "..", ".scout", "openresume-runner");
 
 export function openResumeAvailable(): boolean {
-  return existsSync(join(runnerDir(), "node_modules", ".bin", "tsx"));
+  const dir = runnerDir();
+  return existsSync(join(dir, "dist", "parse.mjs")) && existsSync(join(dir, "node_modules", "pdfjs-dist"));
 }
 
 export function runOpenResume(pdf: string): OpenResumeParsed {
   const dir = runnerDir();
-  const r = spawnSync(join(dir, "node_modules", ".bin", "tsx"), ["parse.ts", pdf], { cwd: dir, encoding: "utf8", timeout: 60_000 });
+  // Absolute path: the runner runs in its own folder, so a relative one would not be found.
+  const r = spawnSync(process.execPath, ["dist/parse.mjs", resolve(pdf)], { cwd: dir, encoding: "utf8", timeout: 60_000 });
   const json = (r.stdout ?? "").split("\n").filter((l) => l.startsWith("{")).at(-1); // pdf.js prints warnings first
   if (!json) throw new Error(`openresume: ${(r.stderr ?? "").split("\n").filter(Boolean).at(-1) ?? "no output"}`);
   return JSON.parse(json) as OpenResumeParsed;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Bank, ResumeRecord } from "../profile/schema.ts";
 import { fakeBank, fakeRecord } from "./fake-resume.ts";
 import { openResumeAvailable } from "./openresume.ts";
+import { requiredReaders } from "./parseback.ts";
 import { renderRecord } from "./render.ts";
 
 export type AtsResult = {
@@ -20,7 +21,8 @@ export async function atsCheck(opts: { record?: ResumeRecord; bank?: Bank } = {}
   const fake = !opts.record;
   const record = opts.record ?? fakeRecord();
   const bank = opts.bank ?? fakeBank;
-  const readers = ["pdftotext", "pdfjs", ...(openResumeAvailable() ? ["openresume"] : [])];
+  // The required readers that can run: a missing one fails the render (reader_missing).
+  const readers = requiredReaders().filter((r) => r !== "openresume" || openResumeAvailable());
   const r = await renderRecord(record, bank, fake ? { outDir: join("data", "ats") } : {});
   return { resume: fake ? "fake (Rohan Mehta)" : record.resume_id, ok: r.ok, readers, pdf: r.path, issues: r.issues, error: r.error };
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { lintRecord, tenure } from "../src/tailor/lint.ts";
 import { aiTellsIn, cleanText, hiddenChars } from "../src/tailor/writing.ts";
 import { checkRewrite, guardedReword } from "../src/tailor/guard.ts";
 import { checkText } from "../src/render/parseback.ts";
+import { openResumeAvailable, runOpenResume } from "../src/render/openresume.ts";
 import { riskCheck } from "../src/scoring/risk.ts";
 import { norm } from "../src/scoring/terms.ts";
 import { idealContent } from "../src/tailor/ideal.ts";
@@ -27,6 +28,9 @@ import { judgeRequirements, judgeSettled } from "../src/scoring/judge.ts";
 import { needsJudge } from "../src/scoring/score.ts";
 import { fitPages } from "../src/tailor/tailor.ts";
 import { MAX_SKILLS } from "../src/scoring/config.ts";
+
+// CI has no OpenResume copy; production requires all three readers (parseBack reads this per call).
+process.env.JOBOPS_PARSE_READERS = "pdftotext,pdfjs";
 
 // Career breaks, degree and soft-skill must-haves, synonym-aware skill questions,
 // preferences commands, the careers crawler's page reading, and `job add <url>`.
@@ -116,8 +120,7 @@ test("render data: a career break appears in its place, shaped like a job (compa
 // parser (AGPL-3.0), run from its local copy in .scout/openresume-runner, never part of
 // JobOps. Its phone and location patterns are US-only ("(xxx) xxx-xxxx", "City, ST"), so
 // those two fields are not compared.
-const OPENRESUME = join(import.meta.dirname, "..", "..", ".scout", "openresume-runner");
-const hasOpenResume = existsSync(join(OPENRESUME, "node_modules", ".bin", "tsx")) && ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
+const hasOpenResume = openResumeAvailable() && ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
 
 test("OpenResume reads every entry back: titles, companies, dates, bullets, education, and the career break", { skip: !hasOpenResume && "OpenResume runner, typst, or pdftotext missing" }, async () => {
   tempProfile();
@@ -126,15 +129,7 @@ test("OpenResume reads every entry back: titles, companies, dates, bullets, educ
   const record = breakRecord();
   const r = await renderRecord(record, b);
   assert.ok(r.ok && r.path, JSON.stringify(r.issues));
-  const run = spawnSync(join(OPENRESUME, "node_modules", ".bin", "tsx"), ["parse.ts", r.path!], { cwd: OPENRESUME, encoding: "utf8" });
-  const json = run.stdout.split("\n").filter((l) => l.startsWith("{")).at(-1); // pdf.js prints warnings first
-  assert.ok(json, run.stderr);
-  const parsed = JSON.parse(json!) as {
-    profile: Record<string, string>;
-    workExperiences: { company: string; jobTitle: string; date: string; descriptions: string[] }[];
-    educations: { school: string; degree: string; date: string }[];
-    skills: { descriptions: string[] };
-  };
+  const parsed = runOpenResume(r.path!);
   assert.deepEqual([parsed.profile.name, parsed.profile.email, parsed.profile.url, parsed.profile.summary],
     ["Test Person", "test.person@example.com", "github.com/testperson", "Backend engineer."]);
   assert.deepEqual(parsed.workExperiences.map((w) => [w.jobTitle, w.company, w.date, w.descriptions]), [

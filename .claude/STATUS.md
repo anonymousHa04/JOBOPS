@@ -32,7 +32,7 @@ Code by Claude subagents (the user's choice for this work), with a review and a 
 - Tailoring never picks a bullet the gate refuses: it takes the next best one and lists the rest
   as `left_out` in the Tailor box. The score and the skills line count only passing bullets. A job
   left with no bullets blocks the PDF (`role_dropped`).
-- Tests: `api/test/bank-gate.test.ts`, `api/test/restart.test.ts` (188 pass). Pods rebuilt 2026-11-08.
+- Tests: `api/test/bank-gate.test.ts`, `api/test/restart.test.ts`.
 - Bank cleaned on 2026-11-07 with the user's OK: 13 bullets removed, 5 rewritten, 32 skills and the
   `platform engineering` synonym removed; backup in `data/backups/bank-gate-2026-11-07/`.
 - 2026-11-08, from the user's answers: 12 bullets reviewed, 6 rewritten (production peak, Adadda
@@ -40,9 +40,26 @@ Code by Claude subagents (the user's choice for this work), with a review and a 
   local models exact); "at peak" counts as a scale label. Backup `data/backups/bank-gate-2026-11-08/`.
   `bank audit` lists only `jobops-ats-parseback`, left out until the parser fix makes "three
   parsers" true. Tests 189 pass; pods rebuilt.
-- **Next:** the user re-tailors Atlassian from scratch, then we review the draft against Atlassian's
-  five CV tips. Parked: the parser/iCIMS fixes and the OpenResume reader in the pods. The parser/iCIMS
-  fixes are parked (user: "forget the parser for now"). Commit only when the user asks.
+- Bank gate done (user, 2026-11-08). Atlassian re-tailored from scratch by the user.
+- Bank gate is committed (95be7b4 and before).
+
+## Parser / iCIMS fix (same branch, 2026-11-08, in progress)
+
+Plan and findings: `.claude/specs/plan-parser-icims.md`. Tested with copies of resume 202f9634
+uploaded by the user to Atlassian's iCIMS form (`data/ats/icims/v1-v3.pdf`): iCIMS keeps at most 5
+dated entries (the career break pushed one job out), takes the employer from a recognised name
+("(Client: X)" gave the client), one-line entries were worse, and Education/LinkedIn never fill
+from any resume (the user fills them). User (2026-11-08): Claude subagents write the code; commit
+at the end of every phase (T1-T6).
+- T1 (parse gate): a required reader that is missing fails the check (`reader_missing`); tests opt
+  out with `JOBOPS_PARSE_READERS=pdftotext,pdfjs`. OpenResume runs as a bundle
+  (`.scout/openresume-runner/dist/parse.mjs`, plain node) hostPath-mounted read-only into the api
+  and both worker pods. `ats recheck` (read-only) of the 8 PDFs since 2026-11-06: 3 pass
+  (202f9634, 742bd6f6, 42105606-5467923b); 4 read Education as 0 entries, 2 miss a skill
+  (OpenResume, which the pods skipped).
+- Next: T2 template (career break off the PDF, "Client: X" line, skills boxed, Skills under
+  Summary), T3 layout checks (>5 dated entries, parentheses in company), T4 Gurgoan fix, T5 tests,
+  T6 rebuild pods.
 
 ## Where things are
 

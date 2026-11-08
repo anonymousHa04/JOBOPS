@@ -41,6 +41,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   render <resume_id>     (PDF, kept only if the parse-back test passes)
   lint <resume_id>
   ats check [<resume_id>]  (local readers: pdftotext, pdf.js, OpenResume; the fake resume without an id)
+  ats recheck [--all]      (read-only: the PDFs in profile/pdf made since 2026-11-06, or all, against their records)
   ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected)`;
 
 function flag(args: string[], name: string): string | undefined {
@@ -142,6 +143,7 @@ async function main(argv: string[]): Promise<unknown> {
       return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
     case "ats":
       if (sub === "check") return t.ats(t.db(), { resumeId: rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined });
+      if (sub === "recheck") return t.atsRecheck(t.db(), { all: rest.includes("--all") });
       if (sub === "compare") return t.atsCompare(need(rest[0], "report file"));
       break;
     case "lint":

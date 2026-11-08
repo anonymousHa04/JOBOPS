@@ -1,7 +1,7 @@
 // Operations shared by the CLI (cli.ts) and the MCP server (mcp/server.ts).
 // Results are ids, counts, scores, and questions: never resume or bullet text.
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { openDb } from "./db.ts";
 import type { Db } from "./db.ts";
 import {
@@ -38,7 +38,8 @@ import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { newSpellings } from "./tailor/ideal.ts";
 import { addSynonym } from "./lists.ts";
-import { renderRecord } from "./render/render.ts";
+import { pdfDir, renderRecord, resumeData } from "./render/render.ts";
+import { parseBack } from "./render/parseback.ts";
 import { gateBullet, names } from "./profile/gate.ts";
 import { listReports, loadReport, SOURCES } from "./extension/reports.ts";
 import type { Source } from "./extension/reports.ts";
@@ -450,6 +451,28 @@ export async function ats(d: Db, opts: { resumeId?: string }) {
   const record = loadRecords(d, bank).records.find((r) => r.resume_id === opts.resumeId);
   if (!record) throw new Error(`no record ${opts.resumeId}`);
   return atsCheck({ record, bank });
+}
+
+// Re-reads the PDFs already in profile/pdf (made since 2026-11-06, or all) against their
+// record and today's bank, with the required readers. Read-only: nothing is rendered,
+// written, or removed. Issues are codes and ids.
+export async function atsRecheck(d: Db, opts: { all?: boolean } = {}) {
+  const bank = requireBank();
+  const records = loadRecords(d, bank).records;
+  const since = new Date(2026, 10, 6).getTime(); // local midnight: the iCIMS upload found the skipped reader
+  const dir = pdfDir();
+  const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".pdf")).sort() : [];
+  const out: { resume_id: string; ok: boolean; issues: string[] }[] = [];
+  for (const f of files) {
+    const path = join(dir, f);
+    if (!opts.all && statSync(path).mtimeMs < since) continue;
+    const resume_id = f.slice(0, -4);
+    const record = records.find((r) => r.resume_id === resume_id);
+    if (!record) { out.push({ resume_id, ok: false, issues: ["record_missing"] }); continue; }
+    const r = await parseBack(path, resumeData(record, bank), 2);
+    out.push({ resume_id, ok: r.ok, issues: r.issues.map((i) => `${i.code}:${i.detail}`) });
+  }
+  return out;
 }
 
 // Compares what a site's resume autofill showed for the fake resume (a JSON file filled in

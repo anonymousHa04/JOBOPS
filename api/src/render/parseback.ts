@@ -101,19 +101,30 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   return issues;
 }
 
+// The readers a render must pass, from JOBOPS_PARSE_READERS (comma list). Unset means all
+// three; tests set "pdftotext,pdfjs" because CI has no OpenResume copy.
+export function requiredReaders(): string[] {
+  return (process.env.JOBOPS_PARSE_READERS ?? "pdftotext,pdfjs,openresume").split(",").map((r) => r.trim()).filter(Boolean);
+}
+
 export async function parseBack(pdf: string, data: ResumeData, maxPages: number): Promise<{ ok: boolean; issues: Issue[] }> {
   const issues: Issue[] = [];
+  const readers = requiredReaders();
   const info = pdfInfo(pdf);
   if (info.pages > maxPages) issues.push({ code: "too_many_pages", extractor: "pdfinfo", detail: `${info.pages} > ${maxPages}` });
   if (!info.fontsEmbedded) issues.push({ code: "fonts_not_embedded", extractor: "pdffonts", detail: "" });
-  issues.push(...checkText(pdftotext(pdf), data, "pdftotext"));
-  issues.push(...checkText(await pdfjsText(pdf), data, "pdfjs"));
-  // Third reader when its local copy is installed; skipped (and said so by ats check) if not.
-  if (openResumeAvailable()) {
-    try {
-      issues.push(...checkOpenResume(runOpenResume(pdf), data));
-    } catch (err) {
-      issues.push({ code: "reader_failed", extractor: "openresume", detail: err instanceof Error ? err.message.slice(0, 200) : String(err) });
+  if (readers.includes("pdftotext")) issues.push(...checkText(pdftotext(pdf), data, "pdftotext"));
+  if (readers.includes("pdfjs")) issues.push(...checkText(await pdfjsText(pdf), data, "pdfjs"));
+  // A required reader that is not installed fails the check: a skipped reader once let a
+  // resume through that an ATS read wrong (plan-parser-icims.md).
+  if (readers.includes("openresume")) {
+    if (!openResumeAvailable()) issues.push({ code: "reader_missing", extractor: "openresume", detail: "runner not found" });
+    else {
+      try {
+        issues.push(...checkOpenResume(runOpenResume(pdf), data));
+      } catch (err) {
+        issues.push({ code: "reader_failed", extractor: "openresume", detail: err instanceof Error ? err.message.slice(0, 200) : String(err) });
+      }
     }
   }
   return { ok: issues.length === 0, issues };

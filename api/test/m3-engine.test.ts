@@ -26,6 +26,9 @@ import { norm } from "../src/scoring/terms.ts";
 import type { ResumeRecord } from "../src/profile/schema.ts";
 import { dedupeSkills, loadBank, regroupSkills, retagBank, saveBank } from "../src/profile/bank.ts";
 
+// CI has no OpenResume copy; production requires all three readers (parseBack reads this per call).
+process.env.JOBOPS_PARSE_READERS = "pdftotext,pdfjs";
+
 // Engine tests from the m3-notes skill (engine-algorithm.md §8), on a fake resume only.
 // Never the real profile: its overrides (profile/synonyms.yaml, ...) must not change results.
 process.env.JOBOPS_PROFILE_DIR = mkdtempSync(join(tmpdir(), "jobops-test-"));

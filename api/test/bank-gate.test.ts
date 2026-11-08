@@ -22,6 +22,9 @@ import { parseEvidence } from "../src/ui/gap-memory.ts";
 import { reportsDir } from "../src/extension/reports.ts";
 import { bankAudit } from "../src/tools.ts";
 
+// CI has no OpenResume copy; production requires all three readers (parseBack reads this per call).
+process.env.JOBOPS_PARSE_READERS = "pdftotext,pdfjs";
+
 // Bank gate (plan-atlassian-fix.md T6): the deterministic checks a bullet must pass to be in
 // the bank (addBullet, Gaps answers) and to be rendered or served (renderRecord, the PDF route),
 // plus the read-only bank audit with the chat's fact flags. Fake person, fake bank: no models.

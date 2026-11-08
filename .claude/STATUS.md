@@ -57,9 +57,18 @@ at the end of every phase (T1-T6).
   and both worker pods. `ats recheck` (read-only) of the 8 PDFs since 2026-11-06: 3 pass
   (202f9634, 742bd6f6, 42105606-5467923b); 4 read Education as 0 entries, 2 miss a skill
   (OpenResume, which the pods skipped).
-- Next: T2 template (career break off the PDF, "Client: X" line, skills boxed, Skills under
-  Summary), T3 layout checks (>5 dated entries, parentheses in company), T4 Gurgoan fix, T5 tests,
-  T6 rebuild pods.
+- T2 (772623f): career breaks stay in the bank but are off the PDF and the chat's resume text;
+  `splitClient` prints "Client: Y" on its own line; skills boxed; Skills under the Summary.
+- T3 (d21c7d0): `layoutIssues` blocks more than 5 dated entries and parentheses in a company;
+  iCIMS findings in the m3-notes skill (ATS parsing).
+- T4: Gurgoan -> Gurugram, India in profile/bank.yaml (user OK; backup
+  `data/backups/parser-icims-2026-11-08/`). Atlassian record 202f9634 re-rendered to a scratch
+  folder: passes all checks, 2 pages.
+- Open for the user (found by `bank audit` 2026-11-08, outside this plan): 10 skills fail
+  `skill_unsupported`, most on the Atlassian skills line; the render gate checks bullets, not the
+  skills line. Chat fact flags on schneider-electric-load-test (number), schneider-electric-12,
+  atdrive-group-3, mcp-server-mcp-servers (wording).
+- Next: T5 tests (cases approved with the plan), T6 rebuild pods.
 
 ## Where things are
 

@@ -374,9 +374,9 @@ test("render: a record becomes a PDF that both extractors read back exactly", { 
 
 test("parse-back: broken bullets, wrapped links, missing fields, and icon glyphs are caught", () => {
   const data = resumeData(sampleRecord(), fullBank);
-  const good = [data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "Summary", data.summary, "Experience",
-    ...data.experience.flatMap((e) => [e.title, e.dates, e.company, e.location, ...e.bullets]),
-    "Education", ...data.education.flatMap((e) => [e.school, e.dates, e.degree]), "Skills", data.skills.join(", ")].join("\n");
+  const good = [data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "Summary", data.summary,
+    "Skills", data.skills.join(", "), "Experience", ...data.experience.flatMap((e) => [e.title, e.dates, e.company, e.location, ...e.bullets]),
+    "Education", ...data.education.flatMap((e) => [e.school, e.dates, e.degree])].join("\n");
   assert.deepEqual(checkText(good, data, "t"), []);
   const first = data.experience[0].bullets[0];
   const codes = (text: string) => checkText(text, data, "t").map((i) => i.code);

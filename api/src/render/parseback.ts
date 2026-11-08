@@ -61,7 +61,7 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   }
   // Fixed fields byte-for-byte (after whitespace and dash normalization).
   for (const e of entries) {
-    for (const field of ["title", "company", "dates", "location"] as const) {
+    for (const field of ["title", "company", "dates", "location", "client"] as const) {
       if (e[field] && !t.includes(norm(e[field]))) add("field_missing", `${e.id}.${field}`);
     }
   }
@@ -77,7 +77,7 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   for (const [i, l] of data.links.entries()) if (!flat.includes(norm(l.text).replace(/ /g, ""))) add("contact_missing", `link#${i + 1}`);
   if (data.links.some((l) => !t.includes(norm(l.text)))) add("link_wrapped", "a link is split across lines");
   // Sections in order, skills listed.
-  const titles = ["summary", "experience", "projects", "education", "skills"].filter((s) =>
+  const titles = ["summary", "skills", "experience", "projects", "education"].filter((s) =>
     s === "summary" ? data.summary : s === "skills" ? data.skills.length : (data as unknown as Record<string, unknown[]>)[s].length);
   // A heading is a line of its own; the word alone ("skills" in a bullet, "experience" in the
   // summary) is not one, and finding it first failed good resumes.
@@ -93,8 +93,8 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   // still matches, because expected text is compared with its spaces removed.
   const hidden = hiddenChars(text.replace(/\u00AD/g, "")); // soft hyphens from line breaks are layout
   if (hidden.length) add("hidden_chars", hidden.join(","));
-  const expected = norm([data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "summary experience projects education skills",
-    data.summary, ...entries.flatMap((e) => [e.title, e.company, e.location, e.dates, ...e.bullets]),
+  const expected = norm([data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "summary experience projects education skills client",
+    data.summary, ...entries.flatMap((e) => [e.title, e.company, e.location, e.dates, e.client ?? "", ...e.bullets]),
     ...data.education.flatMap((e) => [e.school, e.degree, e.dates, ...e.details]), ...data.skills].join(" ")).replace(/[^a-z0-9]/g, "");
   const extra = [...new Set(t.match(/[a-z0-9]+/g) ?? [])].filter((w) => !expected.includes(w));
   if (extra.length) add("extra_text", `${extra.length} words not in the record`);

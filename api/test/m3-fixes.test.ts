@@ -109,11 +109,10 @@ test("bank mark-break: sets the title, drops company and location, refuses a rol
 const breakRecord = () => ({ resume_id: "fake", content: { summary_variant: "backend", summary_text: "Backend engineer.", skills: ["TypeScript", "Kubernetes"],
   bullets: [{ id: "cur-1", entry_id: "cur", text: "Moved 20 services to Kubernetes" }, { id: "old-1", entry_id: "old", text: "Wrote the TypeScript billing service" }] } }) as unknown as ResumeRecord;
 
-test("render data: a career break appears in its place, shaped like a job (company line, then title)", () => {
+test("render data: a career break stays in the bank but is left off the PDF", () => {
   const data = resumeData(breakRecord(), bank);
-  assert.deepEqual(data.experience.map((e) => [e.id, e.bullets.length]), [["cur", 1], ["brk", 0], ["old", 1]]);
-  assert.deepEqual([data.experience[1].company, data.experience[1].title, data.experience[1].kind], ["Career break", "Family", "break"],
-    "Workday reads a company line then a title line, and drops 'Career break' from the dated line");
+  assert.deepEqual(data.experience.map((e) => [e.id, e.bullets.length]), [["cur", 1], ["old", 1]],
+    "iCIMS keeps at most 5 dated entries; a break pushed a real job out");
 });
 
 // Third parse-back check (with pdftotext and pdf.js in render): OpenResume's resume
@@ -122,7 +121,7 @@ test("render data: a career break appears in its place, shaped like a job (compa
 // those two fields are not compared.
 const hasOpenResume = openResumeAvailable() && ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
 
-test("OpenResume reads every entry back: titles, companies, dates, bullets, education, and the career break", { skip: !hasOpenResume && "OpenResume runner, typst, or pdftotext missing" }, async () => {
+test("OpenResume reads every entry back: titles, companies, dates, bullets, education; no career break", { skip: !hasOpenResume && "OpenResume runner, typst, or pdftotext missing" }, async () => {
   tempProfile();
   const b = structuredClone(bank);
   b.basics = { ...b.basics, email: "test.person@example.com", links: ["https://github.com/testperson"] };
@@ -134,7 +133,6 @@ test("OpenResume reads every entry back: titles, companies, dates, bullets, educ
     ["Test Person", "test.person@example.com", "github.com/testperson", "Backend engineer."]);
   assert.deepEqual(parsed.workExperiences.map((w) => [w.jobTitle, w.company, w.date, w.descriptions]), [
     ["Senior Engineer", "Acme, Bangalore", "Mar 2025 - Oct 2026", ["Moved 20 services to Kubernetes"]],
-    ["", "Career break", "Sep 2024 - Feb 2025", []], // OpenResume finds titles by job words; "Family" is not one
     ["Engineer", "OldCo, Pune", "Jan 2020 - Aug 2024", ["Wrote the TypeScript billing service"]]
   ]);
   assert.deepEqual(parsed.educations.map((e) => [e.school, e.degree, e.date]), [["Some University", "B.Tech in Mechanical Engineering", "2015 - 2019"]]);

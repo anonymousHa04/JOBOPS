@@ -15,8 +15,8 @@ import type { Issue } from "./parseback.ts";
 const TEMPLATE = join(import.meta.dirname, "..", "..", "templates", "resume.typ");
 export const pdfDir = () => join(process.env.JOBOPS_PROFILE_DIR ?? "profile", "pdf");
 
-// kind: a career break (render data only; the template ignores it, the readers' checks use it).
-type Entry = { id: string; title: string; company: string; location: string; dates: string; bullets: string[]; kind?: "break" };
+// client: the "(Client: Y)" part of a bank company, printed on its own line (splitClient).
+type Entry = { id: string; title: string; company: string; location: string; dates: string; bullets: string[]; client?: string };
 export type ResumeData = {
   name: string;
   phone: string;
@@ -37,21 +37,23 @@ function link(raw: string): { url: string; text: string } {
   return { url: /^https?:\/\//.test(raw.trim()) ? raw.trim() : `https://${text}`, text };
 }
 
+// "X (Client: Y)" -> company X, client Y; any other company is unchanged. iCIMS took a client
+// in the company line as the employer; on its own line every employer was read right.
+export function splitClient(company: string): { company: string; client?: string } {
+  const m = company.match(/^(.*?)\s*\(\s*client:\s*(.+?)\s*\)\s*$/i);
+  return m ? { company: m[1], client: m[2] } : { company };
+}
+
 export function resumeData(record: ResumeRecord, bank: Bank, paper = "a4"): ResumeData {
   const byEntry = new Map<string, string[]>();
   for (const b of record.content.bullets) byEntry.set(b.entry_id, [...(byEntry.get(b.entry_id) ?? []), b.text]);
   // Entries in bank order; an entry appears only with at least one bullet in the record.
-  // A career break has no bullets and always appears, so the timeline shows no hole. It
-  // has the same two lines as a job: "Career break" where the company goes, the reason
-  // with the dates where the title goes. Workday reads every entry as a company line then
-  // a title line, and drops the words "Career break": with them on the dated line it took
-  // the next job's company line instead (tested 2026-10-28; this order keeps every job's
-  // fields, and Workday leaves only the break's title for the candidate to fill).
-  const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id) || e.kind === "break").map((e) => {
-    const reason = e.kind === "break" ? e.title.match(/^(.*?)\s*\((.+)\)\s*$/) : null;
-    const company = reason ? reason[1] : e.company ?? "";
-    const title = reason ? reason[2].charAt(0).toUpperCase() + reason[2].slice(1) : e.title;
-    return { id: e.id, title, company, location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? [], ...(reason ? { kind: "break" as const } : {}) };
+  // Career breaks stay in the bank but are left off: iCIMS keeps at most 5 dated entries, so
+  // a break pushed a real job out (2026-11-08); the gap shows on the timeline. A client goes
+  // on its own line (splitClient), so the company line holds only the employer.
+  const entries = (list: Bank["roles"]) => list.filter((e) => byEntry.has(e.id) && e.kind !== "break").map((e) => {
+    const { company, client } = splitClient(e.company ?? "");
+    return { id: e.id, title: e.title, company, location: e.location ?? "", dates: e.dates, bullets: byEntry.get(e.id) ?? [], ...(client ? { client } : {}) };
   });
   return {
     name: bank.basics.name, phone: bank.basics.phone, email: bank.basics.email, location: bank.basics.location,

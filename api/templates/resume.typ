@@ -29,15 +29,16 @@
 ]
 
 // Company first ("Acme, Bangalore"), then the title with its dates on the right, then
-// bullets. ATS parsers (Workday) anchor an entry on the line with its dates: lines above
-// it are read as company and title, lines below as the description. With the title on
-// top, the company and location ended up in the description, and a career break's
-// reason line was glued onto the next job's title. An entry with no company (a career
-// break, a project) is one line: the title, bold, with its dates.
+// bullets. ATS parsers anchor an entry on the line with its dates: lines above it are read
+// as company and title, lines below as the description. With the title on top, the
+// company and location ended up in the description; all on one line was worse (iCIMS lost
+// employers). An entry with no company (a project) is one line: the title, bold, with dates.
+// A client ("Client: Y") is a plain line under the title: in the company line iCIMS took it
+// as the employer (2026-11-08). Career breaks are not on the PDF (render.ts).
 // Dates follow the title after a fixed gap, never pushed to the right margin: text
 // extractors read a right-aligned run as a separate column and put every date at the
 // end. The gap (not a "|") keeps title and dates two items for parsers that split on it.
-#let entry(org, place, role, when) = {
+#let entry(org, place, role, when, client: "") = {
   let dated(r) = if when != "" [#r#h(2em)#when] else [#r]
   block(above: 1.3em, below: 0.7em, breakable: false)[
     #if org != "" [
@@ -46,6 +47,7 @@
     ] else [
       #dated(strong(role))
     ]
+    #if client != "" [ \ Client: #client]
   ]
 }
 
@@ -66,10 +68,19 @@
   data.summary
 }
 
+// Skills near the top (Atlassian's CV tips); a short section never splits across pages,
+// and box() keeps each skill on one line.
+#if data.skills.len() > 0 {
+  block(breakable: false)[
+    #section("Skills")
+    #data.skills.map(s => box(s)).join(", ")
+  ]
+}
+
 #if data.experience.len() > 0 {
   section("Experience")
   for e in data.experience {
-    entry(e.company, e.location, e.title, e.dates)
+    entry(e.company, e.location, e.title, e.dates, client: e.at("client", default: ""))
     if e.bullets.len() > 0 { bullets(e.bullets) }
   }
 }
@@ -77,12 +88,11 @@
 #if data.projects.len() > 0 {
   section("Projects")
   for p in data.projects {
-    entry(p.company, p.location, p.title, p.dates)
+    entry(p.company, p.location, p.title, p.dates, client: p.at("client", default: ""))
     bullets(p.bullets)
   }
 }
 
-// Short sections never split across pages.
 #if data.education.len() > 0 {
   block(breakable: false)[
     #section("Education")
@@ -90,12 +100,5 @@
       entry(e.school, "", e.degree, e.dates)
       if e.details.len() > 0 { bullets(e.details) }
     }
-  ]
-}
-
-#if data.skills.len() > 0 {
-  block(breakable: false)[
-    #section("Skills")
-    #data.skills.join(", ")
   ]
 }

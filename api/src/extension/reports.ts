@@ -15,6 +15,7 @@ import { loadRequirements } from "../requirements/parse.ts";
 import { loadBank, loadSkillsExtra } from "../profile/bank.ts";
 import { ResumeRecordSchema } from "../profile/schema.ts";
 import type { Bank, ResumeRecord } from "../profile/schema.ts";
+import { splitClient } from "../render/render.ts";
 import { loadVerdicts } from "../scoring/judge.ts";
 import { bankHasTerm, scoreRequirements, yearsAsked } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
@@ -125,9 +126,11 @@ export function resumeForChat(bank: Bank, r: ResumeRecord): string {
   for (const b of r.content.bullets) byEntry.set(b.entry_id, [...(byEntry.get(b.entry_id) ?? []), `[${b.id}] ${b.text}`]);
   const entries = [...bank.roles, ...bank.projects];
   const experience = [
-    ...entries.filter((e) => byEntry.has(e.id) || e.kind === "break").map((e) => ({
-      role: e.title, ...(e.company ? { company: e.company } : {}), dates: e.dates, bullets: byEntry.get(e.id) ?? []
-    })),
+    // Same entries as the PDF (resumeData): no career break, the client split off the company.
+    ...entries.filter((e) => byEntry.has(e.id) && e.kind !== "break").map((e) => {
+      const { company, client } = splitClient(e.company ?? "");
+      return { role: e.title, ...(company ? { company } : {}), ...(client ? { client } : {}), dates: e.dates, bullets: byEntry.get(e.id) ?? [] };
+    }),
     ...[...byEntry].filter(([id]) => !entries.some((e) => e.id === id)).map(([, bullets]) => ({ bullets }))
   ];
   return stringify({

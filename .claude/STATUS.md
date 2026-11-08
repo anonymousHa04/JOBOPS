@@ -68,7 +68,13 @@ at the end of every phase (T1-T6).
   `skill_unsupported`, most on the Atlassian skills line; the render gate checks bullets, not the
   skills line. Chat fact flags on schneider-electric-load-test (number), schneider-electric-12,
   atdrive-group-3, mcp-server-mcp-servers (wording).
-- Next: T5 tests (cases approved with the plan), T6 rebuild pods.
+- T5 (2341dc9): `api/test/parser-icims.test.ts`, the 8 approved cases; 209 tests pass.
+- T6: pods rebuilt (`bin/jobops up`); the runner is mounted in api, worker-laptop and worker-mac,
+  and `ats check` in api and worker-mac lists three readers and passes.
+- **Next (user):** re-render the Atlassian resume from the UI and re-upload it to iCIMS (fill
+  Education and LinkedIn by hand); decide the skill_unsupported skills and chat flags above;
+  re-test Workday with the fake resume (layout changed); `jobops-ats-parseback` ("three parsers")
+  can now be reviewed. Graph update (`/graphify . --update`) when the user closes this work.
 
 ## Where things are
 

@@ -135,12 +135,31 @@ Docker runs only for Qdrant while coders work (user turns it off otherwise); Job
   Schneider); mcp-server-mcp-servers rewritten with the kubeadm facts and marked reviewed (the
   user approved the wording). `bank audit`: nothing fails, no open flags. 269 tests pass.
   Still open in K3: `synonyms audit` (needs the laptop's 7B).
-- Next: K4 (the user uploads the fake resume to iCIMS and Workday once), verifier calibration
-  (laptop 7B), K6 rebuild + Atlassian re-tailor.
-- **Next (user):** re-render the Atlassian resume from the UI and re-upload it to iCIMS (fill
-  Education and LinkedIn by hand); decide the skill_unsupported skills and chat flags above;
-  re-test Workday with the fake resume (layout changed); `jobops-ats-parseback` ("three parsers")
-  can now be reviewed. Graph update (`/graphify . --update`) when the user closes this work.
+- K4 done (4d96f58): iCIMS reports save as references (`ats references` compares every saved
+  report in data/ats/ with today's fake resume and says when to re-upload); the summary check's
+  source has a "Total experience: N years" line. Template for the user's upload:
+  data/ats/icims-TEMPLATE.json -> icims-<date>.json.
+- Calibration (779804b, data/verify-eval.yaml, 26 cases, git-ignored): round 1 failed A4 ("same as
+  X" quotes passed); rules tuned (skill quote must name the skill); round 2 A4 holds: 0 false
+  passes, 14/17 good (82%). False blocks: summary, mcp-server-mcp-servers, conde-nast-7 reword.
+- Review mode (2987c8d, user chose "Send to review"): what the verifier cannot confirm is listed
+  in the Tailor box ("Not confirmed by the verifier", Approve) or `verify approve <resume_id>
+  claim|summary|skill <id>`; approvals in profile/verify-approvals.yaml hold while the text hash
+  is the same. JOBOPS_VERIFY=on in infra/k8s/config.yaml (e3f371f).
+- K6 done 2026-11-09: `bin/jobops up` + `start` (Kubernetes had been switched off in Docker
+  Desktop settings; turned back on). `verify eval` in the api pod: A4 holds (same 0 / 82%).
+  Atlassian re-tailored from scratch (batch 147) -> draft b841ad36-...-2104dc41. Verifier held 4
+  items (conde-nast-7, jobops-kubectl-go-cli, skill Cloud Infrastructure, summary); the user
+  approved all 4 as true. All 8 checks ran and passed (bank_gate, exit_gate, verifier, layout,
+  pages_fonts, pdftotext, pdfjs, openresume); `ats check` ok. It is a draft that passes the
+  checks, not "ready": not checked are iCIMS's real parse (user's upload) and the fields filled
+  by hand.
+- **Next (user):** upload draft 2104dc41 to iCIMS (fill Education and LinkedIn by hand) and share
+  what autofill shows; upload the fake resume once to iCIMS and Workday (fill
+  data/ats/icims-TEMPLATE.json); rewrite the Cloud Infrastructure skill evidence in your own words
+  (part of it is model-written guesses). Then: commit STATUS, `/graphify . --update`, merge
+  `atlassian-resume-fix` into `dev` when asked.
+- Known follow-up: skill evidence matching (names()) does not handle plurals/synonyms.
 
 ## Where things are
 

@@ -41,9 +41,10 @@ import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { newSpellings } from "./tailor/ideal.ts";
 import { addSynonym, synonyms } from "./lists.ts";
-import { pdfDir, renderRecord, resumeData } from "./render/render.ts";
+import { lastVerifierIssues, pdfDir, renderRecord, resumeData } from "./render/render.ts";
 import { parseBack } from "./render/parseback.ts";
-import { classifySynonym, EvalCases, verifyEval as runVerifyEval, verifyRecord } from "./render/verify.ts";
+import { classifySynonym, EvalCases, reviewItems, verifyEval as runVerifyEval, verifyRecord } from "./render/verify.ts";
+import { addVerifyApproval, VerifyKind } from "./render/verify-approvals.ts";
 import type { SynonymKind } from "./render/verify.ts";
 import { gateBullet, names } from "./profile/gate.ts";
 import { flagResolved, listReports, loadFlagResolutions, loadReport, resolveFactFlags, SOURCES } from "./extension/reports.ts";
@@ -134,6 +135,29 @@ export function keywordApprove(d: Db, resumeId: string, bulletId: string) {
   const record = loadRecords(d, bank).records.find((r) => r.resume_id === resumeId);
   if (!record) throw new Error(`no record ${resumeId} (hand-edited records are skipped)`);
   return { resume_id: resumeId, ...approveWording(record, bulletId) };
+}
+
+// `verify approve <resume_id> <kind> <id>` (send to review, A3): the user read an item the
+// verifier did not confirm (kind claim | summary | skill; id: bullet id, "summary", skill name)
+// and approves it for its current text, saved in profile/verify-approvals.yaml. Only an item of
+// the resume's last verifier result can be approved; verify_not_run never (the model did not
+// answer: start it and render again). Ids only.
+export function verifyApprove(d: Db, resumeId: string, kind: string, id: string) {
+  const k = VerifyKind.safeParse(kind);
+  if (!k.success) throw new Error(`kind must be claim, summary or skill (got "${kind}")`);
+  const bank = requireBank();
+  const record = loadRecords(d, bank).records.find((r) => r.resume_id === resumeId);
+  if (!record) throw new Error(`no record ${resumeId} (hand-edited records are skipped)`);
+  const last = lastVerifierIssues(resumeId);
+  if (last === null) throw new Error(`no verifier result for ${resumeId}: render it with JOBOPS_VERIFY=on first`);
+  const same = (a: string) => (k.data === "skill" ? a.toLowerCase().trim() === id.toLowerCase().trim() : a === id);
+  const item = reviewItems(record, bank, loadSkillsExtra(), last).find((i) => i.kind === k.data && same(i.id));
+  if (!item) {
+    if (last.some((i) => i.code === "verify_not_run")) throw new Error(`the verifier did not run on ${resumeId} (verify_not_run): nothing to approve; start the model and render again`);
+    throw new Error(`nothing to approve: ${k.data} ${id} is not waiting for review on ${resumeId}`);
+  }
+  addVerifyApproval(item.kind, item.id, item.checked);
+  return { resume_id: resumeId, kind: item.kind, id: item.id };
 }
 
 export async function bankBuild() {

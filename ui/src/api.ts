@@ -232,6 +232,8 @@ export const api = {
   tailorNow: (id: string, fresh = false) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`, fresh ? { fresh } : undefined),
   approveWording: (id: string, rid: string, bullet_id: string) =>
     call<{ bullet_id: string; terms: string[]; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-wording`, { bullet_id }),
+  approveVerify: (id: string, rid: string, kind: string, itemId: string) =>
+    call<{ resume_id: string; kind: string; id: string; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-verify`, { kind, id: itemId }),
   rescoreAllStatus: () => call<{ changed: boolean; candidates: number }>("GET", "/ui/rescore-all"),
   rescoreAll: () => call<{ batch_id: number; queued: number }>("POST", "/ui/rescore-all")
 };
@@ -244,6 +246,8 @@ export type TailorStatus = {
   last: { at: string; state: string; ok: boolean; message: string; left_out?: { bullet_id: string; codes: string[] }[] } | null;
   // Reworded lines with a related keyword's first use, waiting for "Approve wording".
   pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
+  // Items the verifier did not confirm (claim, summary, skill), waiting for "Approve".
+  verify_review: { resume_id: string; kind: "claim" | "summary" | "skill"; id: string; code: string; text: string; evidence?: string }[];
 };
 
 // Shared labels and helpers.

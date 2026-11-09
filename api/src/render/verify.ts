@@ -11,6 +11,8 @@ import { totalMonths } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
 import type { Issue } from "./parseback.ts";
 import { claimIssues, linkedBulletIds, skillIssue } from "./verify-rules.ts";
+import { isApproved, loadVerifyApprovals, reviewRefs, skillCheckedText } from "./verify-approvals.ts";
+import type { VerifyApproval, VerifyKind } from "./verify-approvals.ts";
 
 export const VERIFY_PROMPT_VERSION = "verify-2";
 
@@ -94,38 +96,67 @@ export async function classifySynonym(db: Db, alias: string, term: string, baseU
   return ask(db, "synonym", fill(fill(SYNONYM_PROMPT, "alias", alias), "term", term), SYNONYM_SCHEMA, baseUrl);
 }
 
-export async function verifyRecord(db: Db, record: ResumeRecord, bank: Bank, extra: SkillsExtra, opts: { baseUrl?: string } = {}): Promise<Issue[]> {
+// The evidence of a record's skills-line skill the verifier checks (skills-extra "have" and not
+// a bank skill), or undefined when the skill is not checked.
+function checkedSkillEvidence(skill: string, bank: Bank, extra: SkillsExtra): string | undefined {
+  const bankBullets = new Map([...bank.roles, ...bank.projects].flatMap(e => e.bullets).map(b => [b.id, b]));
+  if (Object.values(bank.skills).flat().some((s) => norm(s) === norm(skill))) return undefined;
+  const x = extra.skills.find(s => norm(s.name) === norm(skill) && s.status === "have");
+  return x ? skillEvidence(x.evidence ?? "", (id) => bankBullets.get(id)?.text) : undefined;
+}
+
+// approvals: the user's send-to-review approvals (default profile/verify-approvals.yaml); an item
+// approved for its exact text is not asked (no model call) and gives no issue.
+export async function verifyRecord(db: Db, record: ResumeRecord, bank: Bank, extra: SkillsExtra, opts: { baseUrl?: string; approvals?: VerifyApproval[] } = {}): Promise<Issue[]> {
   const issues: Issue[] = [];
   const bankBullets = new Map([...bank.roles, ...bank.projects].flatMap(e => e.bullets).map(b => [b.id, b]));
   const vocab = vocabulary(bank, extra);
+  const approvals = opts.approvals ?? loadVerifyApprovals();
   let kind = "claims";
   try {
     // Reworded bullets: the record text differs from the bank bullet with the same id.
     for (const b of record.content.bullets) {
       const orig = bankBullets.get(b.id);
       if (!orig || orig.text === b.text) continue;
+      if (isApproved(approvals, "claim", b.id, b.text)) continue;
       issues.push(...await checkClaims(db, b.id, b.text, orig.text + "\n" + (orig.evidence ?? ""), vocab, opts.baseUrl));
     }
 
     // Skills the bank lacks that the user said they have (skills-extra).
     kind = "skill";
-    const bankSkills = new Set(Object.values(bank.skills).flat().map(norm));
     for (const [i, skill] of record.content.skills.entries()) {
-      if (bankSkills.has(norm(skill))) continue;
-      const x = extra.skills.find(s => norm(s.name) === norm(skill) && s.status === "have");
-      if (!x) continue;
-      const evidence = skillEvidence(x.evidence ?? "", (id) => bankBullets.get(id)?.text);
+      const evidence = checkedSkillEvidence(skill, bank, extra);
+      if (evidence === undefined || isApproved(approvals, "skill", skill, skillCheckedText(skill, evidence))) continue;
       issues.push(...await checkSkill(db, i, skill, evidence, opts.baseUrl));
     }
   } catch {
     return [{ code: "verify_not_run", extractor: "verifier", detail: kind }];
   }
-  if (record.content.summary_text.trim()) {
+  if (record.content.summary_text.trim() && !isApproved(approvals, "summary", "summary", record.content.summary_text)) {
     const summary = await checkSummary(db, record, bank, extra, opts);
     if (summary.some((i) => i.code === "verify_not_run")) return summary;
     issues.push(...summary);
   }
   return issues;
+}
+
+// Send to review: the reviewable items of a verifier result (claim_unsupported and
+// skill_unsupported_model; never verify_not_run), each with the text shown to the user and the
+// exact text an approval is tied to. Items already approved for their current text are left out.
+export type ReviewItem = { kind: VerifyKind; id: string; code: string; text: string; evidence?: string; checked: string };
+export function reviewItems(record: ResumeRecord, bank: Bank, extra: SkillsExtra, issues: Issue[], approvals: VerifyApproval[] = loadVerifyApprovals()): ReviewItem[] {
+  return reviewRefs(issues, record).flatMap((r): ReviewItem[] => {
+    if (r.kind === "summary") {
+      const text = record.content.summary_text;
+      return [{ ...r, text, checked: text }];
+    }
+    if (r.kind === "claim") {
+      const text = record.content.bullets.find((b) => b.id === r.id)?.text;
+      return text === undefined ? [] : [{ ...r, text, checked: text }];
+    }
+    const evidence = checkedSkillEvidence(r.id, bank, extra);
+    return evidence === undefined ? [] : [{ ...r, text: r.id, evidence, checked: skillCheckedText(r.id, evidence) }];
+  }).filter((i) => !isApproved(approvals, i.kind, i.id, i.checked));
 }
 
 // verify eval (A4): known-good and known-bad items through the same prompts and rules.

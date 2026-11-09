@@ -75,6 +75,24 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
           </button>
         </div>
       ))}
+      {/* Send to review: the verifier could not confirm this text from your bank; the PDF waits for your approval. */}
+      {(st.verify_review ?? []).map((v) => (
+        <div key={v.resume_id + v.kind + v.id} className="small tailor-last bad">
+          Not confirmed by the verifier ({v.kind === "claim" ? v.id : v.kind === "summary" ? "summary" : "skill"}): {v.text}
+          {v.evidence !== undefined && <div className="muted">Evidence: {v.evidence}</div>}{" "}
+          <button className="btn tiny" disabled={busy}
+            title="The local model could not find this in your bank. Approve only if it is true as written; a changed text asks again."
+            onClick={() => {
+              setBusy(true);
+              api.approveVerify(id, v.resume_id, v.kind, v.id)
+                .then((r) => { setNote(r.pdf_error ? `Approved; the PDF still fails: ${r.pdf_error}` : "Approved; the PDF was made again."); onChanged(); return api.tailorStatus(id).then(setSt); })
+                .catch((e: Error) => setNote("Could not approve: " + e.message))
+                .finally(() => setBusy(false));
+            }}>
+            Approve
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

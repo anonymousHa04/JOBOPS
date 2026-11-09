@@ -46,6 +46,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   ats recheck [--all]      (read-only: the PDFs in profile/pdf made since 2026-11-06, or all, against their records)
   ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected; Workday or iCIMS)
   ats references           (read-only: every saved report in data/ats/ vs today's fake resume; re-upload reminder)
+  verify approve <resume_id> <claim|summary|skill> <id>   (approve an item the verifier did not confirm; holds while its text is the same)
   verify eval [<file>]     (the verifier on the calibration set, default data/verify-eval.yaml; exit 1 unless A4 holds)
   synonyms audit           (read-only: each synonym pair classified same / related / different by the verifier)`;
 
@@ -167,6 +168,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "references") return t.atsReferences();
       break;
     case "verify":
+      if (sub === "approve") return t.verifyApprove(t.db(), need(rest[0], "resume id"), need(rest[1], "kind"), need(rest.slice(2).join(" ") || undefined, "id"));
       if (sub === "eval") {
         const r = await t.verifyEval(t.db(), rest[0]);
         process.exitCode = r.exit_code;

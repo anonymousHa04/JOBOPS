@@ -12,12 +12,14 @@ import type { Issue } from "../src/render/parseback.ts";
 import { openDb } from "../src/db.ts";
 import { forTask } from "../src/model/registry.ts";
 import { fakeBank, fakeRecord } from "../src/render/fake-resume.ts";
-import { pdfChecksPassed, renderRecord } from "../src/render/render.ts";
+import { lastVerifierIssues, pdfChecksPassed, renderRecord } from "../src/render/render.ts";
 import { openResumeAvailable } from "../src/render/openresume.ts";
 import { linkedBulletIds } from "../src/render/verify-rules.ts";
-import { checkClaims, checkSkill, checkSummary, summarySource, verifyRecord } from "../src/render/verify.ts";
-import { ats, synonymsAudit, verifyEval } from "../src/tools.ts";
-import { saveBank } from "../src/profile/bank.ts";
+import { checkClaims, checkSkill, checkSummary, reviewItems, summarySource, verifyRecord } from "../src/render/verify.ts";
+import { loadVerifyApprovals, reviewRefs } from "../src/render/verify-approvals.ts";
+import { ats, render, synonymsAudit, verifyApprove, verifyEval } from "../src/tools.ts";
+import { saveBank, textHash } from "../src/profile/bank.ts";
+import { buildApp } from "../src/app.ts";
 import { writeRecord } from "../src/tailor/records.ts";
 import { createJobRepository } from "../src/jobs/repository.ts";
 
@@ -453,6 +455,129 @@ test("ats check <id>: with JOBOPS_VERIFY=on a verifier issue blocks and the veri
       assert.equal(verifier?.ran, true);
       assert.equal(verifier?.ok, false);
       assert.ok(verifier?.codes.includes("claim_unsupported"));
+    });
+  } finally { m.close(); }
+});
+
+// Send to review (A3): an item the verifier did not confirm waits for the user's approval of its
+// exact text (profile/verify-approvals.yaml); verify_not_run is never reviewable. Fake bank,
+// fake records in a temp profile, a fake model behind LLM_GENERAL7_URL.
+const REWORD_1 = "Moved 20 services to the Kubernetes control plane";
+const REWORD_2 = "Built the TypeScript event pipeline for every billing team";
+// Quotes words that are in no source: every reworded line is claim_unsupported.
+const invented = () => fakeModel(() => claims(["runs the control plane", "runs the Kubernetes control plane"]));
+
+async function withReview<T>(modelUrl: string, fn: (ctx: { db: ReturnType<typeof newDb>; jobId: string; dir: string; rec: (texts: Record<string, string>) => ResumeRecord }) => Promise<T>): Promise<T> {
+  const dir = tempDir();
+  return withEnv({ JOBOPS_VERIFY: "on", JOBOPS_PROFILE_DIR: dir, LLM_GENERAL7_URL: modelUrl, JOBOPS_VERIFY_MODEL: undefined }, async () => {
+    saveBank(fakeBank);
+    const db = newDb();
+    const { job } = createJobRepository(db).upsert({ title: "Backend Engineer", company: "Fakecorp", description: "Run backend services.", source_url: "https://example.com/jobs/fakecorp-review", required_skills: [], preferred_skills: [] });
+    // Summary left empty: only the reworded bullets are checked.
+    const rec = (texts: Record<string, string>) => {
+      const content = fakeRecord().content;
+      return writeRecord(db, fakeBank, {
+        jd_id: job.id, source_resume_id: null, decision: "adapt", reason: "test", band: "good", score: 80, equivalence: null,
+        flags: { unsupported_must_haves: [], risks: [] }, review_findings: [], changes: [], evidence_refs: [],
+        content: { ...content, summary_text: "", bullets: content.bullets.map((b) => ({ ...b, text: texts[b.id] ?? b.text, reword: null })) }
+      }).record;
+    };
+    return fn({ db, jobId: job.id, dir, rec });
+  });
+}
+
+test("review: a claim_unsupported item blocks (no PDF) and is listed as reviewable with its text", async () => {
+  const m = await invented();
+  try {
+    await withReview(m.url, async ({ db, dir, rec }) => {
+      const record = rec({ "acme-1": REWORD_1 });
+      const r = await render(db, record.resume_id);
+      assert.equal(r.ok, false);
+      assert.equal(r.path, null);
+      assert.deepEqual(r.review, [{ kind: "claim", id: "acme-1", code: "claim_unsupported" }]);
+      assert.deepEqual(existsSync(join(dir, "pdf")) ? readdirSync(join(dir, "pdf")).filter((f) => f.endsWith(".pdf")) : [], []);
+      const last = lastVerifierIssues(record.resume_id);
+      assert.deepEqual(last?.map((i) => [i.code, i.detail]), [["claim_unsupported", "acme-1"]]);
+      assert.deepEqual(reviewItems(record, fakeBank, noExtra, last!).map((i) => [i.kind, i.id, i.text]), [["claim", "acme-1", REWORD_1]]);
+    });
+  } finally { m.close(); }
+});
+
+test("review: after verify approve the same text passes with no model call; a changed text asks again", async () => {
+  const m = await invented();
+  try {
+    await withReview(m.url, async ({ db, rec }) => {
+      const record = rec({ "acme-1": REWORD_1 });
+      await render(db, record.resume_id);
+      assert.deepEqual(verifyApprove(db, record.resume_id, "claim", "acme-1"), { resume_id: record.resume_id, kind: "claim", id: "acme-1" });
+      const saved = loadVerifyApprovals();
+      assert.deepEqual(saved.map((a) => [a.kind, a.id, a.text_hash]), [["claim", "acme-1", textHash(REWORD_1)]]);
+      // A new DB (no cache) and no model listening: the approved line is not asked at all.
+      assert.deepEqual(await verifyRecord(newDb(), record, fakeBank, noExtra, { baseUrl: await deadUrl() }), []);
+      const again = await render(db, record.resume_id);
+      assert.deepEqual(again.checks.find((c) => c.name === "verifier"), { name: "verifier", ran: true, ok: true, codes: [] });
+      assert.equal(again.review, undefined);
+      // A changed line asks the model again and is blocked again.
+      const before = m.prompts.length;
+      const changed = rec({ "acme-1": "Moved 20 services to the Kubernetes control plane in a week" });
+      const r = await render(db, changed.resume_id);
+      assert.equal(m.prompts.length, before + 1);
+      assert.deepEqual(r.review, [{ kind: "claim", id: "acme-1", code: "claim_unsupported" }]);
+    });
+  } finally { m.close(); }
+});
+
+test("review: verify_not_run is not reviewable and verify approve refuses it", async () => {
+  await withReview(await deadUrl(), async ({ db, rec }) => {
+    const record = rec({ "acme-1": REWORD_1 });
+    const r = await render(db, record.resume_id);
+    assert.deepEqual(r.issues.map((i) => i.code), ["verify_not_run"]);
+    assert.equal(r.review, undefined);
+    assert.deepEqual(reviewItems(record, fakeBank, noExtra, lastVerifierIssues(record.resume_id)!), []);
+    assert.throws(() => verifyApprove(db, record.resume_id, "claim", "acme-1"), /verify_not_run/);
+    assert.throws(() => verifyApprove(db, record.resume_id, "bullet", "acme-1"), /kind must be/);
+    assert.deepEqual(loadVerifyApprovals(), []);
+  });
+});
+
+test("review: reviewRefs maps a summary to kind summary and skill#N to the skill name; verify_not_run to nothing", () => {
+  const record = fakeRecord();
+  const issues: Issue[] = [
+    { code: "claim_unsupported", extractor: "verifier", detail: "summary" },
+    { code: "skill_unsupported_model", extractor: "verifier", detail: "skill#2" },
+    { code: "verify_not_run", extractor: "verifier", detail: "claims" },
+    { code: "claim_unsupported", extractor: "verifier", detail: "acme-2" },
+    { code: "claim_unsupported", extractor: "verifier", detail: "acme-2" }
+  ];
+  assert.deepEqual(reviewRefs(issues, record).map((r) => [r.kind, r.id]), [["summary", "summary"], ["skill", "Go"], ["claim", "acme-2"]]);
+});
+
+test("review: the Tailor box lists the items; the approve route stores the approval and renders again", async () => {
+  const m = await invented();
+  try {
+    await withReview(m.url, async ({ db, jobId, rec }) => {
+      const app = buildApp({ db });
+      const record = rec({ "acme-1": REWORD_1, "acme-2": REWORD_2 });
+      await render(db, record.resume_id);
+      const status = async () => JSON.parse((await app.inject({ method: "GET", url: `/ui/jobs/${jobId}/tailor` })).body);
+      const listed = (s: { verify_review: { resume_id: string; kind: string; id: string; text: string }[] }) => s.verify_review.map((v) => [v.resume_id, v.kind, v.id, v.text]);
+      assert.deepEqual(listed(await status()), [[record.resume_id, "claim", "acme-1", REWORD_1], [record.resume_id, "claim", "acme-2", REWORD_2]]);
+      const prompts = m.prompts.length;
+      const url = `/ui/jobs/${jobId}/resumes/${record.resume_id}/approve-verify`;
+      const res = await app.inject({ method: "POST", url, payload: { kind: "claim", id: "acme-1" } });
+      assert.equal(res.statusCode, 200, res.body);
+      const body = JSON.parse(res.body);
+      assert.deepEqual([body.kind, body.id], ["claim", "acme-1"]);
+      assert.match(body.pdf_error, /claim_unsupported/, "acme-2 still waits");
+      assert.deepEqual(loadVerifyApprovals().map((a) => [a.kind, a.id, a.text_hash]), [["claim", "acme-1", textHash(REWORD_1)]]);
+      // Rendered again: acme-1 skipped (approved), acme-2 from the cache; no new model call.
+      assert.equal(m.prompts.length, prompts);
+      assert.deepEqual(lastVerifierIssues(record.resume_id)?.map((i) => i.detail), ["acme-2"]);
+      assert.deepEqual(listed(await status()), [[record.resume_id, "claim", "acme-2", REWORD_2]]);
+      // Approved already, a bad kind, another job: refused.
+      assert.equal((await app.inject({ method: "POST", url, payload: { kind: "claim", id: "acme-1" } })).statusCode, 400);
+      assert.equal((await app.inject({ method: "POST", url, payload: { kind: "bullet", id: "acme-2" } })).statusCode, 400);
+      assert.equal((await app.inject({ method: "POST", url: `/ui/jobs/other-job/resumes/${record.resume_id}/approve-verify`, payload: { kind: "claim", id: "acme-2" } })).statusCode, 404);
     });
   } finally { m.close(); }
 });

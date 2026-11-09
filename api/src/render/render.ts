@@ -10,6 +10,8 @@ import type { Issue } from "./parseback.ts";
 import { exitIssues } from "./exit-gate.ts";
 import { openFactFlags } from "../extension/reports.ts";
 import { loadSkillsExtra } from "../profile/bank.ts";
+import { reviewRefs } from "./verify-approvals.ts";
+import type { VerifyKind } from "./verify-approvals.ts";
 
 // Record -> PDF (decisions.md: PDF only when applying directly). The record gives the
 // content; titles, employers, locations, and dates come from the bank as written (fixed
@@ -91,16 +93,22 @@ export function bankGate(record: ResumeRecord, bank: Bank): Issue[] {
   return gate;
 }
 
-export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; error: string | null; checks: { name: string; ran: boolean; ok: boolean; codes: string[] }[] };
+// review: the verifier items the user can approve (send to review, A3); the PDF waits for them.
+export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; error: string | null; checks: { name: string; ran: boolean; ok: boolean; codes: string[] }[];
+  review?: { kind: VerifyKind; id: string; code: string }[] };
 
 // Compile in a temp folder (template + data.json only), parse it back, and move the PDF
 // into profile/pdf/<resume_id>.pdf only when every check passes.
 // outDir: where the PDF goes (default profile/pdf); the ATS check's fake resume uses data/ats.
 export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string; extra?: SkillsExtra; verifyIssues?: Issue[] } = {}): Promise<RenderResult> {
   const dir = opts.outDir ?? pdfDir();
+  const verifyOn = process.env.JOBOPS_VERIFY === "on";
+  // The verifier's last result (codes and ids) is kept with the checks, so the review list
+  // (Tailor box, verify approve) is read without calling the model again.
+  const verifierIssues = verifyOn && opts.verifyIssues ? { verifier_issues: opts.verifyIssues } : {};
   const writeChecks = (checks: RenderResult["checks"]) => {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${record.resume_id}.checks.json`), JSON.stringify({ resume_id: record.resume_id, at: new Date().toISOString(), checks }, null, 2));
+    writeFileSync(join(dir, `${record.resume_id}.checks.json`), JSON.stringify({ resume_id: record.resume_id, at: new Date().toISOString(), checks, ...verifierIssues }, null, 2));
     return checks;
   };
   // Output gate (bank gate + exit gate): a failing record gets no PDF, and an older PDF of it is removed.
@@ -110,7 +118,6 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
   const exit = exitIssues(record, bank, extra, flags);
   // The verifier (K1) is part of the gate only with JOBOPS_VERIFY=on; a render without a
   // verifier result then has its "verifier" check not run, so its PDF is not served.
-  const verifyOn = process.env.JOBOPS_VERIFY === "on";
   const verify = verifyOn ? opts.verifyIssues ?? [] : [];
   const gate = [...bankIssues, ...exit, ...verify];
   // Which checks ran and what each found; parse-back issues grouped by extractor.
@@ -133,7 +140,8 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
   };
   if (gate.length) {
     rmSync(join(dir, `${record.resume_id}.pdf`), { force: true });
-    return { ok: false, path: null, issues: gate, error: null, checks: writeChecks(checkList(null)) };
+    const review = reviewRefs(verify, record);
+    return { ok: false, path: null, issues: gate, error: null, checks: writeChecks(checkList(null)), ...(review.length ? { review } : {}) };
   }
   const work = mkdtempSync(join(tmpdir(), "jobops-render-"));
   try {
@@ -183,6 +191,19 @@ export function pdfChecksPassed(resumeId: string, dir: string = pdfDir()): boole
     return Array.isArray(checks) && checks.length > 0 && checks.every((c) => c?.ran === true && c?.ok === true);
   } catch {
     return false;
+  }
+}
+
+// The verifier issues the last render of a resume kept in its checks file; null when that render
+// had no verifier result (JOBOPS_VERIFY off, no checks file, or an older file).
+export function lastVerifierIssues(resumeId: string, dir: string = pdfDir()): Issue[] | null {
+  const file = join(dir, `${resumeId}.checks.json`);
+  if (!existsSync(file)) return null;
+  try {
+    const { verifier_issues } = JSON.parse(readFileSync(file, "utf8")) as { verifier_issues?: Issue[] };
+    return Array.isArray(verifier_issues) ? verifier_issues : null;
+  } catch {
+    return null;
   }
 }
 

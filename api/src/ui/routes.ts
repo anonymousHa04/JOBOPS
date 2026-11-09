@@ -21,7 +21,7 @@ import { openFactFlags, SOURCES } from "../extension/reports.ts";
 import { bankGate, pdfChecksPassed, pdfDir } from "../render/render.ts";
 import { loadBank, loadSkillsExtra } from "../profile/bank.ts";
 import { exitIssues } from "../render/exit-gate.ts";
-import { keywordApprove, render as renderResume } from "../tools.ts";
+import { keywordApprove, render as renderResume, verifyApprove } from "../tools.ts";
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { event, shortId, warnEvent } from "../log.ts";
@@ -408,6 +408,31 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
       return reply.status(400).send({ error: "approve_failed", message: message(err) });
     }
     event(`wording approved (job ${shortId(id)}): ${rid} ${approved.bullet_id}: ${approved.terms.join(", ")}`);
+    let pdf_error: string | null = null;
+    try {
+      const r = await renderResume(db, rid);
+      if (!r.ok) pdf_error = r.error ?? [...new Set(r.issues.map((i) => i.code))].join(", ");
+    } catch (err) {
+      pdf_error = message(err);
+    }
+    return { ...approved, pdf_error };
+  });
+
+  // Approve (Tailor box, send to review A3): the user read an item the verifier did not confirm
+  // (kind claim | summary | skill); the approval is saved for its current text, then the PDF is made again.
+  app.post<{ Params: { id: string; rid: string }; Body: unknown }>("/ui/jobs/:id/resumes/:rid/approve-verify", async (request, reply) => {
+    const { id, rid } = request.params;
+    const body = z.object({ kind: z.enum(["claim", "summary", "skill"]), id: z.string().min(1).max(120) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const record = /^[\w.-]{1,120}$/.test(rid) ? recordById(db, rid) : null;
+    if (!record || record.jd_id !== id) return reply.status(404).send({ error: "not_found" });
+    let approved;
+    try {
+      approved = verifyApprove(db, rid, body.data.kind, body.data.id);
+    } catch (err) {
+      return reply.status(400).send({ error: "approve_failed", message: message(err) });
+    }
+    event(`verifier item approved (job ${shortId(id)}): ${rid} ${approved.kind} ${approved.id}`);
     let pdf_error: string | null = null;
     try {
       const r = await renderResume(db, rid);

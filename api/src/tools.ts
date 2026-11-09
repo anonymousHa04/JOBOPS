@@ -46,7 +46,7 @@ import { parseBack } from "./render/parseback.ts";
 import { classifySynonym, EvalCases, verifyEval as runVerifyEval, verifyRecord } from "./render/verify.ts";
 import type { SynonymKind } from "./render/verify.ts";
 import { gateBullet, names } from "./profile/gate.ts";
-import { listReports, loadFlagResolutions, loadReport, resolveFactFlags, SOURCES } from "./extension/reports.ts";
+import { flagResolved, listReports, loadFlagResolutions, loadReport, resolveFactFlags, SOURCES } from "./extension/reports.ts";
 import type { Source } from "./extension/reports.ts";
 import { atsCheck } from "./render/ats.ts";
 import { compareReport } from "./render/ats-report.ts";
@@ -107,8 +107,9 @@ export function bankAudit() {
       const codes = gateBullet(bank, e.id, b.text, b.evidence, b.id)
         .filter((c) => !(b.reviewed && (c === "term_added" || c === "scope_raised")));
       const flags = (chat.get(b.id) ?? []).sort((x, y) => key(x).localeCompare(key(y)));
-      // A resolved flag no longer counts: the user dismissed it with a reason via `flag resolve`.
-      const openFlags = flags.filter((f) => !resolutions.some((r) => r.bullet_id === b.id && r.flag_why === f.why));
+      // A resolved flag no longer counts: the user dismissed it with a reason via `flag resolve`
+      // (or confirmed the whole bullet with --confirm).
+      const openFlags = flags.filter((f) => !flagResolved(resolutions, b.id, f.why));
       return { id: b.id, entry: e.id, codes, ...(b.reviewed ? { reviewed: b.reviewed } : {}), ...(openFlags.length ? { chat: openFlags } : {}) };
     }))
     .filter((b) => b.codes.length || b.chat);
@@ -121,8 +122,9 @@ export function bankAudit() {
 }
 
 // Dismisses the chat's fact flags on one bullet with the user's reason (the exit gate blocks a PDF while a flag is open).
-export function flagResolve(bulletId: string, reason: string) {
-  return resolveFactFlags(bulletId, reason);
+// confirm: the user's account is the source of truth for this bullet; later flags on it are resolved too.
+export function flagResolve(bulletId: string, reason: string, confirm = false) {
+  return resolveFactFlags(bulletId, reason, { confirm });
 }
 
 // `keyword approve <resume_id> <bullet_id>`: the user read the reworded line; its related keywords

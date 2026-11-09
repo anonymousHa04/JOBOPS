@@ -20,7 +20,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
   bullet remove <bullet-id>
   bullet review <bullet-id> [<bullet-id>...]
-  flag resolve <bullet-id> --why "<reason>"   (dismiss a chat fact flag on a bullet, with your reason)
+  flag resolve <bullet-id> --why "<reason>" [--confirm]   (dismiss a chat fact flag on a bullet, with your reason; --confirm: your account wins for this bullet, later flags on it too)
   keyword approve <resume_id> <bullet_id>   (approve a reworded line's related keyword; holds while the text is the same)
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
@@ -107,7 +107,11 @@ async function main(argv: string[]): Promise<unknown> {
       break;
     }
     case "flag": {
-      if (sub === "resolve") return t.flagResolve(need(rest[0], "bullet id"), need(flag(rest, "why"), "--why"));
+      if (sub === "resolve") {
+        // A reason is required, also with --confirm ("--why --confirm" is no reason).
+        const why = flag(rest, "why");
+        return t.flagResolve(need(rest[0], "bullet id"), need(why?.startsWith("--") ? undefined : why, "--why"), rest.includes("--confirm"));
+      }
       break;
     }
     case "keyword": {

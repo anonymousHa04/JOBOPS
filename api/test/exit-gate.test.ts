@@ -10,7 +10,8 @@ import { exitIssues } from "../src/render/exit-gate.ts";
 import { pdfChecksPassed, pdfDir, renderRecord } from "../src/render/render.ts";
 import { openResumeAvailable } from "../src/render/openresume.ts";
 import { fakeBank, fakeRecord } from "../src/render/fake-resume.ts";
-import { openFactFlags, reportsDir, resolveFactFlags } from "../src/extension/reports.ts";
+import { chatPrompt, followUpPrompt, openFactFlags, reportsDir, resolveFactFlags } from "../src/extension/reports.ts";
+import { setup } from "./fixtures.ts";
 import { saveBank } from "../src/profile/bank.ts";
 import { bankAudit } from "../src/tools.ts";
 import { openDb } from "../src/db.ts";
@@ -254,4 +255,60 @@ test("5. saveBank / saveSkillsExtra / addSynonym are called only from the allowe
     });
   }
   assert.deepEqual(bad, [], `a new writer to the profile needs review (plan-exit-gate.md K0):\n${bad.join("\n")}`);
+});
+
+// 6. Bullet-level confirmation: `flag resolve <id> --why "<reason>" --confirm`
+test("6. resolveFactFlags --confirm: clears the open flag and a later flag with new wording on the same bullet", async () => {
+  profile();
+  saveBank(fakeBank);
+  saveFlags([{ bullet_id: "acme-1", why: "The 40% does not fit the other bullets." }]);
+  assert.deepEqual(resolveFactFlags("acme-1", "my account: 40% is right", { confirm: true }), { resolved: 1, confirmed: true });
+  assert.deepEqual(openFactFlags(JOB, ["acme-1"]), []);
+  // A new chat round words the same doubt differently: still resolved.
+  saveFlags([{ bullet_id: "acme-1", why: "A 40% cut looks too high for this team." }]);
+  assert.deepEqual(openFactFlags(JOB, rec().content.bullets.map((b) => b.id)), []);
+  assert.equal(bankAudit().bullets.find((b) => b.id === "acme-1")?.chat, undefined);
+  const r = await renderRecord(rec(), fakeBank, { outDir: tempDir(), extra: noExtra });
+  assert.ok(!codes(r).includes("fact_flag_open"), JSON.stringify(r.issues));
+  const saved = readFileSync(join(reportsDir(), "flag-resolutions.yaml"), "utf8");
+  assert.match(saved, /flag_why: "\*"/);
+});
+
+test("6. resolveFactFlags without --confirm: a later flag with new wording on the same bullet is open again", () => {
+  profile();
+  saveBank(fakeBank);
+  saveFlags([{ bullet_id: "acme-1", why: "The 40% does not fit the other bullets." }]);
+  assert.deepEqual(resolveFactFlags("acme-1", "checked the deploy logs"), { resolved: 1 });
+  assert.deepEqual(openFactFlags(JOB, ["acme-1"]), []);
+  saveFlags([{ bullet_id: "acme-1", why: "A 40% cut looks too high for this team." }]);
+  assert.deepEqual(openFactFlags(JOB, ["acme-1"]), ["acme-1"]);
+  assert.equal(bankAudit().bullets.find((b) => b.id === "acme-1")?.chat?.length, 1);
+});
+
+test("6. chatPrompt / followUpPrompt: list the confirmed bullet id (id only, no reason)", async () => {
+  const { app, db, id } = await setup({ withRecord: true });
+  const before = chatPrompt(db, id).prompt;
+  assert.doesNotMatch(before, /confirmed by the person/);
+  resolveFactFlags("cur-1", "secret reason text", { confirm: true });
+  resolveFactFlags("not-on-resume-9", "other reason", { confirm: true });
+  for (const prompt of [chatPrompt(db, id).prompt, followUpPrompt(db, id, 2, { added: [], removed: [], reworded: [], needs_facts: [] })]) {
+    assert.match(prompt, /Bullets confirmed by the person: do not flag these in fact_flags: cur-1\n/);
+    assert.doesNotMatch(prompt, /secret reason text/);
+    assert.doesNotMatch(prompt, /not-on-resume-9/);
+  }
+  await app.close();
+});
+
+test("6. flag resolve --confirm without --why is refused; nothing is written", () => {
+  const dir = profile();
+  saveFlags([{ bullet_id: "acme-1", why: "The 40% does not fit the other bullets." }]);
+  const cli = join(import.meta.dirname, "..", "src", "cli.ts");
+  for (const args of [["acme-1", "--confirm"], ["acme-1", "--why", "--confirm"]]) {
+    const r = spawnSync(process.execPath, [cli, "flag", "resolve", ...args], { env: { ...process.env, JOBOPS_PROFILE_DIR: dir }, encoding: "utf8" });
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /missing --why/);
+  }
+  assert.throws(() => resolveFactFlags("acme-1", "", { confirm: true }), /reason is required/);
+  assert.equal(existsSync(join(reportsDir(), "flag-resolutions.yaml")), false);
+  assert.deepEqual(openFactFlags(JOB, ["acme-1"]), ["acme-1"]);
 });

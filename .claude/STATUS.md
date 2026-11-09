@@ -124,8 +124,19 @@ Docker runs only for Qdrant while coders work (user turns it off otherwise); Job
   adds a related keyword is pending_review -> keyword_review blocks until "Approve wording" (Tailor
   box) or `keyword approve <resume_id> <bullet_id>`; approved_terms hold while the text hash is the
   same. Tests api/test/accepted-keywords.test.ts (12); 265 pass.
-- Next: K3 migration (label the 10 skills kind same/related with bullets; synonyms audit once the
-  laptop 7B is up; the 4 chat flags with the user), K4 ATS references, K6 rebuild.
+- K3 (data, user's decisions 2026-11-09; backups data/backups/k3-labels-2026-11-09/ and
+  k3-flags-2026-11-09/): the 10 skills labelled (same: reactjs, containerization, cloud
+  infrastructure; related with bullets: self-healing infrastructure, cell-based architecture,
+  kubernetes control plane, platform engineering, artifact pipelines, terraform, ai product
+  engineering). Chat flags: schneider-electric-load-test confirmed as source of truth
+  (`flag resolve --confirm`: every later chat flag on it is resolved and the chat is told not to
+  flag it); schneider-electric-12 dismissed (stale); the microservices bullet moved from AtDrive
+  (atdrive-group-3 removed) to Schneider as schneider-electric-16 (user: the work was at
+  Schneider); mcp-server-mcp-servers rewritten with the kubeadm facts and marked reviewed (the
+  user approved the wording). `bank audit`: nothing fails, no open flags. 269 tests pass.
+  Still open in K3: `synonyms audit` (needs the laptop's 7B).
+- Next: K4 (the user uploads the fake resume to iCIMS and Workday once), verifier calibration
+  (laptop 7B), K6 rebuild + Atlassian re-tailor.
 - **Next (user):** re-render the Atlassian resume from the UI and re-upload it to iCIMS (fill
   Education and LinkedIn by hand); decide the skill_unsupported skills and chat flags above;
   re-test Workday with the fake resume (layout changed); `jobops-ats-parseback` ("three parsers")

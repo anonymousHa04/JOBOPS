@@ -193,6 +193,7 @@ export function chatPrompt(db: Db, jobId: string): { job_id: string; company: st
       `in fact covers (already_covered, with bullet ids), and bullets I should sharpen (bullet_notes). Advice only: ` +
       `never invent experience, numbers, or tools my resume does not state.`
     : `\n\n(I have no tailored resume for this job yet; the gaps are against my full experience.)`;
+  const confirmed = record ? confirmedNote(record, "\n\n") : "";
   const shape = record ? SHAPE.replace(/\n```$/, `\n${SHAPE_RESUME}\n\`\`\``) : SHAPE;
   const prompt = `I'm applying for ${j.title} at ${j.company}, and I want your help preparing
 my application. Use everything you know about my work and skills from our earlier conversations, along
@@ -218,7 +219,7 @@ ${list(g.must)}
 Nice-to-haves not shown:
 ${list(g.nice)}
 Keywords missing from my ${record ? "resume" : "experience"}:
-${list(g.keywords)}${g.years ? `\nYears: ${g.years}` : ""}${resume}
+${list(g.keywords)}${g.years ? `\nYears: ${g.years}` : ""}${resume}${confirmed}
 
 Reply with ONLY one YAML block in exactly this shape, no other text:
 ${shape}`;
@@ -240,8 +241,9 @@ export function followUpPrompt(db: Db, jobId: string, attempt: number, changes: 
   const resume = record && bank
     ? `\nMy updated resume (bullet ids in square brackets):\n"""\n${resumeForChat(bank, record)}\n"""\n`
     : "";
+  const confirmed = record ? confirmedNote(record, "") : "";
   return `Attempt ${attempt}${of ? ` of ${of}` : ""}: Based on your input, I made changes to my resume. Please have a look.
-${changed ? "" : "(No bullets changed since your last answer; the gaps below still need my facts.)\n"}${ids("Added bullets", changes.added)}${ids("Removed bullets", changes.removed)}${ids("Reworded bullets", changes.reworded)}${ids("Still needs my facts", changes.needs_facts)}${resume}
+${changed ? "" : "(No bullets changed since your last answer; the gaps below still need my facts.)\n"}${ids("Added bullets", changes.added)}${ids("Removed bullets", changes.removed)}${ids("Reworded bullets", changes.reworded)}${ids("Still needs my facts", changes.needs_facts)}${resume}${confirmed}
 Check it again against the job description. Only list what is still missing or new; [] where nothing is left.
 
 Reply with ONLY one YAML block in exactly this shape, no other text:
@@ -279,7 +281,27 @@ export function loadReport(jobId: string, source: Source): Report | null {
   return r.success ? r.data : null;
 }
 
+// flag_why is one flag's exact wording, or "*": the person confirmed the bullet itself
+// (`flag resolve --confirm`), which resolves every flag on it, now and from later chat rounds.
 export type FlagResolution = { bullet_id: string; flag_why: string; reason: string; at: string };
+export const CONFIRMED = "*";
+
+// True when this resolution list dismisses a flag with this wording on this bullet.
+export function flagResolved(resolutions: FlagResolution[], bulletId: string, why: string): boolean {
+  return resolutions.some((r) => r.bullet_id === bulletId && (r.flag_why === CONFIRMED || r.flag_why === why));
+}
+
+// Bullet ids the person confirmed as true, sorted (ids only; the reason stays local).
+export function confirmedBullets(): string[] {
+  return [...new Set(loadFlagResolutions().filter((r) => r.flag_why === CONFIRMED).map((r) => r.bullet_id))].sort();
+}
+
+// The prompt line telling the chat not to flag confirmed bullets on this resume; "" if none.
+function confirmedNote(r: ResumeRecord, lead: string): string {
+  const onResume = new Set(r.content.bullets.map((b) => b.id));
+  const ids = confirmedBullets().filter((id) => onResume.has(id));
+  return ids.length ? `${lead}Bullets confirmed by the person: do not flag these in fact_flags: ${ids.join(", ")}\n` : "";
+}
 
 export function loadFlagResolutions(): FlagResolution[] {
   const path = join(reportsDir(), "flag-resolutions.yaml");
@@ -303,14 +325,13 @@ export function loadFlagResolutions(): FlagResolution[] {
 
 export function openFactFlags(jobId: string, bulletIds: string[]): string[] {
   const resolutions = loadFlagResolutions();
-  const resolutionsSet = new Set(resolutions.map((r) => `${r.bullet_id}-${r.flag_why}`));
   const openFlags: string[] = [];
 
   for (const source of SOURCES) {
     const report = loadReport(jobId, source);
     if (report && report.fact_flags) {
       for (const flag of report.fact_flags) {
-        if (bulletIds.includes(flag.bullet_id) && !resolutionsSet.has(`${flag.bullet_id}-${flag.why}`)) {
+        if (bulletIds.includes(flag.bullet_id) && !flagResolved(resolutions, flag.bullet_id, flag.why)) {
           openFlags.push(flag.bullet_id);
         }
       }
@@ -320,8 +341,10 @@ export function openFactFlags(jobId: string, bulletIds: string[]): string[] {
   return Array.from(new Set(openFlags)).sort();
 }
 
-export function resolveFactFlags(bulletId: string, reason: string): { resolved: number } {
-  const why = reason.trim();
+// With confirm, also records a bullet-level confirmation ("*") so later flags on it,
+// in any wording, are resolved too. The reason is required either way.
+export function resolveFactFlags(bulletId: string, reason: string, opts: { confirm?: boolean } = {}): { resolved: number; confirmed?: boolean } {
+  const why = (reason ?? "").trim();
   if (!why) throw new Error("reason is required");
   const resolutions = loadFlagResolutions();
   const seen = new Set(resolutions.map((r) => `${r.bullet_id}\n${r.flag_why}`));
@@ -340,11 +363,17 @@ export function resolveFactFlags(bulletId: string, reason: string): { resolved: 
     }
   }
 
-  if (resolved > 0) {
+  let confirmed = false;
+  if (opts.confirm && !resolutions.some((r) => r.bullet_id === bulletId && r.flag_why === CONFIRMED)) {
+    resolutions.push({ bullet_id: bulletId, flag_why: CONFIRMED, reason: why, at: new Date().toISOString() });
+    confirmed = true;
+  }
+
+  if (resolved > 0 || confirmed) {
     mkdirSync(reportsDir(), { recursive: true });
     writeFileSync(join(reportsDir(), "flag-resolutions.yaml"), stringify(resolutions));
   }
-  return { resolved };
+  return opts.confirm ? { resolved, confirmed: true } : { resolved };
 }
 
 // The YAML inside a chat answer: the first fenced block, else the whole answer.

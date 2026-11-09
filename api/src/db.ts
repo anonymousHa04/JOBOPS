@@ -62,6 +62,14 @@ export function openDb(path: string): Db {
       bank_hash TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS verify_cache (
+      key TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS applications (
       job_id TEXT PRIMARY KEY REFERENCES jobs(id),
       status TEXT NOT NULL CHECK (status IN ('interested', 'applied', 'interview', 'offer', 'rejected', 'withdrawn')),

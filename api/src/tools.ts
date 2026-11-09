@@ -2,6 +2,7 @@
 // Results are ids, counts, scores, and questions: never resume or bullet text.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { openDb } from "./db.ts";
 import type { Db } from "./db.ts";
 import {
@@ -27,6 +28,7 @@ import {
   loadSkillsExtra,
   recordLearnable,
   resumeTextPath,
+  vocabulary,
   saveBank
 } from "./profile/bank.ts";
 import type { Ats } from "./profile/bank.ts";
@@ -37,9 +39,11 @@ import { allBullets, scoreJob } from "./scoring/score.ts";
 import { loadRecords } from "./tailor/records.ts";
 import { dryRunAll, tailorJob } from "./tailor/tailor.ts";
 import { newSpellings } from "./tailor/ideal.ts";
-import { addSynonym } from "./lists.ts";
+import { addSynonym, synonyms } from "./lists.ts";
 import { pdfDir, renderRecord, resumeData } from "./render/render.ts";
 import { parseBack } from "./render/parseback.ts";
+import { classifySynonym, EvalCases, verifyEval as runVerifyEval, verifyRecord } from "./render/verify.ts";
+import type { SynonymKind } from "./render/verify.ts";
 import { gateBullet, names } from "./profile/gate.ts";
 import { listReports, loadFlagResolutions, loadReport, resolveFactFlags, SOURCES } from "./extension/reports.ts";
 import type { Source } from "./extension/reports.ts";
@@ -371,7 +375,42 @@ export async function render(d: Db, resumeId: string) {
   const record = loadRecords(d, bank).records.find((r) => r.resume_id === resumeId);
   if (!record) throw new Error(`no record ${resumeId} (hand-edited records are skipped; see tailor --all --dry-run)`);
   if (record.decision === "not_tailored") throw new Error(`record ${resumeId} is not_tailored: ${record.reason}`);
+  // K1: with JOBOPS_VERIFY=on the verifier's issues join the gate (model down -> verify_not_run).
+  if (process.env.JOBOPS_VERIFY === "on") {
+    const verifyIssues = await verifyRecord(d, record, bank, loadSkillsExtra());
+    return { resume_id: resumeId, ...(await renderRecord(record, bank, { verifyIssues })) };
+  }
   return { resume_id: resumeId, ...(await renderRecord(record, bank)) };
+}
+
+// `verify eval [<file>]` (K1, A4): the calibration set (data/, git-ignored; A7) through the
+// verifier's prompts and rules. Prints got vs expect per case, false passes and false blocks;
+// exit_code 1 when A4 fails or the model is down. Case ids only, never the case text.
+export async function verifyEval(d: Db, file = join("data", "verify-eval.yaml"), opts: { baseUrl?: string } = {}) {
+  if (!existsSync(file)) throw new Error(`no calibration set at ${file} (cases: [{ id, kind: claims|skill, source|evidence, text|skill, expect: pass|block }])`);
+  const { cases } = EvalCases.parse(parseYaml(readFileSync(file, "utf8")) ?? {});
+  const bank = loadBank();
+  const vocab = bank ? vocabulary(bank, loadSkillsExtra()) : new Set<string>();
+  const texts = new Map(bank ? [...bank.roles, ...bank.projects].flatMap((e) => e.bullets).map((b) => [b.id, b.text]) : []);
+  const r = await runVerifyEval(d, cases, vocab, (id) => texts.get(id), opts);
+  return { file, ...(r.model_down ? { error: `${r.model} is not running: nothing was checked` } : {}), ...r };
+}
+
+// `synonyms audit` (K1, A8; read-only): every alias -> term pair of both synonym files (as
+// the loader merges them) classified same | related | different. Not "same" first; the user
+// decides each before anything changes. Only the verifier cache is written.
+export async function synonymsAudit(d: Db, opts: { baseUrl?: string } = {}) {
+  const pairs: ({ alias: string; term: string } & SynonymKind)[] = [];
+  for (const [alias, term] of Object.entries(synonyms())) {
+    try {
+      pairs.push({ alias, term, ...(await classifySynonym(d, alias, term, opts.baseUrl)) });
+    } catch (err) {
+      return { error: `the verifier did not answer (${err instanceof Error ? err.message : String(err)}) at ${alias}: nothing more was checked`, checked: pairs.length, pairs };
+    }
+  }
+  const order = { different: 0, related: 1, same: 2 } as const;
+  pairs.sort((a, b) => order[a.kind] - order[b.kind]);
+  return { pairs_total: pairs.length, not_same: pairs.filter((p) => p.kind !== "same").length, pairs };
 }
 
 // `job add <url>`: fetch one job from its link, then parse, judge and score, decide,
@@ -458,6 +497,8 @@ export async function ats(d: Db, opts: { resumeId?: string }) {
   const bank = requireBank();
   const record = loadRecords(d, bank).records.find((r) => r.resume_id === opts.resumeId);
   if (!record) throw new Error(`no record ${opts.resumeId}`);
+  // K1: a real record is checked through the verifier too, like render (the fake resume is not).
+  if (process.env.JOBOPS_VERIFY === "on") return atsCheck({ record, bank, verifyIssues: await verifyRecord(d, record, bank, loadSkillsExtra()) });
   return atsCheck({ record, bank });
 }
 

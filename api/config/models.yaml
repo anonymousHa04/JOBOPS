@@ -38,6 +38,10 @@ tasks:
     model: qwen2.5:7b
     env: JOBOPS_JUDGE_MODEL
     timeout_s: 60
+  verify:       # the exit gate's verifier: claims and skills against quoted evidence
+    model: qwen2.5:7b
+    env: JOBOPS_VERIFY_MODEL
+    timeout_s: 60
   bank_build:   # resume text -> experience bank (one time)
     model: qwen2.5:14b
     env: JOBOPS_PARSE_MODEL

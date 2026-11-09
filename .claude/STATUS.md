@@ -100,7 +100,22 @@ Docker runs only for Qdrant while coders work (user turns it off otherwise); Job
   Coder record: 3 of 10 tasks passed on the local coder (k0-02, k0-06, k0-09); 7 escalated to
   Claude subagents (k0-01, 03, 04, 05, 07, 08, and k0-10 only for its test); lessons recorded.
   Tests: api/test/exit-gate.test.ts (16); 225 pass.
-- Next: K1 (7B verifier with quotes), K2 (accepted keywords), K3 migration, K4 ATS references.
+- 2026-11-09: the user stopped the local coders (too slow: most tasks escalated); Claude subagents
+  now write code and tests. Coder and embed servers, Qdrant and Docker are stopped.
+- K1 done (verifier, off until calibrated): render/verify.ts + verify-rules.ts. The 7B model
+  (task "verify", qwen2.5:7b, JOBOPS_VERIFY_MODEL) lists claims with quotes; code checks every
+  quote is in the source and every number and skill term of the new text is in a quote
+  (claim_unsupported), skills-extra skills against their evidence and linked bullets
+  (skill_unsupported_model), and the summary against all bullets. Any model failure ->
+  verify_not_run (blocks). Cached in verify_cache. With JOBOPS_VERIFY=on, renders through
+  tools.render and `ats check <id>` add an 8th check "verifier". `verify eval [file]` (default
+  data/verify-eval.yaml) checks A4; `synonyms audit` classifies synonym pairs (read-only).
+  Tests api/test/verify.test.ts (28); 253 pass.
+  Before turning it on: build the calibration file (user's known-bad and known-good cases), run
+  `verify eval` with the laptop's 7B up; a summary "7+ years" claim cannot be quoted from a bullet,
+  so add a derived "Total experience: N years" line from role dates to the summary source first.
+- Next: K2 (accepted keywords, built in a worktree by a Claude subagent), K3 migration, K4 ATS
+  references.
 - **Next (user):** re-render the Atlassian resume from the UI and re-upload it to iCIMS (fill
   Education and LinkedIn by hand); decide the skill_unsupported skills and chat flags above;
   re-test Workday with the fake resume (layout changed); `jobops-ats-parseback` ("three parsers")

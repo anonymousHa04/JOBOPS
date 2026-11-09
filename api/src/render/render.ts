@@ -96,7 +96,7 @@ export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; 
 // Compile in a temp folder (template + data.json only), parse it back, and move the PDF
 // into profile/pdf/<resume_id>.pdf only when every check passes.
 // outDir: where the PDF goes (default profile/pdf); the ATS check's fake resume uses data/ats.
-export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string; extra?: SkillsExtra } = {}): Promise<RenderResult> {
+export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string; extra?: SkillsExtra; verifyIssues?: Issue[] } = {}): Promise<RenderResult> {
   const dir = opts.outDir ?? pdfDir();
   const writeChecks = (checks: RenderResult["checks"]) => {
     mkdirSync(dir, { recursive: true });
@@ -108,7 +108,11 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
   const flags = record.jd_id ? openFactFlags(record.jd_id, record.content.bullets.map((b) => b.id)) : [];
   const bankIssues = bankGate(record, bank);
   const exit = exitIssues(record, bank, extra, flags);
-  const gate = [...bankIssues, ...exit];
+  // The verifier (K1) is part of the gate only with JOBOPS_VERIFY=on; a render without a
+  // verifier result then has its "verifier" check not run, so its PDF is not served.
+  const verifyOn = process.env.JOBOPS_VERIFY === "on";
+  const verify = verifyOn ? opts.verifyIssues ?? [] : [];
+  const gate = [...bankIssues, ...exit, ...verify];
   // Which checks ran and what each found; parse-back issues grouped by extractor.
   // back null: parse-back did not run, so its five checks did not run.
   const checkList = (back: Issue[] | null): RenderResult["checks"] => {
@@ -119,6 +123,7 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
     return [
       c("bank_gate", true, bankIssues.map((i) => i.code)),
       c("exit_gate", true, exit.map((i) => i.code)),
+      ...(verifyOn ? [c("verifier", opts.verifyIssues !== undefined, verify.map((i) => i.code))] : []),
       c("layout", back !== null, by("layout")),
       c("pages_fonts", back !== null, by("pdfinfo", "pdffonts")),
       c("pdftotext", back !== null && readers.includes("pdftotext"), by("pdftotext")),

@@ -58,6 +58,23 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
           )}
         </div>
       )}
+      {/* First use of a related keyword: the PDF waits until you read the line and approve it. */}
+      {st.pending_review.map((p) => (
+        <div key={p.resume_id + p.bullet_id + p.keyword} className="small tailor-last bad">
+          Check this wording ({p.bullet_id}, uses "{p.keyword}"): {p.text}{" "}
+          <button className="btn tiny" disabled={busy}
+            title="The keyword is related work you linked to this bullet. Approve only if the line is true as written; a changed line asks again."
+            onClick={() => {
+              setBusy(true);
+              api.approveWording(id, p.resume_id, p.bullet_id)
+                .then((r) => { setNote(r.pdf_error ? `Approved; the PDF still fails: ${r.pdf_error}` : "Approved; the PDF was made again."); onChanged(); return api.tailorStatus(id).then(setSt); })
+                .catch((e: Error) => setNote("Could not approve: " + e.message))
+                .finally(() => setBusy(false));
+            }}>
+            Approve wording
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

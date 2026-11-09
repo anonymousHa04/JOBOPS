@@ -114,8 +114,18 @@ Docker runs only for Qdrant while coders work (user turns it off otherwise); Job
   Before turning it on: build the calibration file (user's known-bad and known-good cases), run
   `verify eval` with the laptop's 7B up; a summary "7+ years" claim cannot be quoted from a bullet,
   so add a derived "Total experience: N years" line from role dates to the summary source first.
-- Next: K2 (accepted keywords, built in a worktree by a Claude subagent), K3 migration, K4 ATS
-  references.
+- K2 done (accepted keywords): skills-extra skills get kind same|related and bullets[] (old
+  "(used at ...; bullet X)" evidence still links). A related keyword is a tag on its linked bullets
+  only, in memory (withRelatedTags; never written to bank.yaml, never a synonym), so scoring,
+  missingKeywords/reword allowed and lint use it there only; the skills line lists it only when a
+  linked bullet is on the resume (dropUnlinked), and the exit gate blocks it otherwise
+  (skill_unlinked, kind related only). Gaps "Under another name": Same thing (skill + synonym) or
+  Related work (pick bullets, story must name the term; no synonym). First use: a rewording that
+  adds a related keyword is pending_review -> keyword_review blocks until "Approve wording" (Tailor
+  box) or `keyword approve <resume_id> <bullet_id>`; approved_terms hold while the text hash is the
+  same. Tests api/test/accepted-keywords.test.ts (12); 265 pass.
+- Next: K3 migration (label the 10 skills kind same/related with bullets; synonyms audit once the
+  laptop 7B is up; the 4 chat flags with the user), K4 ATS references, K6 rebuild.
 - **Next (user):** re-render the Atlassian resume from the UI and re-upload it to iCIMS (fill
   Education and LinkedIn by hand); decide the skill_unsupported skills and chat flags above;
   re-test Workday with the fake resume (layout changed); `jobops-ats-parseback` ("three parsers")

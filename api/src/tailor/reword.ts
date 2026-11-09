@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { vocabulary } from "../profile/bank.ts";
+import { vocabulary, withRelatedTags } from "../profile/bank.ts";
 import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { generate } from "../model/llm.ts";
 import { forTask } from "../model/registry.ts";
@@ -80,7 +80,7 @@ export async function rewordContent(
 ): Promise<{ content: ResumeContent; changes: ResumeRecord["changes"]; log: RewordLog[]; error: string | null }> {
   const { template } = loadPrompt("select-and-tailor");
   const vocab = new Set([...vocabulary(bank, extra), ...req.keywords].map(norm));
-  const byId = new Map(allBullets(bank).map((b) => [b.id, b]));
+  const byId = new Map(allBullets(withRelatedTags(bank, extra)).map((b) => [b.id, b])); // tags as ideal.ts saw them
   const out = structuredClone(content);
   const changes: ResumeRecord["changes"] = [];
   const log: RewordLog[] = [];

@@ -36,7 +36,8 @@ export type Previous = {
 export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Match };
 export type Reuse = { exact: Previous | null; similar: Previous[] };
 // The story, proof, roles and other name given with a "have" or "other name" answer.
-export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string };
+export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string;
+  relation?: "same" | "related"; bullet_ids?: string[] }; // other_name: related work and its bullets
 
 type Prior = Omit<Previous, "match" | "input"> & { key: string; at: string; carried: boolean; raw_input: string | null; carried_from: string | null };
 

@@ -1,16 +1,17 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isMap, isSeq, parse, parseDocument, stringify } from "yaml";
 import type { Document } from "yaml";
 import { generate } from "../model/llm.ts";
 import { forTask } from "../model/registry.ts";
-import { hasTerm } from "../scoring/terms.ts";
+import { hasTerm, norm } from "../scoring/terms.ts";
 import { SKILL_GROUPS, skillGroups, skillKey } from "../lists.ts";
 import { aiTellsIn, cleanText, hiddenChars } from "../tailor/writing.ts";
 import { fill, JSON_NOTE, loadPrompt } from "../model/prompts.ts";
 import { z } from "zod";
 import { BankSchema, BulletSchema, EntrySchema, PreferencesSchema, SkillsExtraSchema } from "./schema.ts";
-import type { Bank, Preferences, SkillsExtra } from "./schema.ts";
+import type { Bank, Preferences, ResumeRecord, SkillsExtra } from "./schema.ts";
 import { gateBullet } from "./gate.ts";
 
 const profileDir = () => process.env.JOBOPS_PROFILE_DIR ?? "profile";
@@ -357,11 +358,13 @@ export function removeSkill(name: string): boolean {
   return true;
 }
 
-export function addSkill(name: string, status: "have" | "dont_have", evidence: string): void {
+export function addSkill(name: string, status: "have" | "dont_have", evidence: string,
+  link: { kind?: "same" | "related"; bullets?: string[] } = {}): void {
   const extra = loadSkillsExtra();
   const key = name.trim().toLowerCase();
   extra.skills = extra.skills.filter((s) => s.name !== key);
-  extra.skills.push({ name: key, status, evidence, added_at: new Date().toISOString() });
+  extra.skills.push({ name: key, status, evidence, added_at: new Date().toISOString(),
+    ...(link.kind ? { kind: link.kind } : {}), ...(link.bullets?.length ? { bullets: link.bullets } : {}) });
   saveSkillsExtra(extra);
 }
 
@@ -466,7 +469,75 @@ export function vocabulary(b: Bank, extra: SkillsExtra): Set<string> {
   return terms;
 }
 
-const RETAG_PROMPT = `List the skills, tools, technologies, and domains this resume bullet names.
+type ExtraSkill = SkillsExtra["skills"][number];
+
+// The bank bullets a skills-extra skill is linked to: its `bullets`, else the bullet id Gaps wrote
+// at the end of its evidence before K2 ("(used at: <roles>; bullet <id>)").
+export function linkedBullets(s: ExtraSkill): string[] {
+  if (s.bullets?.length) return s.bullets;
+  const m = s.evidence?.match(/\(used at: .*; bullet ([^)\s]+)\)\s*$/s);
+  return m ? [m[1]] : [];
+}
+
+// Related keywords: "have" skills linked to bank bullets that are not just another spelling
+// (kind related, or unlabeled data from before K2). Each is evidence on its bullets only.
+export const relatedKeywords = (extra: SkillsExtra) =>
+  extra.skills.filter((s) => s.status === "have" && s.kind !== "same" && linkedBullets(s).length > 0)
+    .map((s) => ({ name: s.name, kind: s.kind, bullets: linkedBullets(s) }));
+
+// The bank as scoring and tailoring see it: each related keyword is a tag on its linked bullets
+// (in memory only; bank.yaml is never written with these). One mechanism, no synonym: the index,
+// missingKeywords and the reword's allowed list then use it on those bullets and nowhere else.
+const tagged = new WeakSet<Bank>();
+const tagCache = new WeakMap<Bank, { key: string; out: Bank }>();
+export function withRelatedTags(bank: Bank, extra: SkillsExtra): Bank {
+  if (tagged.has(bank)) return bank;
+  const related = relatedKeywords(extra);
+  if (!related.length) return bank;
+  const key = JSON.stringify(bank) + "\0" + JSON.stringify(related);
+  const hit = tagCache.get(bank);
+  if (hit && hit.key === key) return hit.out;
+  const out = structuredClone(bank);
+  for (const e of [...out.roles, ...out.projects]) for (const b of e.bullets) {
+    for (const r of related) if (r.bullets.includes(b.id) && !b.tags.includes(r.name)) b.tags.push(r.name);
+  }
+  tagged.add(out);
+  tagCache.set(bank, { key, out });
+  return out;
+}
+
+// A6: a related keyword is on the skills line only when one of its linked bullets is on the
+// resume. Same-thing and unlabeled skills are not touched.
+export function dropUnlinked(skills: string[], bulletIds: string[], extra: SkillsExtra): string[] {
+  const ids = new Set(bulletIds);
+  const off = new Set(extra.skills.filter((s) => s.status === "have" && s.kind === "related" && !linkedBullets(s).some((id) => ids.has(id)))
+    .map((s) => norm(s.name)));
+  return skills.filter((s) => !off.has(norm(s)));
+}
+
+// The hash an approval of a reworded line is tied to.
+export const textHash = (text: string) => createHash("sha256").update(text).digest("hex");
+
+// Approves the related keywords pending on one reworded bullet of a record (the user read the
+// line): saved on the bank bullet as approved_terms for this exact text. Returns the terms.
+export function approveWording(record: ResumeRecord, bulletId: string): { bullet_id: string; terms: string[] } {
+  const terms = [...new Set((record.pending_review ?? []).filter((p) => p.bullet_id === bulletId).map((p) => p.keyword))];
+  if (!terms.length) throw new Error(`nothing to approve: ${bulletId} has no pending keyword in ${record.resume_id}`);
+  const text = record.content.bullets.find((b) => b.id === bulletId)?.text;
+  if (text === undefined) throw new Error(`${bulletId} is not on ${record.resume_id}`);
+  const bank = loadBank();
+  if (!bank) throw new Error("no bank; run bank build first");
+  const b = [...bank.roles, ...bank.projects].flatMap((e) => e.bullets).find((x) => x.id === bulletId);
+  if (!b) throw new Error(`no bullet ${bulletId}`);
+  const at = new Date().toISOString();
+  const hash = textHash(text);
+  // One approval per term: a newer approval replaces the one for an older text.
+  b.approved_terms = [...(b.approved_terms ?? []).filter((a) => !terms.includes(a.term)), ...terms.map((term) => ({ term, text_hash: hash, at }))];
+  saveBank(bank);
+  return { bullet_id: bulletId, terms };
+}
+
+const RETAG_PROMPT =`List the skills, tools, technologies, and domains this resume bullet names.
 
 Bullet: [bullet]
 Tags it already has: [tags]

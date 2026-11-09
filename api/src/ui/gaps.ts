@@ -31,8 +31,13 @@ export type AnswerInput = {
   as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
   with_skill?: boolean; // a bullet answer also saves the skill, even with one role checked
   draft_codes?: string[]; // what the guard and gate said about the draft, kept with what was typed
+  // other_name: "same" (another spelling: a synonym, the default) or "related" (related work on
+  // the picked bank bullets; no synonym).
+  relation?: "same" | "related"; bullet_ids?: string[];
 };
-export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
+// bullet_list: the entry's bank bullets (id and short text), to pick for "Related work".
+export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
+  bullet_list: { id: string; short: string }[] };
 
 export type NotAsked = { kind: GapKind; requirement: string; reason: string };
 
@@ -91,7 +96,8 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
   const projects = new Set(bank.projects.map((p) => p.id));
   const entries: Entry[] = [...bank.roles, ...bank.projects].filter(e => e.kind !== "break").map(e => ({
     id: e.id, title: e.title, company: e.company ?? null, dates: e.dates,
-    project: projects.has(e.id), bullets: e.bullets.length, end: span(e.dates)?.end ?? null
+    project: projects.has(e.id), bullets: e.bullets.length, end: span(e.dates)?.end ?? null,
+    bullet_list: e.bullets.map((b) => ({ id: b.id, short: b.short }))
   }));
   const years = r.hard.pass ? null : `asks ${r.hard.years_asked}+ years; I have ${r.hard.years_have}`;
   return { gaps: list, not_asked: notAsked, years, entries };
@@ -177,11 +183,26 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       if (input.kind !== "keyword") {
         throw new Error("other_name is only for keywords");
       }
+      if (input.relation === "related") {
+        // Related work (K2): a tag on the picked bullets only, never a synonym (a synonym let a
+        // rewording put a related term into any bullet). Gated at write: the story names the
+        // term, and every bullet is in the bank.
+        const ids = [...new Set((input.bullet_ids ?? []).filter(filled))];
+        if (!ids.length) throw new Error("blocked: no_bullet (pick the bullets that show this work)");
+        if (!filled(input.story) || !storyNames(input.story, input.requirement)) throw new Error("blocked: skill_unsupported (your story must name it)");
+        const bank = loadBank();
+        const known = new Set(bank ? [...bank.roles, ...bank.projects].flatMap((e) => e.bullets.map((b) => b.id)) : []);
+        const unknown = ids.filter((x) => !known.has(x));
+        if (unknown.length) throw new Error(`blocked: unknown_bullet ${unknown.join(", ")}`);
+        addSkill(input.requirement, "have", `answer ${today}: related work: ${input.story}`, { kind: "related", bullets: ids });
+        outcome = `skill added (related work on ${ids.join(", ")})`;
+        break;
+      }
       if (!filled(input.same_as)) {
         throw new Error("same_as is required");
       }
       const skillEvidence = `answer ${today}: same as ${input.same_as}` + (filled(input.story) ? `: ${input.story}` : "");
-      addSkill(input.requirement, "have", skillEvidence);
+      addSkill(input.requirement, "have", skillEvidence, { kind: "same" });
       // Remember the spelling for later jobs: the tailored resume then uses the job's own word
       // in the skills line and bullets wherever the bank has the skill under its usual name.
       const learned = addSynonym(input.requirement, norm(input.same_as));
@@ -204,6 +225,7 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
   const typed = input.answer === "have" || input.answer === "other_name" ? JSON.stringify({
     answer: input.answer, story: input.story ?? "", proof: input.proof ?? "", same_as: input.same_as ?? "",
     text: input.text ?? "", draft_codes: input.draft_codes ?? [],
+    ...(input.relation ? { relation: input.relation, bullet_ids: input.bullet_ids ?? [] } : {}),
     entry_ids: [...new Set([...(input.entry_ids ?? []), ...(input.entry_id ? [input.entry_id] : [])].filter(filled))]
   }) : null;
   // An answer given here replaces a carried one (and its carried_from mark).

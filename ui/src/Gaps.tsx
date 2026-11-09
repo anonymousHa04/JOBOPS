@@ -174,6 +174,10 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
 // becomes a skill with the earlier story and roles (never a second copy of a bullet). Returns
 // the answer body, or why it cannot be sent as it is.
 function previousBody(gap: Gap, i: EarlierInput, known: Set<string>): AnswerBody | string {
+  // Related work keeps its bullets (the server refuses ids no longer in the bank).
+  if (i.answer === "other_name" && gap.kind === "keyword" && i.relation === "related") {
+    return { kind: gap.kind, requirement: gap.requirement, answer: "other_name", relation: "related", bullet_ids: i.bullet_ids ?? [], story: i.story };
+  }
   if (i.answer === "other_name" && gap.kind === "keyword" && i.same_as.trim()) {
     return { kind: gap.kind, requirement: gap.requirement, answer: "other_name", same_as: i.same_as, story: i.story || undefined };
   }
@@ -265,6 +269,11 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
   const label = (e: GapList["entries"][number]) => e.title + (e.company ? " · " + e.company : "") + " (" + e.dates + ")";
   const [extras, setExtras] = useState<string[]>([]);
   const [sameAs, setSameAs] = useState<string>(gap.known_as ?? "");
+  // "Under another name": the same thing spelled another way (a synonym), or related work shown by
+  // the bullets the user picks (a tag on those bullets only; the story must name the term).
+  const [relation, setRelation] = useState<"same" | "related">("same");
+  const [picked, setPicked] = useState<string[]>([]);
+  const togglePick = (b: string) => setPicked((p) => (p.includes(b) ? p.filter((x) => x !== b) : [...p, b]));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState<string>("");
   // A flagged draft cannot be saved as drafted: an edit re-enables Save and the server checks it again.
@@ -298,6 +307,8 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
     setStory(i.story);
     setProof(i.proof);
     setSameAs(i.same_as || sameAs);
+    setRelation(i.relation ?? "same");
+    setPicked(i.bullet_ids ?? []);
     const roles = i.entry_ids.filter((x) => known.has(x));
     if (roles.length) setChecked(roles);
     setDraft(null);
@@ -493,6 +504,32 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
       )}
       {mode === "other_name" && (
         <div>
+          <div>
+            <label className="role-check"><input type="radio" checked={relation === "same"} onChange={() => setRelation("same")} /> Same thing, another spelling</label>
+            <label className="role-check"><input type="radio" checked={relation === "related"} onChange={() => setRelation("related")} /> Related work</label>
+          </div>
+          {relation === "related" && (
+            <div className="roles">
+              <div className="muted small">Pick the bullets that show this work. The term is used only on these bullets, and the first time a rewording uses it you approve the line.</div>
+              {entries.filter((e) => e.bullet_list.length).map((e) => (
+                <div key={e.id}>
+                  <div className="muted small">{label(e)}</div>
+                  {e.bullet_list.map((b) => (
+                    <label key={b.id} className="role-check">
+                      <input type="checkbox" checked={picked.includes(b.id)} onChange={() => togglePick(b.id)} />
+                      <code>{b.id}</code> {b.short}
+                    </label>
+                  ))}
+                </div>
+              ))}
+              <textarea rows={4} value={story} onChange={(e) => setStory(e.target.value)} placeholder={`What you did that is "${gap.requirement}": your own words, naming it.`} />
+              <button className="btn tiny" disabled={!picked.length || !filled(story) || busy === "answer"} onClick={() =>
+                run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "other_name", relation: "related", bullet_ids: picked, story }), onAnswered)}>
+                Save related work and re-score
+              </button>
+            </div>
+          )}
+          {relation === "same" && <>
           <input type="text" value={sameAs} onChange={(e) => setSameAs(e.target.value)} placeholder="The name you have it under (e.g. a similar tool)" />
           {help && help.similar_terms.length > 0 && (
             <div>
@@ -503,8 +540,9 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
           )}
           <textarea rows={4} value={story} onChange={(e) => setStory(e.target.value)} placeholder="Optional short story" />
           <button className="btn tiny" disabled={!filled(sameAs) || busy === "answer"} onClick={() => {
-            if (filled(sameAs)) run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "other_name", same_as: sameAs, story: story || undefined }), onAnswered);
+            if (filled(sameAs)) run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "other_name", relation: "same", same_as: sameAs, story: story || undefined }), onAnswered);
           }}>Save and re-score</button>
+          </>}
         </div>
       )}
       {err && <div className="banner error">{err}</div>}

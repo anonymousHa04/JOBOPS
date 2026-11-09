@@ -72,7 +72,8 @@ export type Previous = {
   input: EarlierInput | null;
 };
 // What was typed with an earlier "have" or "other name" answer, to fill a form from.
-export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string };
+export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string;
+  relation?: "same" | "related"; bullet_ids?: string[] };
 export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Previous["match"] };
 export type Gap = {
   kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null;
@@ -96,7 +97,8 @@ export type DeleteResult = {
 };
 export type MatchStats ={ gaps: number; checked: number; same: number; failed: number; error: string | null };
 export type Rescored = { rescore_batch: number; rescore_error?: string | null; rescore_skipped?: boolean };
-export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
+export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
+  bullet_list: { id: string; short: string }[] };
 export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: GapEntry[] };
 export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[]; words?: string[] };
 export type AnswerBody = {
@@ -106,6 +108,8 @@ export type AnswerBody = {
   draft_codes?: string[]; // the codes the draft had (kept with the answer)
   with_skill?: boolean; // the bullet answer also saves the skill
   from_previous?: { from_requirement: string }; // answered from an earlier answer to that ask
+  // other_name: same thing (another spelling, the default) or related work on these bank bullets.
+  relation?: "same" | "related"; bullet_ids?: string[];
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -226,6 +230,8 @@ export const api = {
   tailorStatus: (id: string) => call<TailorStatus>("GET", `/ui/jobs/${id}/tailor`),
   // fresh: Re-tailor from scratch (earlier versions do not start it; it builds from the bank).
   tailorNow: (id: string, fresh = false) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`, fresh ? { fresh } : undefined),
+  approveWording: (id: string, rid: string, bullet_id: string) =>
+    call<{ bullet_id: string; terms: string[]; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-wording`, { bullet_id }),
   rescoreAllStatus: () => call<{ changed: boolean; candidates: number }>("GET", "/ui/rescore-all"),
   rescoreAll: () => call<{ batch_id: number; queued: number }>("POST", "/ui/rescore-all")
 };
@@ -236,6 +242,8 @@ export type TailorStatus = {
   // What Tailor now would do (it decides on the job's score).
   plan: { decision: string; reason: string; open_risks: string[] } | null;
   last: { at: string; state: string; ok: boolean; message: string; left_out?: { bullet_id: string; codes: string[] }[] } | null;
+  // Reworded lines with a related keyword's first use, waiting for "Approve wording".
+  pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
 };
 
 // Shared labels and helpers.

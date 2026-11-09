@@ -10,6 +10,7 @@ import {
   removeBullet,
   markReviewed,
   addSkill,
+  approveWording,
   removeSkill,
   buildBank,
   checkBank,
@@ -122,6 +123,15 @@ export function bankAudit() {
 // Dismisses the chat's fact flags on one bullet with the user's reason (the exit gate blocks a PDF while a flag is open).
 export function flagResolve(bulletId: string, reason: string) {
   return resolveFactFlags(bulletId, reason);
+}
+
+// `keyword approve <resume_id> <bullet_id>`: the user read the reworded line; its related keywords
+// (the record's pending_review) are approved for this exact text. Ids and terms only.
+export function keywordApprove(d: Db, resumeId: string, bulletId: string) {
+  const bank = requireBank();
+  const record = loadRecords(d, bank).records.find((r) => r.resume_id === resumeId);
+  if (!record) throw new Error(`no record ${resumeId} (hand-edited records are skipped)`);
+  return { resume_id: resumeId, ...approveWording(record, bulletId) };
 }
 
 export async function bankBuild() {

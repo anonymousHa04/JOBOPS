@@ -1,4 +1,4 @@
-import { vocabulary } from "../profile/bank.ts";
+import { dropUnlinked, vocabulary, withRelatedTags } from "../profile/bank.ts";
 import { blockedBullets, listableExtras } from "../profile/gate.ts";
 import type { Bank, Bullet, Preferences, SkillsExtra } from "../profile/schema.ts";
 import type { Requirements } from "../requirements/schema.ts";
@@ -86,6 +86,7 @@ export function idealContent(
   budget: Budget,
   opts: { start?: ResumeContent; jobId?: string; verdicts?: Verdicts } = {}
 ): ResumeContent {
+  bank = withRelatedTags(bank, extra);
   const bullets = allBullets(bank);
   const entry = entryOf(bank);
   const rec = bulletRecency(bank);
@@ -220,7 +221,8 @@ export function idealContent(
   const shown = (skill: string) => chosen.some((b) => b.tags.some((t) => norm(t) === norm(skill)) || hasTerm(b.text, skill));
   for (const s of existing) if (!skills.some((x) => norm(x) === norm(s)) && shown(s)) skills.push(s);
   const soft = softSkills().pattern;
-  skills.splice(0, skills.length, ...skills.filter((s) => !soft.test(s)).slice(0, MAX_SKILLS));
+  const kept = dropUnlinked(skills, chosen.map((b) => b.id), extra);
+  skills.splice(0, skills.length, ...kept.filter((s) => !soft.test(s)).slice(0, MAX_SKILLS));
 
   // Summary: the bank variant the JD asks for, as written (never reworded).
   const summary = bank.summaries.find((s) => s.variant === req.summary_variant) ?? bank.summaries[0];

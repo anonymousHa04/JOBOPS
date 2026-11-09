@@ -1,5 +1,5 @@
 import type { Db } from "../db.ts";
-import { loadBank, loadSkillsExtra, vocabulary } from "../profile/bank.ts";
+import { linkedBullets, loadBank, loadSkillsExtra, vocabulary, withRelatedTags } from "../profile/bank.ts";
 import type { Bank, Bullet, SkillsExtra } from "../profile/schema.ts";
 import { blockedBullets, listableExtras } from "../profile/gate.ts";
 import { loadRequirements } from "../requirements/parse.ts";
@@ -211,6 +211,7 @@ export function evidence(r: string, bullets: Bullet[], index: BulletIndex, vocab
 // Requirements the index cannot settle alone: they have a qualifier, or the index
 // finds no bullet. These are what the judge must look at (judge.ts).
 export function needsJudge(req: Requirements, bank: Bank, extra: SkillsExtra): string[] {
+  bank = withRelatedTags(bank, extra);
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
   const bullets = allBullets(bank);
   const index = buildIndex(bullets, vocab);
@@ -234,13 +235,18 @@ export function scoreRequirements(
   jobId?: string,
   verdicts: Verdicts = new Map()
 ): ScoreResult {
+  bank = withRelatedTags(bank, extra);
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
   // Bullets the bank gate refuses are no evidence: the job's score, the tailor's gate and the
   // skills line all count only what a resume may show (render.ts bankGate).
   const blocked = blockedBullets(bank);
   const every = allBullets(bank).filter((b) => !blocked.has(b.id));
-  const extraHave = listableExtras(bank, extra).filter((s) => s.status === "have").map((s) => s.name);
   const bullets = only ? every.filter((b) => only.includes(b.id)) : every;
+  // A related keyword counts only with one of its linked bullets (A6), never as a listed skill alone.
+  const ids = new Set(bullets.map((b) => b.id));
+  const extraHave = listableExtras(bank, extra)
+    .filter((s) => s.status === "have" && (s.kind !== "related" || linkedBullets(s).some((id) => ids.has(id))))
+    .map((s) => s.name);
   const byId = new Map(bullets.map((b) => [b.id, b]));
   const index = buildIndex(bullets, vocab);
   const rec = bulletRecency(bank);

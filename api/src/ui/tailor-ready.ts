@@ -15,6 +15,8 @@ import { loadRecords } from "../tailor/records.ts";
 import { planJob } from "../tailor/tailor.ts";
 import { board, jobDetail, scoreDetail } from "./data.ts";
 import { gapList } from "./gaps.ts";
+import { latestRecord } from "../extension/reports.ts";
+import { wordingApproved } from "../render/exit-gate.ts";
 
 // What Tailor now would do, worked out the way the tailor does it (cached judge verdicts, no
 // model calls, no files). It decides on the job's score (one score, as on the Score tab), so
@@ -36,7 +38,17 @@ export type TailorStatus = {
   reasons: string[];   // why the button is disabled
   plan: ResumePlan | null;
   last: LastTailor | null;
+  // The latest resume's reworded lines whose related keyword waits for approval (exit gate keyword_review).
+  pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
 };
+
+function pendingLines(db: Db, jobId: string): TailorStatus["pending_review"] {
+  const rec = latestRecord(db, jobId);
+  const bank = rec?.pending_review?.length ? loadBank() : null;
+  if (!rec || !bank) return [];
+  return (rec.pending_review ?? []).filter((p) => !wordingApproved(rec, bank, p)).map((p) => ({
+    resume_id: rec.resume_id, ...p, text: rec.content.bullets.find((b) => b.id === p.bullet_id)?.text ?? "" }));
+}
 
 export function resumePlan(db: Db, jobId: string): ResumePlan | null {
   const req = loadRequirements(db, jobId);
@@ -107,7 +119,7 @@ export function tailorStatus(db: Db, jobId: string): TailorStatus {
   const can = !busy && inBand && planOk;
   return {
     score, band, open_questions: open, tailored, busy, ready: can && !tailored, can_tailor: can, reasons, plan,
-    last: lastTailor(d.tasks)
+    last: lastTailor(d.tasks), pending_review: pendingLines(db, jobId)
   };
 }
 

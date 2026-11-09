@@ -21,6 +21,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   bullet remove <bullet-id>
   bullet review <bullet-id> [<bullet-id>...]
   flag resolve <bullet-id> --why "<reason>"   (dismiss a chat fact flag on a bullet, with your reason)
+  keyword approve <resume_id> <bullet_id>   (approve a reworded line's related keyword; holds while the text is the same)
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
   models                  (which model each task uses, and whether its server is up)
@@ -107,6 +108,10 @@ async function main(argv: string[]): Promise<unknown> {
     }
     case "flag": {
       if (sub === "resolve") return t.flagResolve(need(rest[0], "bullet id"), need(flag(rest, "why"), "--why"));
+      break;
+    }
+    case "keyword": {
+      if (sub === "approve") return t.keywordApprove(t.db(), need(rest[0], "resume id"), need(rest[1], "bullet id"));
       break;
     }
     case "learnable": {

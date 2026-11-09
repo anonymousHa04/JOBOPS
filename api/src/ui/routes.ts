@@ -21,6 +21,7 @@ import { openFactFlags, SOURCES } from "../extension/reports.ts";
 import { bankGate, pdfChecksPassed, pdfDir } from "../render/render.ts";
 import { loadBank, loadSkillsExtra } from "../profile/bank.ts";
 import { exitIssues } from "../render/exit-gate.ts";
+import { keywordApprove, render as renderResume } from "../tools.ts";
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { event, shortId, warnEvent } from "../log.ts";
@@ -40,6 +41,7 @@ const AnswerBody = z.object({
   extra_skills: z.array(z.string().max(80)).max(10).optional(),
   with_skill: z.boolean().optional(),
   draft_codes: z.array(z.string().max(60)).max(20).optional(),
+  relation: z.enum(["same", "related"]).optional(), bullet_ids: z.array(z.string().max(120)).max(30).optional(),
   // The answer reuses an earlier answer to another ask: remember the two asks as the same.
   from_previous: z.object({ from_requirement: z.string().min(1).max(500) }).strict().optional()
 }).strict();
@@ -389,6 +391,31 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     } catch (err) {
       return reply.status(500).send({ error: "tailor_status_failed", message: message(err) });
     }
+  });
+
+  // Approve wording (Tailor box): the user read a reworded line with a related keyword's first use;
+  // the approval is saved on the bank bullet for this exact text, then the PDF is made again.
+  app.post<{ Params: { id: string; rid: string }; Body: unknown }>("/ui/jobs/:id/resumes/:rid/approve-wording", async (request, reply) => {
+    const { id, rid } = request.params;
+    const body = z.object({ bullet_id: z.string().min(1).max(120) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const record = /^[\w.-]{1,120}$/.test(rid) ? recordById(db, rid) : null;
+    if (!record || record.jd_id !== id) return reply.status(404).send({ error: "not_found" });
+    let approved;
+    try {
+      approved = keywordApprove(db, rid, body.data.bullet_id);
+    } catch (err) {
+      return reply.status(400).send({ error: "approve_failed", message: message(err) });
+    }
+    event(`wording approved (job ${shortId(id)}): ${rid} ${approved.bullet_id}: ${approved.terms.join(", ")}`);
+    let pdf_error: string | null = null;
+    try {
+      const r = await renderResume(db, rid);
+      if (!r.ok) pdf_error = r.error ?? [...new Set(r.issues.map((i) => i.code))].join(", ");
+    } catch (err) {
+      pdf_error = message(err);
+    }
+    return { ...approved, pdf_error };
   });
 
   // { fresh: true }: Re-tailor from scratch. Earlier records do not start the new one (they stay

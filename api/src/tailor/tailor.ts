@@ -11,7 +11,8 @@ import { decide, pickStart } from "./decide.ts";
 import type { Decision, StoredRecord } from "./decide.ts";
 import { idealContent, jdSpelling } from "./ideal.ts";
 import type { Budget, ResumeContent } from "./ideal.ts";
-import { originalContent, toStored, writeRecord } from "./records.ts";
+import { originalContent, pendingReview, toStored, writeRecord } from "./records.ts";
+import { dropUnlinked } from "../profile/bank.ts";
 import { rewordContent, rewordModel } from "./reword.ts";
 import { lintRecord, sameCompany } from "./lint.ts";
 import type { Finding } from "./lint.ts";
@@ -141,7 +142,8 @@ export async function tailorJob(
   // an entry's only bullet) until it fits; each drop is logged in the record's changes.
   if (d.decision !== "not_tailored") {
     const fit = fitPages(content, bank, budget.max_pages ?? (totalYears(bank) <= 8 ? 1 : 2));
-    content = fit.content;
+    // A6 again after the page fit (a linked bullet may be dropped) and on reuse (an older record).
+    content = { ...fit.content, skills: dropUnlinked(fit.content.skills, fit.content.bullets.map((b) => b.id), extra) };
     changes = [...changes, ...fit.dropped.map((b) => ({ bullet_id: b.id, from: b.text, to: null, reason: "dropped to fit the page limit" }))];
   }
 
@@ -153,10 +155,12 @@ export async function tailorJob(
     .map((i) => ({ requirement: i.requirement, bullet_ids: i.bullet_ids }));
 
   const left_out = d.decision === "not_tailored" ? [] : plan.ideal.left_out ?? [];
+  const pending_review = pendingReview(content.bullets, bank, extra);
   const { record, path, created } = writeRecord(db, bank, {
     jd_id: jobId, source_resume_id: plan.start?.resume_id ?? null, decision: d.decision, reason: d.reason,
     band: d.band, score: d.score, equivalence: d.equivalence, flags: d.flags,
     review_findings: [], changes, evidence_refs, content, ...(left_out.length ? { left_out } : {}),
+    ...(pending_review.length ? { pending_review } : {}),
     meta: reworded.length ? { model: rewordModel() } : undefined
   });
   const lint = d.decision === "not_tailored" ? [] : [...lintRecord(record, bank, extra), ...plan.same_company.warnings];

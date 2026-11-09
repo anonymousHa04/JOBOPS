@@ -12,12 +12,12 @@ import { norm } from "../scoring/terms.ts";
 import type { Issue } from "./parseback.ts";
 import { claimIssues, linkedBulletIds, skillIssue } from "./verify-rules.ts";
 
-export const VERIFY_PROMPT_VERSION = "verify-1";
+export const VERIFY_PROMPT_VERSION = "verify-2";
 
-const CLAIMS_PROMPT = "SOURCE (what the person wrote about their work): [source]\nTEXT (a resume line made from it): [text]\nList every claim the TEXT makes. For each, copy the exact words from SOURCE that support it. If SOURCE does not support a claim, give an empty quote.\nCopy each quote word for word from SOURCE; never write your own words. Answer only with JSON.";
+const CLAIMS_PROMPT = "SOURCE (what the person wrote about their work): [source]\nTEXT (a resume line made from it): [text]\nList every claim the TEXT makes. For each, copy the exact words from SOURCE that support it. If SOURCE does not support a claim, give an empty quote.\nCopy each quote word for word from SOURCE, never from TEXT; never write your own words.\nExample: SOURCE 'led the move of 20 services to Kubernetes', TEXT 'Migrated 20 services to Kubernetes' -> quote 'move of 20 services to Kubernetes'. Answer only with JSON.";
 const CLAIMS_SCHEMA = z.object({ claims: z.array(z.object({ claim: z.string(), quote: z.string() })) });
 
-const SKILL_PROMPT = "EVIDENCE (what the person wrote): [evidence]\nSKILL: [skill]\nDoes the EVIDENCE show the person did this skill? Answer supported true or false, and copy the exact words from EVIDENCE that show it (empty if none).\nCopy the quote word for word from EVIDENCE; never write your own words. Answer only with JSON.";
+const SKILL_PROMPT = "EVIDENCE (what the person wrote): [evidence]\nSKILL: [skill]\nDoes the EVIDENCE show the person did this skill? Answer supported true or false, and copy the exact words from EVIDENCE that show it (empty if none).\nCopy the quote word for word from EVIDENCE, never from SKILL; never write your own words.\nExample: EVIDENCE 'wrote terraform modules for staging', SKILL 'Terraform' -> quote 'wrote terraform modules for staging'. Answer only with JSON.";
 const SKILL_SCHEMA = z.object({ supported: z.boolean(), quote: z.string() });
 
 // synonyms audit (A8): never blocks a PDF by itself; the user decides every pair not "same".
@@ -80,7 +80,7 @@ export async function checkSummary(db: Db, record: ResumeRecord, bank: Bank, ext
 // One skills-line skill against its evidence: the model quotes, skillIssue decides. Throws like checkClaims.
 export async function checkSkill(db: Db, index: number, skill: string, evidence: string, baseUrl?: string): Promise<Issue[]> {
   const answer = await ask(db, "skill", fill(fill(SKILL_PROMPT, "evidence", evidence), "skill", skill), SKILL_SCHEMA, baseUrl);
-  return skillIssue(index, answer.supported, answer.quote, evidence);
+  return skillIssue(index, answer.supported, answer.quote, evidence, skill);
 }
 
 // A skill's evidence: the skills-extra answer plus the text of every bank bullet it links.

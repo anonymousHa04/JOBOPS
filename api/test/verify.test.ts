@@ -110,6 +110,29 @@ test("6. claims: a vocabulary term no quote has is claim_unsupported (the contro
   } finally { m.close(); }
 });
 
+test("6. claims: a vocabulary term in the source but in no quote passes (calibration false block)", async () => {
+  // The model's quotes leave out "TypeScript"; the source has it.
+  const m = await fakeModel(() => claims(["built the billing pipeline", "Built the billing pipeline"]));
+  try {
+    assert.deepEqual(await checkClaims(newDb(), "b-1", "Built the TypeScript billing pipeline", "Built the billing pipeline in TypeScript", VOCAB, m.url), []);
+  } finally { m.close(); }
+});
+
+test("6. claims: a vocabulary term in neither the quotes nor the source is claim_unsupported", async () => {
+  const m = await fakeModel(() => claims(["built the billing pipeline", "Built the billing pipeline"]));
+  try {
+    assert.deepEqual(codes(await checkClaims(newDb(), "b-1", "Built the billing pipeline on Kubernetes", "Built the billing pipeline in TypeScript", VOCAB, m.url)), ["claim_unsupported"]);
+  } finally { m.close(); }
+});
+
+test("6. claims: a number in no quote blocks even when the source has it elsewhere (\"10+ years\" vs \"10 services\")", async () => {
+  const source = "Total experience: 7 years\nMoved 10 services to Kubernetes";
+  const m = await fakeModel(() => claims(["years of experience", "Total experience: 7 years"]));
+  try {
+    assert.deepEqual(codes(await checkClaims(newDb(), "summary", "10+ years of experience", source, VOCAB, m.url)), ["claim_unsupported"]);
+  } finally { m.close(); }
+});
+
 // (b) fail closed
 const reworded = (): ResumeRecord => {
   const r = fakeRecord();
@@ -232,6 +255,21 @@ test("6. skill: supported false with a real quote is skill_unsupported_model", a
   } finally { m.close(); }
 });
 
+test("6. skill: evidence only \"same as X\" with a real quote is skill_unsupported_model (calibration false pass)", async () => {
+  const m = await fakeModel(() => ({ supported: true, quote: "same as container orchestration" }));
+  try {
+    const issues = await checkSkill(newDb(), 2, "Helm", "answer 2026-11-08: same as container orchestration", m.url);
+    assert.deepEqual(issues.map((i) => [i.code, i.detail]), [["skill_unsupported_model", "skill#3"]]);
+  } finally { m.close(); }
+});
+
+test("6. skill: evidence that names the skill passes, also with a leading \"experience with \"", async () => {
+  const m = await fakeModel(() => ({ supported: true, quote: "wrote terraform modules for the staging stack" }));
+  try {
+    assert.deepEqual(await checkSkill(newDb(), 0, "Experience with Terraform", EVIDENCE, m.url), []);
+  } finally { m.close(); }
+});
+
 test("6. linkedBulletIds: ids after 'bullet ', unique and in order", () => {
   assert.deepEqual(linkedBulletIds("(used at: X; bullet acme-2) and bullet oldco-1, again bullet acme-2"), ["acme-2", "oldco-1"]);
   assert.deepEqual(linkedBulletIds("no links here"), []);
@@ -242,8 +280,8 @@ test("6. verifyRecord: a skills-extra skill's evidence includes its linked bulle
   const m = await fakeModel(() => ({ supported: true, quote: "Built the TypeScript event pipeline" }));
   try {
     const r = fakeRecord();
-    const record = { ...r, content: { ...r.content, summary_text: "", skills: [...r.content.skills, "Event pipelines"] } } as ResumeRecord;
-    const extra: SkillsExtra = { ...noExtra, skills: [{ name: "event pipelines", status: "have", evidence: "answer 2026-11-08: see bullet acme-2", added_at: "2026-11-08" }] };
+    const record = { ...r, content: { ...r.content, summary_text: "", skills: [...r.content.skills, "Event pipeline"] } } as ResumeRecord;
+    const extra: SkillsExtra = { ...noExtra, skills: [{ name: "event pipeline", status: "have", evidence: "answer 2026-11-08: see bullet acme-2", added_at: "2026-11-08" }] };
     assert.deepEqual(await verifyRecord(newDb(), record, fakeBank, extra, { baseUrl: m.url }), []);
     assert.equal(m.prompts.length, 1);
     assert.match(m.prompts[0], /Built the TypeScript event pipeline for billing/);

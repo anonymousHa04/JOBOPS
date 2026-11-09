@@ -41,7 +41,7 @@ import { addSynonym } from "./lists.ts";
 import { pdfDir, renderRecord, resumeData } from "./render/render.ts";
 import { parseBack } from "./render/parseback.ts";
 import { gateBullet, names } from "./profile/gate.ts";
-import { listReports, loadReport, SOURCES } from "./extension/reports.ts";
+import { listReports, loadFlagResolutions, loadReport, resolveFactFlags, SOURCES } from "./extension/reports.ts";
 import type { Source } from "./extension/reports.ts";
 import { atsCheck } from "./render/ats.ts";
 import { compareReport } from "./render/ats-report.ts";
@@ -87,6 +87,7 @@ export function bankStatus() {
 // codes only; nothing is changed (the user decides each finding).
 export function bankAudit() {
   const bank = requireBank();
+  const resolutions = loadFlagResolutions();
   // The chat's fact flags from each job's latest saved report (not the per-round copies).
   type Flag = { source: string; job_id: string; problem: string; why: string };
   const chat = new Map<string, Flag[]>();
@@ -101,7 +102,9 @@ export function bankAudit() {
       const codes = gateBullet(bank, e.id, b.text, b.evidence, b.id)
         .filter((c) => !(b.reviewed && (c === "term_added" || c === "scope_raised")));
       const flags = (chat.get(b.id) ?? []).sort((x, y) => key(x).localeCompare(key(y)));
-      return { id: b.id, entry: e.id, codes, ...(b.reviewed ? { reviewed: b.reviewed } : {}), ...(flags.length ? { chat: flags } : {}) };
+      // A resolved flag no longer counts: the user dismissed it with a reason via `flag resolve`.
+      const openFlags = flags.filter((f) => !resolutions.some((r) => r.bullet_id === b.id && r.flag_why === f.why));
+      return { id: b.id, entry: e.id, codes, ...(b.reviewed ? { reviewed: b.reviewed } : {}), ...(openFlags.length ? { chat: openFlags } : {}) };
     }))
     .filter((b) => b.codes.length || b.chat);
   // A skill from a Gaps answer is supported only when the answer names it.
@@ -110,6 +113,11 @@ export function bankAudit() {
     .filter((s) => !names(s.evidence!, s.name.replace(/^experience with /, "")))
     .map((s) => ({ name: s.name, codes: ["skill_unsupported"] }));
   return { bullets, skills };
+}
+
+// Dismisses the chat's fact flags on one bullet with the user's reason (the exit gate blocks a PDF while a flag is open).
+export function flagResolve(bulletId: string, reason: string) {
+  return resolveFactFlags(bulletId, reason);
 }
 
 export async function bankBuild() {

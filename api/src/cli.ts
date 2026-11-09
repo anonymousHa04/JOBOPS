@@ -20,6 +20,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
   bullet remove <bullet-id>
   bullet review <bullet-id> [<bullet-id>...]
+  flag resolve <bullet-id> --why "<reason>"   (dismiss a chat fact flag on a bullet, with your reason)
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
   models                  (which model each task uses, and whether its server is up)
@@ -93,12 +94,18 @@ async function main(argv: string[]): Promise<unknown> {
     case "bullet": {
       if (sub === "remove") return t.bulletRemove(need(rest[0], "bullet id"));
       if (sub === "review") return t.bulletReview(rest.length ? rest : [need(undefined, "bullet id")]);
-      if (sub !== "add") break;
-      const impact = flag(rest, "impact") ?? "medium";
-      if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");
-      const tags = need(flag(rest, "tags"), "--tags").split(",");
-      return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact,
-        { topic: flag(rest, "topic"), evidence: flag(rest, "evidence") });
+      if (sub === "add") {
+        const impact = flag(rest, "impact") ?? "medium";
+        if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");
+        const tags = need(flag(rest, "tags"), "--tags").split(",");
+        return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact,
+          { topic: flag(rest, "topic"), evidence: flag(rest, "evidence") });
+      }
+      break;
+    }
+    case "flag": {
+      if (sub === "resolve") return t.flagResolve(need(rest[0], "bullet id"), need(flag(rest, "why"), "--why"));
+      break;
     }
     case "learnable": {
       const answer = need(rest[0], "yes|no");

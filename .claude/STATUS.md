@@ -71,6 +71,36 @@ at the end of every phase (T1-T6).
 - T5 (2341dc9): `api/test/parser-icims.test.ts`, the 8 approved cases; 209 tests pass.
 - T6: pods rebuilt (`bin/jobops up`); the runner is mounted in api, worker-laptop and worker-mac,
   and `ats check` in api and worker-mac lists three readers and passes.
+- Skills clean-up (user's decisions, 2026-11-08; backup `data/backups/k3-2026-11-08/`): kept as
+  same thing reactjs, containerization, cloud infrastructure; removed core engineering principles,
+  compute platform; related work with the user's story and a linked bullet: self-healing
+  infrastructure (schneider-electric-5), cell-based architecture (new patch-infotech-6, regional
+  cells), Kubernetes control plane (kubeadm; mcp-server-mcp-servers), platform engineering (new
+  conde-nast-8 Terraform, new schneider-electric-15 GitHub Actions + Docker), artifact pipelines
+  (jobops-kubectl-go-cli; Condé Nast's Vogue pipelines are content/media, not artifacts); new
+  skills terraform, ai product engineering (schneider-electric-ai-agents). The 7 related-work
+  synonyms are removed (a synonym let a rewording put "Kubernetes control plane" into
+  jobops-kubectl-go-cli). jobops-ats-parseback reviewed. `bank audit`: nothing fails; 4 chat flags
+  left. Until the accepted-keywords plan: a related skill shows on every skills line.
+
+## Exit gate (plan `.claude/specs/plan-exit-gate.md`, 2026-11-09, in progress)
+
+Why: every check guarded a path, not the output, so each failure came through the next unchecked
+path (workflow page https://claude.ai/artifact/8Aba5bqrQMPDCSfFvRCv3J). User's workflow: local
+coders write code, Claude subagents write tests and escalated code, I PR-review; a commit per phase.
+Docker runs only for Qdrant while coders work (user turns it off otherwise); JobOps pods are at 0
+(`bin/jobops down`); general14 is stopped while the coder server runs.
+- K0 done: `exitIssues` (render/exit-gate.ts) runs with the bank gate before every render: skills
+  line (skill_unsupported), summary (summary_changed), open chat fact flags (fact_flag_open).
+  Every render writes `<id>.checks.json` (7 checks; a reader not required or missing has ran=false);
+  the PDF route serves only when `pdfChecksPassed` and the live gates pass, so PDFs made before K0
+  need a new render. `flag resolve <bullet-id> --why` dismisses a chat flag
+  (profile/reports/flag-resolutions.yaml); bank audit skips resolved flags. A static test fails on
+  a new caller of saveBank / saveSkillsExtra / addSynonym (replaces the planned write.ts).
+  Coder record: 3 of 10 tasks passed on the local coder (k0-02, k0-06, k0-09); 7 escalated to
+  Claude subagents (k0-01, 03, 04, 05, 07, 08, and k0-10 only for its test); lessons recorded.
+  Tests: api/test/exit-gate.test.ts (16); 225 pass.
+- Next: K1 (7B verifier with quotes), K2 (accepted keywords), K3 migration, K4 ATS references.
 - **Next (user):** re-render the Atlassian resume from the UI and re-upload it to iCIMS (fill
   Education and LinkedIn by hand); decide the skill_unsupported skills and chat flags above;
   re-test Workday with the fake resume (layout changed); `jobops-ats-parseback` ("three parsers")

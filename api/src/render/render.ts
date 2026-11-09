@@ -1,12 +1,15 @@
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Bank, ResumeRecord } from "../profile/schema.ts";
+import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { bulletBlocked } from "../profile/gate.ts";
 export { REVIEWED_IGNORES } from "../profile/gate.ts";
-import { parseBack, pdftotext } from "./parseback.ts";
+import { parseBack, pdftotext, requiredReaders } from "./parseback.ts";
 import type { Issue } from "./parseback.ts";
+import { exitIssues } from "./exit-gate.ts";
+import { openFactFlags } from "../extension/reports.ts";
+import { loadSkillsExtra } from "../profile/bank.ts";
 
 // Record -> PDF (decisions.md: PDF only when applying directly). The record gives the
 // content; titles, employers, locations, and dates come from the bank as written (fixed
@@ -88,17 +91,44 @@ export function bankGate(record: ResumeRecord, bank: Bank): Issue[] {
   return gate;
 }
 
-export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; error: string | null };
+export type RenderResult = { ok: boolean; path: string | null; issues: Issue[]; error: string | null; checks: { name: string; ran: boolean; ok: boolean; codes: string[] }[] };
 
 // Compile in a temp folder (template + data.json only), parse it back, and move the PDF
 // into profile/pdf/<resume_id>.pdf only when every check passes.
 // outDir: where the PDF goes (default profile/pdf); the ATS check's fake resume uses data/ats.
-export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string } = {}): Promise<RenderResult> {
-  // Output gate: a failing record gets no PDF, and an older PDF of it is removed.
-  const gate = bankGate(record, bank);
+export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { maxPages?: number; paper?: string; outDir?: string; extra?: SkillsExtra } = {}): Promise<RenderResult> {
+  const dir = opts.outDir ?? pdfDir();
+  const writeChecks = (checks: RenderResult["checks"]) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${record.resume_id}.checks.json`), JSON.stringify({ resume_id: record.resume_id, at: new Date().toISOString(), checks }, null, 2));
+    return checks;
+  };
+  // Output gate (bank gate + exit gate): a failing record gets no PDF, and an older PDF of it is removed.
+  const extra = opts.extra ?? loadSkillsExtra();
+  const flags = record.jd_id ? openFactFlags(record.jd_id, record.content.bullets.map((b) => b.id)) : [];
+  const bankIssues = bankGate(record, bank);
+  const exit = exitIssues(record, bank, extra, flags);
+  const gate = [...bankIssues, ...exit];
+  // Which checks ran and what each found; parse-back issues grouped by extractor.
+  // back null: parse-back did not run, so its five checks did not run.
+  const checkList = (back: Issue[] | null): RenderResult["checks"] => {
+  const readers = requiredReaders();
+    const c = (name: string, ran: boolean, codes: string[]) => ({ name, ran, ok: ran && codes.length === 0, codes });
+    const by = (...ex: string[]) => (back ?? []).filter((i) => ex.includes(i.extractor)).map((i) => i.code);
+    const or = by("openresume");
+    return [
+      c("bank_gate", true, bankIssues.map((i) => i.code)),
+      c("exit_gate", true, exit.map((i) => i.code)),
+      c("layout", back !== null, by("layout")),
+      c("pages_fonts", back !== null, by("pdfinfo", "pdffonts")),
+      c("pdftotext", back !== null && readers.includes("pdftotext"), by("pdftotext")),
+      c("pdfjs", back !== null && readers.includes("pdfjs"), by("pdfjs")),
+      c("openresume", back !== null && readers.includes("openresume") && !or.includes("reader_missing"), or)
+    ];
+  };
   if (gate.length) {
-    rmSync(join(opts.outDir ?? pdfDir(), `${record.resume_id}.pdf`), { force: true });
-    return { ok: false, path: null, issues: gate, error: null };
+    rmSync(join(dir, `${record.resume_id}.pdf`), { force: true });
+    return { ok: false, path: null, issues: gate, error: null, checks: writeChecks(checkList(null)) };
   }
   const work = mkdtempSync(join(tmpdir(), "jobops-render-"));
   try {
@@ -125,16 +155,29 @@ export async function renderRecord(record: ResumeRecord, bank: Bank, opts: { max
       shown = noBreak(data, kept);
       error = compile(shown);
     }
-    if (error) return { ok: false, path: null, issues: [], error };
+    // A typst error writes no checks file: nothing was checked.
+    if (error) return { ok: false, path: null, issues: [], error, checks: checkList(null) };
     const check = await parseBack(out, data, opts.maxPages ?? 2);
-    if (!check.ok) return { ok: false, path: null, issues: check.issues, error: null };
-    const dir = opts.outDir ?? pdfDir();
-    mkdirSync(dir, { recursive: true });
+    const checks = writeChecks(checkList(check.issues));
+    if (!check.ok) return { ok: false, path: null, issues: check.issues, error: null, checks };
     const path = join(dir, `${record.resume_id}.pdf`);
     copyFileSync(out, path);
-    return { ok: true, path, issues: [], error: null };
+    return { ok: true, path, issues: [], error: null, checks };
   } finally {
     rmSync(work, { recursive: true, force: true });
+  }
+}
+
+// The PDF route serves a PDF only when every check ran and passed: a missing or unreadable
+// checks file, or an empty list, counts as not passed.
+export function pdfChecksPassed(resumeId: string, dir: string = pdfDir()): boolean {
+  const file = join(dir, `${resumeId}.checks.json`);
+  if (!existsSync(file)) return false;
+  try {
+    const { checks } = JSON.parse(readFileSync(file, "utf8")) as { checks?: { ran?: unknown; ok?: unknown }[] };
+    return Array.isArray(checks) && checks.length > 0 && checks.every((c) => c?.ran === true && c?.ok === true);
+  } catch {
+    return false;
   }
 }
 

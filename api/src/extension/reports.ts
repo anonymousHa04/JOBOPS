@@ -279,6 +279,74 @@ export function loadReport(jobId: string, source: Source): Report | null {
   return r.success ? r.data : null;
 }
 
+export type FlagResolution = { bullet_id: string; flag_why: string; reason: string; at: string };
+
+export function loadFlagResolutions(): FlagResolution[] {
+  const path = join(reportsDir(), "flag-resolutions.yaml");
+  if (!existsSync(path)) return [];
+  try {
+    const content = readFileSync(path, "utf8");
+    const parsed = parse(content);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => ({
+        bullet_id: item.bullet_id,
+        flag_why: item.flag_why,
+        reason: item.reason,
+        at: item.at
+      }));
+    }
+  } catch {
+    // File is not a valid list, return empty array
+  }
+  return [];
+}
+
+export function openFactFlags(jobId: string, bulletIds: string[]): string[] {
+  const resolutions = loadFlagResolutions();
+  const resolutionsSet = new Set(resolutions.map((r) => `${r.bullet_id}-${r.flag_why}`));
+  const openFlags: string[] = [];
+
+  for (const source of SOURCES) {
+    const report = loadReport(jobId, source);
+    if (report && report.fact_flags) {
+      for (const flag of report.fact_flags) {
+        if (bulletIds.includes(flag.bullet_id) && !resolutionsSet.has(`${flag.bullet_id}-${flag.why}`)) {
+          openFlags.push(flag.bullet_id);
+        }
+      }
+    }
+  }
+
+  return Array.from(new Set(openFlags)).sort();
+}
+
+export function resolveFactFlags(bulletId: string, reason: string): { resolved: number } {
+  const why = reason.trim();
+  if (!why) throw new Error("reason is required");
+  const resolutions = loadFlagResolutions();
+  const seen = new Set(resolutions.map((r) => `${r.bullet_id}\n${r.flag_why}`));
+  let resolved = 0;
+
+  // Only the latest report per job and source; per-round copies would repeat its flags.
+  for (const r of listReports()) {
+    if (!SOURCES.includes(r.source as Source) || !r.file.endsWith(`${r.job_id}.${r.source}.yaml`)) continue;
+    const report = loadReport(r.job_id, r.source as Source);
+    for (const f of report?.fact_flags ?? []) {
+      const key = `${f.bullet_id}\n${f.why}`;
+      if (f.bullet_id !== bulletId || seen.has(key)) continue;
+      seen.add(key);
+      resolutions.push({ bullet_id: f.bullet_id, flag_why: f.why, reason: why, at: new Date().toISOString() });
+      resolved++;
+    }
+  }
+
+  if (resolved > 0) {
+    mkdirSync(reportsDir(), { recursive: true });
+    writeFileSync(join(reportsDir(), "flag-resolutions.yaml"), stringify(resolutions));
+  }
+  return { resolved };
+}
+
 // The YAML inside a chat answer: the first fenced block, else the whole answer.
 function yamlOf(text: string): string {
   return text.match(/```(?:ya?ml)?\s*\n([\s\S]*?)```/)?.[1] ?? text;

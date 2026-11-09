@@ -17,9 +17,10 @@ import { addByLink, AddRefused } from "./add-job.ts";
 import { checkSettings, checkView, hasPdf, recordById, setCheckSettings } from "./check.ts";
 import { checkRunning, chooseResume, decideCheck } from "../extension/step.ts";
 import { restartLoop } from "../extension/rounds.ts";
-import { SOURCES } from "../extension/reports.ts";
-import { bankGate, pdfDir } from "../render/render.ts";
-import { loadBank } from "../profile/bank.ts";
+import { openFactFlags, SOURCES } from "../extension/reports.ts";
+import { bankGate, pdfChecksPassed, pdfDir } from "../render/render.ts";
+import { loadBank, loadSkillsExtra } from "../profile/bank.ts";
+import { exitIssues } from "../render/exit-gate.ts";
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { event, shortId, warnEvent } from "../log.ts";
@@ -281,6 +282,10 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     const bank = loadBank();
     const issues = bank ? bankGate(record, bank) : [];
     if (issues.length) return reply.status(409).send({ error: "bank_gate", issues });
+    if (!pdfChecksPassed(rid)) return reply.status(409).send({ error: "checks", detail: "not every check ran and passed; render again" });
+    const flags = openFactFlags(record.jd_id, record.content.bullets.map((b) => b.id));
+    const exit = bank ? exitIssues(record, bank, loadSkillsExtra(), flags) : [];
+    if (exit.length) return reply.status(409).send({ error: "exit_gate", issues: exit });
     return reply.type("application/pdf").header("content-disposition", `inline; filename="${rid}.pdf"`)
       .send(createReadStream(join(pdfDir(), `${rid}.pdf`)));
   });

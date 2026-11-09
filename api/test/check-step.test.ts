@@ -247,3 +247,13 @@ test("choose a resume from the list: it becomes current; another job's resume is
   }
   await app.close();
 });
+
+test("check settings: auto-check after tailor is off by default, can be turned on with a chat, and is validated", async () => {
+  const { app } = await setup();
+  assert.deepEqual((await app.inject({ method: "GET", url: "/ui/check/settings" })).json(), { auto_check: false, source: "claude" });
+  const on = await app.inject({ method: "POST", url: "/ui/check/settings", payload: { auto_check: true, source: "chatgpt" } });
+  assert.deepEqual(on.json(), { auto_check: true, source: "chatgpt" });
+  assert.deepEqual((await app.inject({ method: "GET", url: "/ui/check/settings" })).json(), { auto_check: true, source: "chatgpt" });
+  assert.equal((await app.inject({ method: "POST", url: "/ui/check/settings", payload: { auto_check: "yes" } })).statusCode, 400);
+  await app.close();
+});

@@ -62,6 +62,14 @@ export function openDb(path: string): Db {
       bank_hash TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS verify_cache (
+      key TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS applications (
       job_id TEXT PRIMARY KEY REFERENCES jobs(id),
       status TEXT NOT NULL CHECK (status IN ('interested', 'applied', 'interview', 'offer', 'rejected', 'withdrawn')),
@@ -129,6 +137,22 @@ export function openDb(path: string): Db {
   if (!delCols.some((c) => c.name === "reason")) db.exec("ALTER TABLE deleted_jobs ADD COLUMN reason TEXT");
   if (!delCols.some((c) => c.name === "keywords")) db.exec("ALTER TABLE deleted_jobs ADD COLUMN keywords TEXT");
   return db;
+}
+
+// One-time markers in ui_state (Re-tailor from scratch, Restart check): set by a UI route,
+// taken (read and cleared) once by the step they are for. They survive an API restart.
+export function setMarker(db: Db, key: string, value = "1"): void {
+  db.prepare("INSERT INTO ui_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
+}
+
+export function markerValue(db: Db, key: string): string | null {
+  return (db.prepare("SELECT value FROM ui_state WHERE key = ?").get(key) as { value: string } | undefined)?.value ?? null;
+}
+
+export const hasMarker = (db: Db, key: string) => markerValue(db, key) !== null;
+
+export function takeMarker(db: Db, key: string): boolean {
+  return db.prepare("DELETE FROM ui_state WHERE key = ?").run(key).changes > 0;
 }
 
 const GAP_NOTES = `CREATE TABLE IF NOT EXISTS gap_notes (

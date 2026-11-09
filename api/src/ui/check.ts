@@ -142,3 +142,25 @@ export function checkView(db: Db, jobId: string): CheckView {
   }
   return out;
 }
+
+// "Check with Claude after each tailor" (Check tab; user, 2026-11-08): one switch for all jobs and
+// the chat to use. The open JobOps page starts the check when a tailor task made a resume.
+export type CheckSettings = { auto_check: boolean; source: "claude" | "chatgpt" };
+const SETTINGS_KEY = "check_settings";
+
+export function checkSettings(db: Db): CheckSettings {
+  const row = db.prepare("SELECT value FROM ui_state WHERE key = ?").get(SETTINGS_KEY) as { value: string } | undefined;
+  try {
+    const v = row ? JSON.parse(row.value) as Partial<CheckSettings> : {};
+    return { auto_check: v.auto_check === true, source: v.source === "chatgpt" ? "chatgpt" : "claude" };
+  } catch {
+    return { auto_check: false, source: "claude" };
+  }
+}
+
+export function setCheckSettings(db: Db, s: Partial<CheckSettings>): CheckSettings {
+  const next = { ...checkSettings(db), ...s };
+  db.prepare("INSERT INTO ui_state (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+    .run(SETTINGS_KEY, JSON.stringify(next));
+  return checkSettings(db);
+}

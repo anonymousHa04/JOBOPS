@@ -46,6 +46,9 @@ export function PipelineBoard({ jobs, showSkipped, onOpen, selected, onSelect }:
 }) {
   // Parsing and Tailoring appear only while they hold jobs; Skipped only when asked for.
   const cols = PIPELINE.filter((p) => p !== "skipped" || showSkipped);
+  // Jobs you applied to (or later: interview, offer, rejected, withdrawn) live on the
+  // Applications board only; "interested" stays here.
+  jobs = jobs.filter((j) => !j.application || j.application === "interested");
   return (
     <div className="board">
       {cols.map((p) => {

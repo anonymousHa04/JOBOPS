@@ -6,7 +6,7 @@ import { runWorker } from "./queue/worker.ts";
 import { loadPrompt } from "./model/prompts.ts";
 
 const USAGE = `usage: node api/src/cli.ts <command>
-  bank build | check | retag | dedupe | approve | status
+  bank build | check | retag | dedupe | approve | status | audit
   bank mark-break <role-id> [--title "Career break (reason)"]
   bank links <url> [<url> ...]   (profile links as full URLs, in display order)
   bank education [--school "<name>"] [--degree "<degree>"] [--dates "<from - to>"] [--id <education-id>]
@@ -19,6 +19,9 @@ const USAGE = `usage: node api/src/cli.ts <command>
   skill remove <name>
   bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
   bullet remove <bullet-id>
+  bullet review <bullet-id> [<bullet-id>...]
+  flag resolve <bullet-id> --why "<reason>" [--confirm]   (dismiss a chat fact flag on a bullet, with your reason; --confirm: your account wins for this bullet, later flags on it too)
+  keyword approve <resume_id> <bullet_id>   (approve a reworded line's related keyword; holds while the text is the same)
   learnable <skill> yes|no --job <job_id>
   risk skip <risk-id>
   models                  (which model each task uses, and whether its server is up)
@@ -40,7 +43,12 @@ const USAGE = `usage: node api/src/cli.ts <command>
   render <resume_id>     (PDF, kept only if the parse-back test passes)
   lint <resume_id>
   ats check [<resume_id>]  (local readers: pdftotext, pdf.js, OpenResume; the fake resume without an id)
-  ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected)`;
+  ats recheck [--all]      (read-only: the PDFs in profile/pdf made since 2026-11-06, or all, against their records)
+  ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected; Workday or iCIMS)
+  ats references           (read-only: every saved report in data/ats/ vs today's fake resume; re-upload reminder)
+  verify approve <resume_id> <claim|summary|skill> <id>   (approve an item the verifier did not confirm; holds while its text is the same)
+  verify eval [<file>]     (the verifier on the calibration set, default data/verify-eval.yaml; exit 1 unless A4 holds)
+  synonyms audit           (read-only: each synonym pair classified same / related / different by the verifier)`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(`--${name}`);
@@ -63,6 +71,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "dedupe") return t.bankDedupeSkills();
       if (sub === "approve") return t.bankApprove();
       if (sub === "status") return t.bankStatus();
+      if (sub === "audit") return t.bankAudit();
       if (sub === "links") return t.bankLinks(rest);
       if (sub === "education") return t.bankEducation({ school: flag(rest, "school"), degree: flag(rest, "degree"), dates: flag(rest, "dates") }, flag(rest, "id"));
       if (sub === "mark-break") return t.bankMarkBreak(need(rest[0], "role id"), flag(rest, "title"));
@@ -89,12 +98,27 @@ async function main(argv: string[]): Promise<unknown> {
       break;
     case "bullet": {
       if (sub === "remove") return t.bulletRemove(need(rest[0], "bullet id"));
-      if (sub !== "add") break;
-      const impact = flag(rest, "impact") ?? "medium";
-      if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");
-      const tags = need(flag(rest, "tags"), "--tags").split(",");
-      return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact,
-        { topic: flag(rest, "topic"), evidence: flag(rest, "evidence") });
+      if (sub === "review") return t.bulletReview(rest.length ? rest : [need(undefined, "bullet id")]);
+      if (sub === "add") {
+        const impact = flag(rest, "impact") ?? "medium";
+        if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");
+        const tags = need(flag(rest, "tags"), "--tags").split(",");
+        return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact,
+          { topic: flag(rest, "topic"), evidence: flag(rest, "evidence") });
+      }
+      break;
+    }
+    case "flag": {
+      if (sub === "resolve") {
+        // A reason is required, also with --confirm ("--why --confirm" is no reason).
+        const why = flag(rest, "why");
+        return t.flagResolve(need(rest[0], "bullet id"), need(why?.startsWith("--") ? undefined : why, "--why"), rest.includes("--confirm"));
+      }
+      break;
+    }
+    case "keyword": {
+      if (sub === "approve") return t.keywordApprove(t.db(), need(rest[0], "resume id"), need(rest[1], "bullet id"));
+      break;
     }
     case "learnable": {
       const answer = need(rest[0], "yes|no");
@@ -139,7 +163,24 @@ async function main(argv: string[]): Promise<unknown> {
       return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
     case "ats":
       if (sub === "check") return t.ats(t.db(), { resumeId: rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined });
+      if (sub === "recheck") return t.atsRecheck(t.db(), { all: rest.includes("--all") });
       if (sub === "compare") return t.atsCompare(need(rest[0], "report file"));
+      if (sub === "references") return t.atsReferences();
+      break;
+    case "verify":
+      if (sub === "approve") return t.verifyApprove(t.db(), need(rest[0], "resume id"), need(rest[1], "kind"), need(rest.slice(2).join(" ") || undefined, "id"));
+      if (sub === "eval") {
+        const r = await t.verifyEval(t.db(), rest[0]);
+        process.exitCode = r.exit_code;
+        return r;
+      }
+      break;
+    case "synonyms":
+      if (sub === "audit") {
+        const r = await t.synonymsAudit(t.db());
+        if ("error" in r) process.exitCode = 1;
+        return r;
+      }
       break;
     case "lint":
       return t.lint(t.db(), need(sub, "resume id"));

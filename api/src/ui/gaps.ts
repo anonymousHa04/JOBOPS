@@ -3,6 +3,7 @@
 import type { Db } from "../db.ts";
 import { addSynonym, askable } from "../lists.ts";
 import { addBullet, addSkill, loadBank, loadSkillsExtra, recordLearnable } from "../profile/bank.ts";
+import { answerEvidence, storyNames } from "../profile/gate.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import { loadVerdicts } from "../scoring/judge.ts";
 import { bankTermFor, scoreRequirements, span, yearsAsked } from "../scoring/score.ts";
@@ -29,8 +30,14 @@ export type AnswerInput = {
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
   as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
   with_skill?: boolean; // a bullet answer also saves the skill, even with one role checked
+  draft_codes?: string[]; // what the guard and gate said about the draft, kept with what was typed
+  // other_name: "same" (another spelling: a synonym, the default) or "related" (related work on
+  // the picked bank bullets; no synonym).
+  relation?: "same" | "related"; bullet_ids?: string[];
 };
-export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
+// bullet_list: the entry's bank bullets (id and short text), to pick for "Related work".
+export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
+  bullet_list: { id: string; short: string }[] };
 
 export type NotAsked = { kind: GapKind; requirement: string; reason: string };
 
@@ -84,12 +91,13 @@ export function gapList(db: Db, jobId: string): { gaps: Gap[]; not_asked: NotAsk
   const reuse = reuseFor(db, jobId, list.filter((g) => !g.answer));
   for (const g of list) g.reuse = reuse.get(g.requirement) ?? g.reuse;
 
-  // project, bullets and end let the UI place a drafted bullet: under the checked job (never a
-  // project) with the fewest bullets; on a tie, the most recent one.
+  // project, bullets and end describe each job or project the user can pick for a drafted
+  // bullet (the UI shows each with its dates; nothing is picked automatically).
   const projects = new Set(bank.projects.map((p) => p.id));
   const entries: Entry[] = [...bank.roles, ...bank.projects].filter(e => e.kind !== "break").map(e => ({
     id: e.id, title: e.title, company: e.company ?? null, dates: e.dates,
-    project: projects.has(e.id), bullets: e.bullets.length, end: span(e.dates)?.end ?? null
+    project: projects.has(e.id), bullets: e.bullets.length, end: span(e.dates)?.end ?? null,
+    bullet_list: e.bullets.map((b) => ({ id: b.id, short: b.short }))
   }));
   const years = r.hard.pass ? null : `asks ${r.hard.years_asked}+ years; I have ${r.hard.years_have}`;
   return { gaps: list, not_asked: notAsked, years, entries };
@@ -126,6 +134,7 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       if (input.as_skill) {
         const ids = (input.entry_ids ?? []).filter(filled);
         if (!filled(input.story) || !ids.length) throw new Error("story and at least one role are required");
+        if (!storyNames(input.story, input.requirement)) throw new Error("blocked: skill_unsupported");
         const bank = loadBank();
         const roles = bank ? [...bank.roles, ...bank.projects] : [];
         const names = ids.map((id) => {
@@ -141,7 +150,8 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       if (!filled(input.entry_id) || !filled(input.text) || !filled(input.story)) {
         throw new Error("entry_id, text and story are required");
       }
-      const evidence = `answer ${today}: ${input.story}` + (filled(input.proof) ? ` Proof: ${input.proof}` : "");
+      // Which gap it answers goes with it: the bank gate lets the requirement's own name in.
+      const evidence = answerEvidence(today, input.requirement, input.story) + (filled(input.proof) ? ` Proof: ${input.proof}` : "");
       const given = (input.tags ?? []).map((tag) => tag.trim()).filter(Boolean);
       const tags = given.length ? given : [input.requirement.toLowerCase()];
       bullet_id = addBullet(input.entry_id, input.text, tags, "medium", { evidence });
@@ -149,7 +159,11 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       // Other checked roles: the requirement is also saved as a skill, with every checked role as
       // context (the bullet is the evidence at one of them).
       const others = [...new Set([...(input.entry_ids ?? []), ...(input.with_skill ? [input.entry_id] : [])].filter(filled))];
-      if (others.length > 1 || (input.with_skill && others.length > 0)) {
+      // Only when the story names the requirement; else the bullet alone is saved.
+      const wantSkill = others.length > 1 || (input.with_skill && others.length > 0);
+      if (wantSkill && !storyNames(input.story, input.requirement)) {
+        outcome += "; skill not added (your story does not name it)";
+      } else if (wantSkill) {
         const bank = loadBank();
         const roles = bank ? [...bank.roles, ...bank.projects] : [];
         const names = others.map((id) => {
@@ -169,11 +183,26 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       if (input.kind !== "keyword") {
         throw new Error("other_name is only for keywords");
       }
+      if (input.relation === "related") {
+        // Related work (K2): a tag on the picked bullets only, never a synonym (a synonym let a
+        // rewording put a related term into any bullet). Gated at write: the story names the
+        // term, and every bullet is in the bank.
+        const ids = [...new Set((input.bullet_ids ?? []).filter(filled))];
+        if (!ids.length) throw new Error("blocked: no_bullet (pick the bullets that show this work)");
+        if (!filled(input.story) || !storyNames(input.story, input.requirement)) throw new Error("blocked: skill_unsupported (your story must name it)");
+        const bank = loadBank();
+        const known = new Set(bank ? [...bank.roles, ...bank.projects].flatMap((e) => e.bullets.map((b) => b.id)) : []);
+        const unknown = ids.filter((x) => !known.has(x));
+        if (unknown.length) throw new Error(`blocked: unknown_bullet ${unknown.join(", ")}`);
+        addSkill(input.requirement, "have", `answer ${today}: related work: ${input.story}`, { kind: "related", bullets: ids });
+        outcome = `skill added (related work on ${ids.join(", ")})`;
+        break;
+      }
       if (!filled(input.same_as)) {
         throw new Error("same_as is required");
       }
       const skillEvidence = `answer ${today}: same as ${input.same_as}` + (filled(input.story) ? `: ${input.story}` : "");
-      addSkill(input.requirement, "have", skillEvidence);
+      addSkill(input.requirement, "have", skillEvidence, { kind: "same" });
       // Remember the spelling for later jobs: the tailored resume then uses the job's own word
       // in the skills line and bullets wherever the bank has the skill under its usual name.
       const learned = addSynonym(input.requirement, norm(input.same_as));
@@ -195,6 +224,8 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
   // What the user typed, so another job's form can be filled from it (gap-memory.ts).
   const typed = input.answer === "have" || input.answer === "other_name" ? JSON.stringify({
     answer: input.answer, story: input.story ?? "", proof: input.proof ?? "", same_as: input.same_as ?? "",
+    text: input.text ?? "", draft_codes: input.draft_codes ?? [],
+    ...(input.relation ? { relation: input.relation, bullet_ids: input.bullet_ids ?? [] } : {}),
     entry_ids: [...new Set([...(input.entry_ids ?? []), ...(input.entry_id ? [input.entry_id] : [])].filter(filled))]
   }) : null;
   // An answer given here replaces a carried one (and its carried_from mark).

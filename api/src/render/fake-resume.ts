@@ -14,7 +14,7 @@ export const fakeBank: Bank = {
   summaries: [{ id: "s1", variant: "backend", text: "Backend engineer with nine years of experience." }],
   roles: [
     {
-      id: "acme", title: "Senior Software Engineer", company: "Acme Software", location: "Bengaluru", dates: "Jan 2018 - Present",
+      id: "acme", title: "Senior Software Engineer", company: "Acme Software (Client: Globex Corp)", location: "Bengaluru", dates: "Jan 2018 - Present",
       bullets: [
         bullet("acme-1", "Moved 20 services to Kubernetes, cutting deploy time 40%"),
         bullet("acme-2", "Built the TypeScript event pipeline for billing")

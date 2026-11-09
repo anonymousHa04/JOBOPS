@@ -298,3 +298,4 @@ td.bad { color: var(--bad); font-weight: 700; }
   padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-3);
   color: var(--text); font-size: 0.85rem; line-height: 1.4; white-space: normal; box-shadow: 0 4px 16px #0008; }
 .score-label .info:hover .tip, .score-label .info:focus .tip { display: block; }
+.check-auto { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }

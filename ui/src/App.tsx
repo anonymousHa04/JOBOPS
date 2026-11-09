@@ -7,8 +7,10 @@ import { JobDrawer } from "./JobDrawer";
 import type { Tab } from "./JobDrawer";
 import { Batches } from "./Batches";
 import { SkipDelete } from "./SkipDelete";
+import { UpdateBoard } from "./UpdateBoard";
 import { BulkDelete } from "./BulkDelete";
 import { AddJob } from "./AddJob";
+import { AutoCheck } from "./AutoCheck";
 import { onChange } from "./events";
 
 type View = "pipeline" | "applications" | "batches";
@@ -119,9 +121,11 @@ export function App() {
             <label className="check"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Show skipped</label>
           )}
           {view === "pipeline" && <AddJob onAdded={(id) => { changedJob(id); openJob(id); }} />}
+          <AutoCheck />
           <span className="muted">{counts.total} jobs{counts.failed ? ` · ${counts.failed} failed` : ""}</span>
           <button className="btn ghost" onClick={load}>Refresh</button>
           <RescoreAll refresh={jobs} onDone={changed} />
+          <UpdateBoard onDone={changed} />
           <SkipDelete refresh={jobs} onDone={changed} />
           {view === "pipeline" && <BulkDelete selected={[...selected]} onClear={() => setSelected(new Set())} onDone={changed} />}
         </div>

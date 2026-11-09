@@ -67,15 +67,18 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
     try {
       // A job that already has a chat gets the follow-up prompt ("Attempt N: based on your input ...").
-      const followup = (await savedChat(jobId, target)) ? `?followup=1&source=${target}` : "";
-      const response = await fetch(`${API}/x/prompt/${encodeURIComponent(jobId)}${followup}`);
+      // source always: after Restart check (UI) the API answers fresh_chat once for this site.
+      const followup = (await savedChat(jobId, target)) ? "&followup=1" : "";
+      const response = await fetch(`${API}/x/prompt/${encodeURIComponent(jobId)}?source=${target}${followup}`);
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         const error = body.detail || body.error || `status ${response.status}`;
         await setStatus({ jobId, target, step: "failed", error });
         return;
       }
-      const { prompt } = await response.json();
+      const { prompt, fresh_chat } = await response.json();
+      // Restarted check: forget this job's chat on this site, so a new chat opens at round 1.
+      if (fresh_chat) await forgetChat(jobId, target);
 
       // Back to this job's conversation when there is one, else a new chat.
       const url = (await savedChat(jobId, target)) ?? CHAT[target].newUrl;

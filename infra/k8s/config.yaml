@@ -27,3 +27,6 @@ data:
   JOBOPS_PROFILE_DIR: /app/profile
   JOBOPS_PROMPTS_DIR: requierements
   JOBOPS_SWEEP_EVERY: 2m
+  # The exit gate's 7B verifier (plan-exit-gate.md K1): calibrated 2026-11-09 (0 false passes,
+  # 82% good passed); what it cannot confirm waits for the user's Approve in the Tailor box.
+  JOBOPS_VERIFY: "on"

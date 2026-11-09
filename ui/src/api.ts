@@ -9,6 +9,8 @@ export type Card = {
   first_seen_at: string; state: Pipeline; score: number | null; band: string | null; decision: string | null;
   error_code: string | null; failed_stage: string | null; skip_reason: string | null; ready_to_tailor: boolean;
   application: AppStatus | null; open_tasks: number;
+  // Set when Update board moved the job to Not tailored.
+  reason?: string | null;
 };
 
 export type QueueTask = {
@@ -72,7 +74,8 @@ export type Previous = {
   input: EarlierInput | null;
 };
 // What was typed with an earlier "have" or "other name" answer, to fill a form from.
-export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string };
+export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string;
+  relation?: "same" | "related"; bullet_ids?: string[] };
 export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Previous["match"] };
 export type Gap = {
   kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null;
@@ -88,6 +91,10 @@ export type Gap = {
 // A ticked board job in the delete panel: resumes it would lose, tracking status, keep mark.
 export type BulkItem = { id: string; title: string; company: string; resumes: number; status: string | null; kept: boolean };
 export type SkipMatch = { id: string; title: string; company: string; word: string; status: string | null; resumes: number };
+export type UpdateCandidate = { id: string; company: string; title: string; score: number | null; band: string | null;
+  application: AppStatus | null; resumes: string[] };
+export type UpdateResult = { jobs: number; records: number; files: number; backup_dir: string | null;
+  refused: { id: string; company: string; title: string; message: string }[] };
 export type SkipMatches = { keywords: string[]; jobs: SkipMatch[]; kept: SkipMatch[] };
 export type DeleteHints ={ title: string[]; keywords: string[]; current: string[]; protected: string[] };
 export type DeleteResult = {
@@ -96,15 +103,19 @@ export type DeleteResult = {
 };
 export type MatchStats ={ gaps: number; checked: number; same: number; failed: number; error: string | null };
 export type Rescored = { rescore_batch: number; rescore_error?: string | null; rescore_skipped?: boolean };
-export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
+export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
+  bullet_list: { id: string; short: string }[] };
 export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: GapEntry[] };
-export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[] };
+export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[]; words?: string[] };
 export type AnswerBody = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
   as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
+  draft_codes?: string[]; // the codes the draft had (kept with the answer)
   with_skill?: boolean; // the bullet answer also saves the skill
   from_previous?: { from_requirement: string }; // answered from an earlier answer to that ask
+  // other_name: same thing (another spelling, the default) or related work on these bank bullets.
+  relation?: "same" | "related"; bullet_ids?: string[];
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -122,6 +133,7 @@ export type CheckRound = {
   version: number; resume_id: string; engine_score: number; chat_score: number | null; kept: boolean; current: boolean;
   added: Line[]; removed: Line[]; reworded: { id: string; before: string; after: string }[];
 };
+export type CheckSettings = { auto_check: boolean; source: "claude" | "chatgpt" };
 export type ResumeRow = {
   resume_id: string; made_by: string; engine_score: number; chat_score: number | null;
   created_at: string; pdf: boolean; current: boolean;
@@ -168,9 +180,13 @@ export const api = {
   board: () => call<{ jobs: Card[] }>("GET", "/ui/board").then((r) => r.jobs),
   // One card (the change feed re-reads only the job that changed); null: the job is gone.
   check: (id: string) => call<CheckView>("GET", `/ui/jobs/${id}/check`),
+  checkSettings: () => call<CheckSettings>("GET", "/ui/check/settings"),
+  setCheckSettings: (s: Partial<CheckSettings>) => call<CheckSettings>("POST", "/ui/check/settings", s),
   // End of a check: "new" / "previous", or any version by resume_id (Choose this). Re-scores.
   decideCheck: (id: string, source: string, choice: { use?: "new" | "previous"; resume_id?: string }) =>
     call<{ resume_id: string; version: number; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/check/decide`, { source, ...choice }),
+  // Restart the chat check for one site: its rounds are kept as a file; the next check opens a new chat.
+  restartCheck: (id: string, source: string) => call<{ archived: string | null }>("POST", `/ui/jobs/${id}/check/restart`, { source }),
   chooseResume: (id: string, rid: string) =>
     call<{ resume_id: string; pdf_error: string | null; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/resumes/${encodeURIComponent(rid)}/choose`),
   pdfUrl: (resumeId: string) => `/api/ui/resumes/${encodeURIComponent(resumeId)}/pdf`,
@@ -218,7 +234,15 @@ export const api = {
   rescore: (id: string) => call<{ rescore_batch: number }>("POST", `/ui/jobs/${id}/rescore`),
   prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`),
   tailorStatus: (id: string) => call<TailorStatus>("GET", `/ui/jobs/${id}/tailor`),
-  tailorNow: (id: string) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`),
+  // fresh: Re-tailor from scratch (earlier versions do not start it; it builds from the bank).
+  tailorNow: (id: string, fresh = false) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`, fresh ? { fresh } : undefined),
+  approveWording: (id: string, rid: string, bullet_id: string) =>
+    call<{ bullet_id: string; terms: string[]; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-wording`, { bullet_id }),
+  approveVerify: (id: string, rid: string, kind: string, itemId: string) =>
+    call<{ resume_id: string; kind: string; id: string; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-verify`, { kind, id: itemId }),
+  // Update board: tailored jobs now below 75 move to Not tailored; their resumes are deleted (backed up first).
+  updateBoardPreview: () => call<{ jobs: UpdateCandidate[] }>("GET", "/ui/board/update/preview").then((r) => r.jobs),
+  updateBoard: () => call<UpdateResult>("POST", "/ui/board/update"),
   rescoreAllStatus: () => call<{ changed: boolean; candidates: number }>("GET", "/ui/rescore-all"),
   rescoreAll: () => call<{ batch_id: number; queued: number }>("POST", "/ui/rescore-all")
 };
@@ -228,7 +252,11 @@ export type TailorStatus = {
   ready: boolean; can_tailor: boolean; reasons: string[];
   // What Tailor now would do (it decides on the job's score).
   plan: { decision: string; reason: string; open_risks: string[] } | null;
-  last: { at: string; state: string; ok: boolean; message: string } | null;
+  last: { at: string; state: string; ok: boolean; message: string; left_out?: { bullet_id: string; codes: string[] }[] } | null;
+  // Reworded lines with a related keyword's first use, waiting for "Approve wording".
+  pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
+  // Items the verifier did not confirm (claim, summary, skill), waiting for "Approve".
+  verify_review: { resume_id: string; kind: "claim" | "summary" | "skill"; id: string; code: string; text: string; evidence?: string }[];
 };
 
 // Shared labels and helpers.

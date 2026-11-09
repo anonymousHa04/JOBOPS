@@ -39,6 +39,7 @@ spec:
           volumeMounts:
             - { name: data, mountPath: /app/data }
             - { name: profile, mountPath: /app/profile }
+            - { name: openresume, mountPath: /app/.scout/openresume-runner, readOnly: true }
           resources:
             requests: { cpu: 100m, memory: 192Mi }
             limits: { memory: 768Mi }
@@ -47,6 +48,10 @@ spec:
           persistentVolumeClaim: { claimName: jobops-data }
         - name: profile
           hostPath: { path: __REPO__/profile, type: Directory }
+        # OpenResume parse-back reader (AGPL), kept outside the image. A missing folder is
+        # created empty: pods still start, and every render fails with reader_missing.
+        - name: openresume
+          hostPath: { path: __REPO__/.scout/openresume-runner, type: DirectoryOrCreate }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -78,6 +83,7 @@ spec:
           volumeMounts:
             - { name: data, mountPath: /app/data }
             - { name: profile, mountPath: /app/profile }
+            - { name: openresume, mountPath: /app/.scout/openresume-runner, readOnly: true }
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 1Gi }
@@ -86,3 +92,7 @@ spec:
           persistentVolumeClaim: { claimName: jobops-data }
         - name: profile
           hostPath: { path: __REPO__/profile, type: Directory }
+        # OpenResume parse-back reader (AGPL), kept outside the image. A missing folder is
+        # created empty: pods still start, and every render fails with reader_missing.
+        - name: openresume
+          hostPath: { path: __REPO__/.scout/openresume-runner, type: DirectoryOrCreate }

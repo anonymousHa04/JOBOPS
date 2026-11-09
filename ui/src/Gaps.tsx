@@ -174,6 +174,10 @@ export function GapsView({ id, onChanged }: { id: string; onChanged: () => void 
 // becomes a skill with the earlier story and roles (never a second copy of a bullet). Returns
 // the answer body, or why it cannot be sent as it is.
 function previousBody(gap: Gap, i: EarlierInput, known: Set<string>): AnswerBody | string {
+  // Related work keeps its bullets (the server refuses ids no longer in the bank).
+  if (i.answer === "other_name" && gap.kind === "keyword" && i.relation === "related") {
+    return { kind: gap.kind, requirement: gap.requirement, answer: "other_name", relation: "related", bullet_ids: i.bullet_ids ?? [], story: i.story };
+  }
   if (i.answer === "other_name" && gap.kind === "keyword" && i.same_as.trim()) {
     return { kind: gap.kind, requirement: gap.requirement, answer: "other_name", same_as: i.same_as, story: i.story || undefined };
   }
@@ -255,26 +259,25 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
   const [mode, setMode] = useState<GapAnswer | null>(null);
   const [story, setStory] = useState<string>("");
   const [proof, setProof] = useState<string>("");
-  // Roles where the user used it: pre-checked from "You may already have it" (a bullet id starts
-  // with its role id plus "-"; the longest matching role id wins).
-  const roleOf = (bulletId: string) =>
-    entries.filter((e) => bulletId.startsWith(e.id + "-")).sort((a, b) => b.id.length - a.id.length)[0]?.id;
-  const suggested = (h: GapHelp | null) => [...new Set((h?.related ?? []).map((r) => roleOf(r.bullet_id)).filter((x): x is string => !!x))];
-  const [checked, setChecked] = useState<string[]>(() => suggested(gap.help));
-  useEffect(() => {
-    setChecked((c) => (c.length ? c : suggested(help)));
-  }, [help]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Roles where the user used it: nothing is pre-checked; the user checks each one.
+  const [checked, setChecked] = useState<string[]>([]);
   const toggle = (id: string) => setChecked((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
-  // The drafted bullet goes under one checked job (never a project): the one with the fewest
-  // bullets; on a tie, the most recent. The user can switch it.
-  const jobs = entries.filter((e) => checked.includes(e.id) && !e.project);
-  const pick = jobs.slice().sort((a, b) => a.bullets - b.bullets || (b.end ?? -1) - (a.end ?? -1))[0]?.id ?? "";
+  // The drafted bullet goes under the one checked job or project the user picks (never automatic).
+  const jobs = entries.filter((e) => checked.includes(e.id));
   const [chosen, setChosen] = useState<string>("");
-  const entry = jobs.some((e) => e.id === chosen) ? chosen : pick;
+  const entry = jobs.some((e) => e.id === chosen) ? chosen : "";
+  const label = (e: GapList["entries"][number]) => e.title + (e.company ? " · " + e.company : "") + " (" + e.dates + ")";
   const [extras, setExtras] = useState<string[]>([]);
   const [sameAs, setSameAs] = useState<string>(gap.known_as ?? "");
+  // "Under another name": the same thing spelled another way (a synonym), or related work shown by
+  // the bullets the user picks (a tag on those bullets only; the story must name the term).
+  const [relation, setRelation] = useState<"same" | "related">("same");
+  const [picked, setPicked] = useState<string[]>([]);
+  const togglePick = (b: string) => setPicked((p) => (p.includes(b) ? p.filter((x) => x !== b) : [...p, b]));
   const [draft, setDraft] = useState<Draft | null>(null);
   const [text, setText] = useState<string>("");
+  // A flagged draft cannot be saved as drafted: an edit re-enables Save and the server checks it again.
+  const saveBlocked = !!draft && draft.codes.length > 0 && text === draft.text;
   // A draft is written for one job: a new target job means a new draft.
   useEffect(() => {
     setDraft(null);
@@ -287,6 +290,15 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
     p.then(then).catch((e: Error) => setErr(e.message)).finally(() => setBusy(null));
   };
 
+  // Start over: drop the draft and its text, keep the user's story and proof, explain again.
+  const startOver = () => {
+    setDraft(null);
+    setText("");
+    setExtras([]);
+    setErr(null);
+    explain(true);
+  };
+
   const known = new Set(entries.map((e) => e.id)); // role ids still in the bank
   // Fills the answer form from an earlier answer's story, proof and roles (roles no longer in
   // the bank are dropped). Nothing is saved until the user drafts and saves, or adds the skill.
@@ -295,6 +307,8 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
     setStory(i.story);
     setProof(i.proof);
     setSameAs(i.same_as || sameAs);
+    setRelation(i.relation ?? "same");
+    setPicked(i.bullet_ids ?? []);
     const roles = i.entry_ids.filter((x) => known.has(x));
     if (roles.length) setChecked(roles);
     setDraft(null);
@@ -303,16 +317,16 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
   };
 
   // "Add previous response and rescore" on a sentence: fill the form, draft the bullet at once
-  // (no Draft click), under the earlier roles' job with the fewest bullets. The user checks the
-  // draft, then saves the bullet and the skill together.
+  // (no Draft click), under the earlier answer's job or project when it has exactly one; otherwise
+  // the user picks one first. The user checks the draft, then saves the bullet and the skill together.
   const [withSkill, setWithSkill] = useState(false);
   const [fromPrev, setFromPrev] = useState<string | null>(null);
   const draftPrevious = (i: EarlierInput, fromRequirement: string | null) => {
     prefill(i);
     if (!filled(i.story)) { setErr("The earlier answer has no story to draft from: write it below, then Draft a bullet."); return; }
-    const roles = entries.filter((e) => i.entry_ids.includes(e.id) && !e.project);
-    const target = roles.sort((a, b) => a.bullets - b.bullets || (b.end ?? -1) - (a.end ?? -1))[0]?.id;
-    if (!target) { setErr("None of the earlier roles is a job in your bank now: check a job below, then Draft a bullet."); return; }
+    const roles = entries.filter((e) => i.entry_ids.includes(e.id));
+    if (roles.length !== 1) { setErr("Pick the job or project this story happened at, then Draft a bullet."); return; }
+    const target = roles[0].id;
     setChosen(target);
     setWithSkill(true);
     setFromPrev(fromRequirement);
@@ -345,7 +359,7 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
 
   const handleSave = () => {
     if (filled(text)) {
-      run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", entry_id: entry, text, tags: draft?.tags, story, proof: proof || undefined, entry_ids: checked, extra_skills: extras,
+      run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", entry_id: entry, text, tags: draft?.tags, story, proof: proof || undefined, entry_ids: checked, extra_skills: extras, draft_codes: draft?.codes ?? [],
         ...(withSkill ? { with_skill: true } : {}), ...(fromPrev ? { from_previous: { from_requirement: fromPrev } } : {}) }), onAnswered);
     }
   };
@@ -415,6 +429,10 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
           <button className="btn ghost tiny" disabled={busy === "help" || gap.help_queued} onClick={() => explain(true)}>
             {gap.help_queued ? "Asking again (queued)…" : busy === "help" ? "Queuing…" : "Ask again"}
           </button>
+          <button className="btn ghost tiny" disabled={busy === "help" || busy === "draft" || gap.help_queued} onClick={startOver}
+            title="Clears the drafted bullet and its text and asks the local model again. Your story and proof stay.">
+            Start over
+          </button>
         </div>
       )}
       <div>
@@ -432,7 +450,7 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
             {entries.map((e) => (
               <label key={e.id} className="role-check">
                 <input type="checkbox" checked={checked.includes(e.id)} onChange={() => toggle(e.id)} />
-                {e.title + (e.company ? " · " + e.company : "") + " (" + e.dates + ")"}
+                {label(e)}
               </label>
             ))}
             <div>
@@ -447,14 +465,14 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
             onClick={() => run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", as_skill: true, entry_ids: checked, story, proof: proof || undefined }), onAnswered)}>
             Add as a skill ({checked.length} role{checked.length === 1 ? "" : "s"})
           </button>
-          {checked.length > 0 && !entry && <div className="muted small">Check a job too: bullets go under jobs, not projects.</div>}
-          {entry && (
+          {jobs.length > 0 && (
             <div className="muted small">
               Bullet goes under{" "}
               <select value={entry} onChange={(e) => setChosen(e.target.value)}>
-                {jobs.map((e) => <option key={e.id} value={e.id}>{e.title + (e.company ? " · " + e.company : "")} ({e.bullets} bullets)</option>)}
+                <option value="">Pick the job or project this story happened at</option>
+                {jobs.map((e) => <option key={e.id} value={e.id}>{label(e)}, {e.bullets} bullets</option>)}
               </select>
-              {" "}(the checked job with the fewest bullets; on a tie, the most recent).{checked.length > 1 ? " The skill is saved with every checked role as context." : ""}
+              {checked.length > 1 ? " The skill is saved with every checked role as context." : ""}
             </div>
           )}
           {gap.kind !== "keyword" && (
@@ -464,7 +482,8 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
             <div>
               <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />
               <div>Words: {text.split(/\s+/).filter(word => word.length > 0).length} of 25</div>
-              {draft.codes.length > 0 && <div className="banner error">The draft adds what your answer does not say ({draft.codes.join(", ")}). Edit it so it only states your facts.</div>}
+              {draft.codes.length > 0 && <div className="banner error">The draft adds what your answer does not say ({draft.codes.join(", ")}).{draft.words && draft.words.length > 0 ? <> Remove or reword: <b>{draft.words.join(", ")}</b>.</> : " Edit it so it only states your facts."}</div>}
+              {saveBlocked && <div className="muted small">Save is off until you edit the text; the server checks the edited text again when you save.</div>}
               {draft.skills.length > 0 && (
                 <div className="roles">
                   <div className="muted small">Your story also names these. Tick the ones to add as skills:</div>
@@ -476,7 +495,7 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
                   ))}
                 </div>
               )}
-              <button className="btn tiny" onClick={handleSave} disabled={!filled(text) || busy === "answer"}>
+              <button className="btn tiny" onClick={handleSave} disabled={!filled(text) || saveBlocked || busy === "answer"}>
                 {(withSkill ? "Add skill and bullet point" : "Add bullet" + (checked.length > 1 ? " + skill" : "")) + (extras.length ? ` + ${extras.length} more skill${extras.length === 1 ? "" : "s"}` : "") + " and re-score"}
               </button>
             </div>
@@ -485,6 +504,32 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
       )}
       {mode === "other_name" && (
         <div>
+          <div>
+            <label className="role-check"><input type="radio" checked={relation === "same"} onChange={() => setRelation("same")} /> Same thing, another spelling</label>
+            <label className="role-check"><input type="radio" checked={relation === "related"} onChange={() => setRelation("related")} /> Related work</label>
+          </div>
+          {relation === "related" && (
+            <div className="roles">
+              <div className="muted small">Pick the bullets that show this work. The term is used only on these bullets, and the first time a rewording uses it you approve the line.</div>
+              {entries.filter((e) => e.bullet_list.length).map((e) => (
+                <div key={e.id}>
+                  <div className="muted small">{label(e)}</div>
+                  {e.bullet_list.map((b) => (
+                    <label key={b.id} className="role-check">
+                      <input type="checkbox" checked={picked.includes(b.id)} onChange={() => togglePick(b.id)} />
+                      <code>{b.id}</code> {b.short}
+                    </label>
+                  ))}
+                </div>
+              ))}
+              <textarea rows={4} value={story} onChange={(e) => setStory(e.target.value)} placeholder={`What you did that is "${gap.requirement}": your own words, naming it.`} />
+              <button className="btn tiny" disabled={!picked.length || !filled(story) || busy === "answer"} onClick={() =>
+                run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "other_name", relation: "related", bullet_ids: picked, story }), onAnswered)}>
+                Save related work and re-score
+              </button>
+            </div>
+          )}
+          {relation === "same" && <>
           <input type="text" value={sameAs} onChange={(e) => setSameAs(e.target.value)} placeholder="The name you have it under (e.g. a similar tool)" />
           {help && help.similar_terms.length > 0 && (
             <div>
@@ -495,8 +540,9 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
           )}
           <textarea rows={4} value={story} onChange={(e) => setStory(e.target.value)} placeholder="Optional short story" />
           <button className="btn tiny" disabled={!filled(sameAs) || busy === "answer"} onClick={() => {
-            if (filled(sameAs)) run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "other_name", same_as: sameAs, story: story || undefined }), onAnswered);
+            if (filled(sameAs)) run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "other_name", relation: "same", same_as: sameAs, story: story || undefined }), onAnswered);
           }}>Save and re-score</button>
+          </>}
         </div>
       )}
       {err && <div className="banner error">{err}</div>}

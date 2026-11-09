@@ -30,6 +30,18 @@ of the work.
 - Inconsistent or unusual date formats (years of experience computed wrong).
 - Fix: one ATS-safe template + parse-back test on every generated PDF.
 
+#### iCIMS (tested 2026-11-08: copies of a tailored resume uploaded to an iCIMS form, account disconnected)
+- At most 5 dated entries are kept; a 6th (a career break) pushed a random real job out. Career
+  breaks stay off the PDF; parse-back `too_many_entries` blocks more than 5.
+- The employer is taken by recognising a company name: "X (Client: Y)" gave Y, or nothing. A
+  client in the company line goes on its own plain line; `company_has_parens` blocks parentheses.
+- Company, title and dates on one line was worse than the two-line entry (an employer lost,
+  header lines copied into descriptions): keep two lines.
+- Education (dropdown fields) and LinkedIn (a separate question) never fill from any resume; the
+  candidate fills them by hand. Moving Skills/Education to page 1 changed nothing.
+- The order of jobs on the form is iCIMS's own and changes with the layout; dates stay right.
+- Leftover: the last job's company line can appear at the end of the description of the job above.
+
 ### Recruiter scan
 - Most recent role shows no scale or outcome while older roles do (inverted signal).
 - Must-have evidence buried below other bullets or in an old role.

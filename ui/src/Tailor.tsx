@@ -17,9 +17,9 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
 
   if (!st) return note ? <div className="muted small">{note}</div> : null;
 
-  const start = () => {
+  const start = (fresh = false) => {
     setBusy(true);
-    api.tailorNow(id)
+    api.tailorNow(id, fresh)
       .then((r) => {
         setNote(r.tailor_batch > 0
           ? `Queued for tailoring (batch ${r.tailor_batch}): the Mac worker tailors it, and the job moves to Tailoring.`
@@ -33,10 +33,16 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
   return (
     <div className={"tailor-box" + (st.ready ? " ready" : "")}>
       {st.ready && <b>Ready for tailor</b>}
-      <button className="btn tiny accent" disabled={!st.can_tailor || busy || note?.startsWith("Queued") === true} onClick={start}
+      <button className="btn tiny accent" disabled={!st.can_tailor || busy || note?.startsWith("Queued") === true} onClick={() => start()}
         title="Make a tailored resume for this job (the Mac worker, general14). Only at 75 or more; open gap questions do not block it.">
         {busy ? "Queuing…" : st.tailored ? "Re-tailor" : "Tailor now"}
       </button>
+      {st.tailored && (
+        <button className="btn tiny" disabled={!st.can_tailor || busy || note?.startsWith("Queued") === true} onClick={() => start(true)}
+          title="Ignores this job's earlier versions and builds a new resume from your bank. The earlier versions stay in the list.">
+          Re-tailor from scratch
+        </button>
+      )}
       {!st.can_tailor && st.reasons.length > 0 && <span className="muted small">{st.reasons.join(" ")}</span>}
       {st.can_tailor && st.open_questions > 0 && (
         <span className="muted small">
@@ -47,8 +53,46 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
       {st.last && (
         <div className={"small tailor-last" + (st.last.ok ? " muted" : " bad")}>
           Last tailor ({new Date(st.last.at).toLocaleString()}): {st.last.message}
+          {st.last.left_out && st.last.left_out.length > 0 && (
+            <div>Left out (fix in the bank or review): {st.last.left_out.map((l) => `${l.bullet_id} (${l.codes.join(", ")})`).join(", ")}</div>
+          )}
         </div>
       )}
+      {/* First use of a related keyword: the PDF waits until you read the line and approve it. */}
+      {st.pending_review.map((p) => (
+        <div key={p.resume_id + p.bullet_id + p.keyword} className="small tailor-last bad">
+          Check this wording ({p.bullet_id}, uses "{p.keyword}"): {p.text}{" "}
+          <button className="btn tiny" disabled={busy}
+            title="The keyword is related work you linked to this bullet. Approve only if the line is true as written; a changed line asks again."
+            onClick={() => {
+              setBusy(true);
+              api.approveWording(id, p.resume_id, p.bullet_id)
+                .then((r) => { setNote(r.pdf_error ? `Approved; the PDF still fails: ${r.pdf_error}` : "Approved; the PDF was made again."); onChanged(); return api.tailorStatus(id).then(setSt); })
+                .catch((e: Error) => setNote("Could not approve: " + e.message))
+                .finally(() => setBusy(false));
+            }}>
+            Approve wording
+          </button>
+        </div>
+      ))}
+      {/* Send to review: the verifier could not confirm this text from your bank; the PDF waits for your approval. */}
+      {(st.verify_review ?? []).map((v) => (
+        <div key={v.resume_id + v.kind + v.id} className="small tailor-last bad">
+          Not confirmed by the verifier ({v.kind === "claim" ? v.id : v.kind === "summary" ? "summary" : "skill"}): {v.text}
+          {v.evidence !== undefined && <div className="muted">Evidence: {v.evidence}</div>}{" "}
+          <button className="btn tiny" disabled={busy}
+            title="The local model could not find this in your bank. Approve only if it is true as written; a changed text asks again."
+            onClick={() => {
+              setBusy(true);
+              api.approveVerify(id, v.resume_id, v.kind, v.id)
+                .then((r) => { setNote(r.pdf_error ? `Approved; the PDF still fails: ${r.pdf_error}` : "Approved; the PDF was made again."); onChanged(); return api.tailorStatus(id).then(setSt); })
+                .catch((e: Error) => setNote("Could not approve: " + e.message))
+                .finally(() => setBusy(false));
+            }}>
+            Approve
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

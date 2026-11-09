@@ -6,7 +6,8 @@
 // shows each round's changes and the report.
 import { useEffect, useState } from "react";
 import { api, fmtDate } from "./api";
-import type { CheckView as View } from "./api";
+import type { CheckSettings, CheckView as View } from "./api";
+import { useExtension } from "./extension";
 
 type Status = { jobId?: string; target?: string; step?: string; round?: number; error?: string; at?: string };
 const STEP: Record<string, string> = {
@@ -14,27 +15,6 @@ const STEP: Record<string, string> = {
   saving: "Saving the report…", fixing: "Fixing the resume from the report…", asking: "Sending the new version back to the chat…",
   done: "Done.", failed: "Failed", saved: "Report saved."
 };
-
-// The extension's bridge (extension/jobops.js) answers on window messages.
-function useExtension() {
-  const [ready, setReady] = useState(false);
-  const [status, setStatus] = useState<Status | null>(null);
-  useEffect(() => {
-    const on = (e: MessageEvent) => {
-      if (e.source !== window || e.data?.from !== "jobops-extension") return;
-      if (e.data.type === "ready") setReady(true);
-      if (e.data.type === "status") setStatus(e.data.status as Status);
-    };
-    window.addEventListener("message", on);
-    window.postMessage({ from: "jobops-ui", type: "ping" }, location.origin);
-    return () => window.removeEventListener("message", on);
-  }, []);
-  // newChat: start a new conversation (after you chose a version, the old chat's history no
-  // longer matches your resume).
-  const start = (jobId: string, target: "claude" | "chatgpt", newChat: boolean) =>
-    window.postMessage({ from: "jobops-ui", type: "check", jobId, target, newChat }, location.origin);
-  return { ready, status, start };
-}
 
 const STOPPED: Record<string, string> = {
   covered: "nothing left it can fix (any remaining points need your facts)", no_change: "a round changed nothing",
@@ -48,6 +28,14 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const ext = useExtension();
+  // "Check with Claude after each tailor": one switch for all jobs (server-side), told to the
+  // app's AutoCheck through a window event so it applies at once.
+  const [auto, setAuto] = useState<CheckSettings | null>(null);
+  useEffect(() => { api.checkSettings().then(setAuto).catch(() => setAuto(null)); }, []);
+  const saveAuto = (s: Partial<CheckSettings>) => (setAuto((a) => (a ? { ...a, ...s } : a)), api.setCheckSettings(s)).then((x) => {
+    setAuto(x);
+    window.dispatchEvent(new CustomEvent("jobops:check-settings", { detail: x }));
+  }).catch((e: Error) => setErr(e.message));
   const load = () => api.check(id).then((x) => { setV(x); setErr(null); }).catch((e: Error) => setErr(e.message));
   useEffect(() => { void load(); }, [id, rev]); // eslint-disable-line react-hooks/exhaustive-deps
   const decide = (source: string, choice: { use?: "new" | "previous"; resume_id?: string }) => {
@@ -74,8 +62,14 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
       })
       .catch((e: Error) => setErr(e.message)).finally(() => setBusy(false));
   };
+  const restart = (source: string) => {
+    setBusy(true);
+    setNote(null);
+    api.restartCheck(id, source)
+      .then(() => { setNote(`${source === "claude" ? "Claude" : "ChatGPT"} check restarted: the old rounds are kept as a file; the next check opens a new chat.`); return load(); })
+      .catch((e: Error) => setNote("Could not restart: " + e.message)).finally(() => setBusy(false));
+  };
   // After a choice, the next check starts a new chat (the old one reviewed other versions).
-  const fresh = (source: string) => !!v?.loops.find((l) => l.source === source)?.decision;
   const mine = ext.status && ext.status.jobId === id ? ext.status : null;
   const running = !!mine && mine.step !== "done" && mine.step !== "failed";
 
@@ -88,7 +82,7 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
   return (
     <div className="check-tab">
       <div className="muted small">
-        Click Check with Claude and keep the Claude tab open. Claude reviews the tailored resume (no contact details); JobOps fixes each point it can through the guard, re-scores, and sends Claude the new version with what changed, until nothing is left to fix or 5 rounds are done. Your resume does not change during the check: at the end, if the best version scores the same or higher, you choose here.
+        Turn on the check below (it runs after each tailor) and keep the chat tab open. Claude reviews the tailored resume (no contact details); JobOps fixes each point it can through the guard, re-scores, and sends Claude the new version with what changed, until nothing is left to fix or 5 rounds are done. Your resume does not change during the check: at the end, if the best version scores the same or higher, you choose here.
       </div>
 
       <div className={"check-score" + (drop > 0 ? " warn" : "")}>
@@ -127,12 +121,19 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
         </tbody>
       </table>
 
+      {auto && (
+        <label className="check-auto small">
+          <input type="checkbox" checked={auto.auto_check} onChange={(e) => void saveAuto({ auto_check: e.target.checked })} />
+          {" "}Check with{" "}
+          <select value={auto.source} onChange={(e) => void saveAuto({ source: e.target.value as CheckSettings["source"] })}>
+            <option value="claude">Claude</option><option value="chatgpt">ChatGPT</option>
+          </select>
+          {" "}after each tailor, for every job <span className="muted">(starts by itself when a tailor makes a new resume, in a new chat, while a JobOps page is open in Chrome; one check at a time)</span>
+        </label>
+      )}
+
       <div className="check-run">
-        <button className="btn accent" disabled={!ext.ready || running} onClick={() => ext.start(id, "claude", fresh("claude"))}
-          title={ext.ready ? "Opens this job's Claude chat in Chrome and runs the check" : "The JobOps Chrome extension is not installed or not loaded on this page"}>
-          {running ? "Checking…" : v.loops.some((l) => l.source === "claude") ? "Check again with Claude" : "Check with Claude"}
-        </button>
-        <button className="btn ghost tiny" disabled={!ext.ready || running} onClick={() => ext.start(id, "chatgpt", fresh("chatgpt"))}>ChatGPT instead</button>
+        {running && <span className="muted small">Checking…</span>}
         {!ext.ready && <span className="muted small"> Load the JobOps extension (chrome://extensions → Load unpacked → extension/), then reload this page.</span>}
         {mine && (
           <span className={mine.step === "failed" ? "small bad" : "muted small"}>
@@ -145,6 +146,11 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
         <div key={l.source} className="check-loop">
           <h4>{l.source === "claude" ? "Claude" : "ChatGPT"} check: {l.rounds.length - 1} round{l.rounds.length === 2 ? "" : "s"}
             {l.stopped && <span className="muted small"> · stopped: {STOPPED[l.stopped] ?? l.stopped}</span>}
+            {" "}<button className="btn ghost tiny" disabled={busy || running} onClick={() => {
+                if (l.candidate && !l.decision && !window.confirm("This check is waiting for your choice. Restarting removes the Choose panel; its versions stay in the resume list.")) return;
+                restart(l.source);
+              }}
+              title="Start this check over: its rounds are kept as a file, and the next check opens a new chat at round 1.">Restart check</button>
           </h4>
           {l.stopped && l.candidate && !l.decision && (
             <div className="check-choose">

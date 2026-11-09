@@ -100,7 +100,7 @@ export function JobDrawer({ id, initialTab, onClose, onChanged }: { id: string; 
             <div className="muted small prompt-note">Copy as prompt: the job, how it was scored, and your gaps, for a stronger model to find your weak points. No resume text or contact details are included.</div>
             <nav className="drawer-tabs">
               {(["overview", "score", "gaps", "check", "tracking", "description"] as Tab[]).map((t) => (
-                <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>{t[0].toUpperCase() + t.slice(1)}</button>
+                <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>{t === "check" ? "Check resume" : t[0].toUpperCase() + t.slice(1)}</button>
               ))}
             </nav>
             <div className="drawer-body">

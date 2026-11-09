@@ -44,7 +44,8 @@ const USAGE = `usage: node api/src/cli.ts <command>
   lint <resume_id>
   ats check [<resume_id>]  (local readers: pdftotext, pdf.js, OpenResume; the fake resume without an id)
   ats recheck [--all]      (read-only: the PDFs in profile/pdf made since 2026-11-06, or all, against their records)
-  ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected)
+  ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected; Workday or iCIMS)
+  ats references           (read-only: every saved report in data/ats/ vs today's fake resume; re-upload reminder)
   verify eval [<file>]     (the verifier on the calibration set, default data/verify-eval.yaml; exit 1 unless A4 holds)
   synonyms audit           (read-only: each synonym pair classified same / related / different by the verifier)`;
 
@@ -163,6 +164,7 @@ async function main(argv: string[]): Promise<unknown> {
       if (sub === "check") return t.ats(t.db(), { resumeId: rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined });
       if (sub === "recheck") return t.atsRecheck(t.db(), { all: rest.includes("--all") });
       if (sub === "compare") return t.atsCompare(need(rest[0], "report file"));
+      if (sub === "references") return t.atsReferences();
       break;
     case "verify":
       if (sub === "eval") {

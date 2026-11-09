@@ -15,7 +15,7 @@ import { fakeBank, fakeRecord } from "../src/render/fake-resume.ts";
 import { pdfChecksPassed, renderRecord } from "../src/render/render.ts";
 import { openResumeAvailable } from "../src/render/openresume.ts";
 import { linkedBulletIds } from "../src/render/verify-rules.ts";
-import { checkClaims, checkSkill, checkSummary, verifyRecord } from "../src/render/verify.ts";
+import { checkClaims, checkSkill, checkSummary, summarySource, verifyRecord } from "../src/render/verify.ts";
 import { ats, synonymsAudit, verifyEval } from "../src/tools.ts";
 import { saveBank } from "../src/profile/bank.ts";
 import { writeRecord } from "../src/tailor/records.ts";
@@ -161,6 +161,35 @@ test("6. summary: a number no bullet has is claim_unsupported (detail summary), 
     const issues = await checkSummary(newDb(), record, fakeBank, noExtra, { baseUrl: m.url });
     assert.deepEqual(issues.map((i) => [i.code, i.extractor, i.detail]), [["claim_unsupported", "verifier", "summary"]]);
     assert.deepEqual((await verifyRecord(newDb(), record, fakeBank, noExtra, { baseUrl: m.url })).map((i) => [i.code, i.detail]), [["claim_unsupported", "summary"]]);
+  } finally { m.close(); }
+});
+
+// Years of experience: a derived "Total experience: N years" line in the summary source.
+// Jobs Jan 2016 - Jun 2020 (53 months) and Jul 2020 - Dec 2023 (41 months): 94 months, 7 whole years;
+// the career break between them is left out.
+const yearsBank = {
+  ...fakeBank,
+  roles: [
+    { ...fakeBank.roles[0], dates: "Jul 2020 - Dec 2023" },
+    { id: "brk", title: "Career break", dates: "Jan 2024 - Dec 2025", kind: "break" as const, bullets: [] },
+    { ...fakeBank.roles[2], dates: "Jan 2016 - Jun 2020" }
+  ]
+};
+
+test("summary: the source has Total experience (whole years, breaks left out) and a line per job", () => {
+  const src = summarySource(yearsBank);
+  assert.match(src, /^Total experience: 7 years$/m);
+  assert.match(src, /^Senior Software Engineer at Acme Software \(Client: Globex Corp\), Jul 2020 - Dec 2023$/m);
+  assert.match(src, /^Software Engineer at OldCo Systems, Jan 2016 - Jun 2020$/m);
+  assert.doesNotMatch(src, /Career break/);
+});
+
+test("summary: \"7+ years\" quoting \"Total experience: 7 years\" passes; \"10+ years\" is claim_unsupported", async () => {
+  const m = await fakeModel(() => claims(["7+ years of experience", "Total experience: 7 years"]));
+  try {
+    assert.deepEqual(await checkSummary(newDb(), withSummary("7+ years building web apps"), yearsBank, noExtra, { baseUrl: m.url }), []);
+    const issues = await checkSummary(newDb(), withSummary("10+ years building web apps"), yearsBank, noExtra, { baseUrl: m.url });
+    assert.deepEqual(issues.map((i) => [i.code, i.extractor, i.detail]), [["claim_unsupported", "verifier", "summary"]]);
   } finally { m.close(); }
 });
 

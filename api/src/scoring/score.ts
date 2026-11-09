@@ -123,8 +123,8 @@ export function span(dates: string, now = new Date()): { start: number; end: num
   return start !== null && end !== null && end >= start ? { start, end } : null;
 }
 
-// Sum of role durations in years; unparseable dates and career breaks are skipped.
-export function totalYears(bank: Bank, now = new Date()): number {
+// Sum of role durations in months; unparseable dates and career breaks are skipped.
+export function totalMonths(bank: Bank, now = new Date()): number {
   let months = 0;
   for (const role of bank.roles) {
     if (role.kind === "break") continue;
@@ -134,7 +134,12 @@ export function totalYears(bank: Bank, now = new Date()): number {
     const end = toMonths(parts[1], now);
     if (start !== null && end !== null && end >= start) months += end - start;
   }
-  return Math.round((months / 12) * 10) / 10;
+  return months;
+}
+
+// Sum of role durations in years (one decimal); unparseable dates and career breaks are skipped.
+export function totalYears(bank: Bank, now = new Date()): number {
+  return Math.round((totalMonths(bank, now) / 12) * 10) / 10;
 }
 
 export function allBullets(bank: Bank): Bullet[] {

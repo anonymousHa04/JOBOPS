@@ -49,8 +49,8 @@ import { gateBullet, names } from "./profile/gate.ts";
 import { flagResolved, listReports, loadFlagResolutions, loadReport, resolveFactFlags, SOURCES } from "./extension/reports.ts";
 import type { Source } from "./extension/reports.ts";
 import { atsCheck } from "./render/ats.ts";
-import { compareReport } from "./render/ats-report.ts";
-import type { Reported } from "./render/ats-report.ts";
+import { atsReferences as references, compareReport } from "./render/ats-report.ts";
+import type { IcimsReported, Reported } from "./render/ats-report.ts";
 import { lintRecord } from "./tailor/lint.ts";
 import { fetchJob } from "./jobs/from-url.ts";
 import { createJobRepository } from "./jobs/repository.ts";
@@ -537,9 +537,15 @@ export async function atsRecheck(d: Db, opts: { all?: boolean } = {}) {
 }
 
 // Compares what a site's resume autofill showed for the fake resume (a JSON file filled in
-// by hand after an upload test) with what it should show.
+// by hand after an upload test) with what it should show. A report with "site": "icims" is
+// the iCIMS shape (see the top of render/ats-report.ts).
 export function atsCompare(file: string) {
-  return compareReport(JSON.parse(readFileSync(file, "utf8")) as Reported);
+  return compareReport(JSON.parse(readFileSync(file, "utf8")) as Reported | IcimsReported, file);
+}
+
+// Read-only: every saved report in data/ats/ against today's fake resume (re-upload reminder).
+export function atsReferences(dir?: string) {
+  return references(dir);
 }
 
 // Which model each task uses and whether its server is up (config/models.yaml).

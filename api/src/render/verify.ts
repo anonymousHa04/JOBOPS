@@ -7,6 +7,7 @@ import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { vocabulary } from "../profile/bank.ts";
 import { generate } from "../model/llm.ts";
 import { forTask } from "../model/registry.ts";
+import { totalMonths } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
 import type { Issue } from "./parseback.ts";
 import { claimIssues, linkedBulletIds, skillIssue } from "./verify-rules.ts";
@@ -53,9 +54,16 @@ export async function checkClaims(db: Db, id: string, text: string, source: stri
 }
 
 // summary_claims: the summary against the whole bank's bullets (text and evidence, roles and
-// projects). Cache kind "summary"; detail "summary".
-export function summarySource(bank: Bank): string {
-  return [...bank.roles, ...bank.projects].flatMap((e) => e.bullets).map((b) => b.text + "\n" + (b.evidence ?? "")).join("\n");
+// projects). Cache kind "summary"; detail "summary". Two derived kinds of line, since "7+ years"
+// can never be quoted from a bullet: "Total experience: N years" (whole years of the jobs' dates,
+// career breaks left out, "Present" = today) and one "Title at Company, dates" line per job.
+export function summarySource(bank: Bank, now = new Date()): string {
+  const jobs = bank.roles.filter((r) => r.kind !== "break");
+  return [
+    `Total experience: ${Math.floor(totalMonths(bank, now) / 12)} years`,
+    ...jobs.map((r) => `${r.title}${r.company ? ` at ${r.company}` : ""}, ${r.dates}`),
+    ...[...bank.roles, ...bank.projects].flatMap((e) => e.bullets).map((b) => b.text + "\n" + (b.evidence ?? ""))
+  ].join("\n");
 }
 export const checkSummaryText = (db: Db, text: string, source: string, vocab: Set<string>, baseUrl?: string) =>
   checkClaims(db, "summary", text, source, vocab, baseUrl, "summary");

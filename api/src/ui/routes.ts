@@ -25,6 +25,7 @@ import { keywordApprove, render as renderResume, verifyApprove } from "../tools.
 import { createReadStream } from "node:fs";
 import { join } from "node:path";
 import { event, shortId, warnEvent } from "../log.ts";
+import { updateBoard, updateBoardCandidates } from "./update-board.ts";
 import { bulkDelete, bulkPreview, deleteHints, deleteJob, DeleteRefused, deleteSkipMatches, setKept, skipMatches } from "../jobs/delete.ts";
 
 const AppBody = z.object({ status: z.enum(APP_STATUSES).nullable(), note: z.string().max(2000).nullable().optional() }).strict();
@@ -534,6 +535,18 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     } catch (err) {
       if (err instanceof DeleteRefused) return reply.status(message(err) === "job not found" ? 404 : 409).send({ error: "refused", message: message(err) });
       return reply.status(500).send({ error: "delete_failed", message: message(err) });
+    }
+  });
+
+  // Update board: tailored jobs now below 75 move to Not tailored; their tailored resumes are
+  // backed up and deleted. The preview is what the confirm panel lists. updateBoard publishes
+  // one change per job (no :id in the path, so the onResponse hook does not).
+  app.get("/ui/board/update/preview", async () => ({ jobs: updateBoardCandidates(db) }));
+  app.post("/ui/board/update", async (_request, reply) => {
+    try {
+      return updateBoard(db);
+    } catch (err) {
+      return reply.status(500).send({ error: "update_failed", message: message(err) });
     }
   });
 

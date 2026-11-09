@@ -70,7 +70,6 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
       .catch((e: Error) => setNote("Could not restart: " + e.message)).finally(() => setBusy(false));
   };
   // After a choice, the next check starts a new chat (the old one reviewed other versions).
-  const fresh = (source: string) => !!v?.loops.find((l) => l.source === source)?.decision;
   const mine = ext.status && ext.status.jobId === id ? ext.status : null;
   const running = !!mine && mine.step !== "done" && mine.step !== "failed";
 
@@ -83,7 +82,7 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
   return (
     <div className="check-tab">
       <div className="muted small">
-        Click Check with Claude and keep the Claude tab open. Claude reviews the tailored resume (no contact details); JobOps fixes each point it can through the guard, re-scores, and sends Claude the new version with what changed, until nothing is left to fix or 5 rounds are done. Your resume does not change during the check: at the end, if the best version scores the same or higher, you choose here.
+        Turn on the check below (it runs after each tailor) and keep the chat tab open. Claude reviews the tailored resume (no contact details); JobOps fixes each point it can through the guard, re-scores, and sends Claude the new version with what changed, until nothing is left to fix or 5 rounds are done. Your resume does not change during the check: at the end, if the best version scores the same or higher, you choose here.
       </div>
 
       <div className={"check-score" + (drop > 0 ? " warn" : "")}>
@@ -134,11 +133,7 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
       )}
 
       <div className="check-run">
-        <button className="btn accent" disabled={!ext.ready || running} onClick={() => ext.start(id, "claude", fresh("claude"))}
-          title={ext.ready ? "Opens this job's Claude chat in Chrome and runs the check" : "The JobOps Chrome extension is not installed or not loaded on this page"}>
-          {running ? "Checking…" : v.loops.some((l) => l.source === "claude") ? "Check again with Claude" : "Check with Claude"}
-        </button>
-        <button className="btn ghost tiny" disabled={!ext.ready || running} onClick={() => ext.start(id, "chatgpt", fresh("chatgpt"))}>ChatGPT instead</button>
+        {running && <span className="muted small">Checking…</span>}
         {!ext.ready && <span className="muted small"> Load the JobOps extension (chrome://extensions → Load unpacked → extension/), then reload this page.</span>}
         {mine && (
           <span className={mine.step === "failed" ? "small bad" : "muted small"}>

@@ -9,6 +9,8 @@ export type Card = {
   first_seen_at: string; state: Pipeline; score: number | null; band: string | null; decision: string | null;
   error_code: string | null; failed_stage: string | null; skip_reason: string | null; ready_to_tailor: boolean;
   application: AppStatus | null; open_tasks: number;
+  // Set when Update board moved the job to Not tailored.
+  reason?: string | null;
 };
 
 export type QueueTask = {
@@ -89,6 +91,10 @@ export type Gap = {
 // A ticked board job in the delete panel: resumes it would lose, tracking status, keep mark.
 export type BulkItem = { id: string; title: string; company: string; resumes: number; status: string | null; kept: boolean };
 export type SkipMatch = { id: string; title: string; company: string; word: string; status: string | null; resumes: number };
+export type UpdateCandidate = { id: string; company: string; title: string; score: number | null; band: string | null;
+  application: AppStatus | null; resumes: string[] };
+export type UpdateResult = { jobs: number; records: number; files: number; backup_dir: string | null;
+  refused: { id: string; company: string; title: string; message: string }[] };
 export type SkipMatches = { keywords: string[]; jobs: SkipMatch[]; kept: SkipMatch[] };
 export type DeleteHints ={ title: string[]; keywords: string[]; current: string[]; protected: string[] };
 export type DeleteResult = {
@@ -234,6 +240,9 @@ export const api = {
     call<{ bullet_id: string; terms: string[]; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-wording`, { bullet_id }),
   approveVerify: (id: string, rid: string, kind: string, itemId: string) =>
     call<{ resume_id: string; kind: string; id: string; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-verify`, { kind, id: itemId }),
+  // Update board: tailored jobs now below 75 move to Not tailored; their resumes are deleted (backed up first).
+  updateBoardPreview: () => call<{ jobs: UpdateCandidate[] }>("GET", "/ui/board/update/preview").then((r) => r.jobs),
+  updateBoard: () => call<UpdateResult>("POST", "/ui/board/update"),
   rescoreAllStatus: () => call<{ changed: boolean; candidates: number }>("GET", "/ui/rescore-all"),
   rescoreAll: () => call<{ batch_id: number; queued: number }>("POST", "/ui/rescore-all")
 };

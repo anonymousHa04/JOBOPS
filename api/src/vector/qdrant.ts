@@ -66,6 +66,12 @@ export async function upsert(name: string, points: { id: string; vector: Record<
   if (!res.ok) throw new Error(`qdrant upsert ${name}: status ${res.status}`);
 }
 
+// Delete every point that matches a filter (stale copies of a changed bank).
+export async function deleteWhere(name: string, filter: unknown): Promise<void> {
+  const res = await call("POST", `/collections/${name}/points/delete?wait=true`, { filter });
+  if (!res.ok) throw new Error(`qdrant delete ${name}: status ${res.status}`);
+}
+
 export async function query(name: string, using: string, vector: number[], limit: number, filter?: unknown): Promise<Point[]> {
   const res = await call("POST", `/collections/${name}/points/query`,
     { query: vector, using, limit, ...(filter === undefined ? {} : { filter }), with_payload: true, with_vector: true });

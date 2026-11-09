@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import type { Db } from "../db.ts";
 import { ResumeRecordSchema } from "../profile/schema.ts";
-import type { Bank, ResumeRecord } from "../profile/schema.ts";
+import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
+import { relatedKeywords } from "../profile/bank.ts";
+import { hasTerm } from "../scoring/terms.ts";
 import * as config from "../scoring/config.ts";
 import { JUDGE_PROMPT_VERSION } from "../scoring/judge.ts";
 import type { StoredRecord } from "./decide.ts";
@@ -18,7 +20,7 @@ import type { ResumeContent } from "./ideal.ts";
 export const recordsDir = () => join(process.env.JOBOPS_PROFILE_DIR ?? "profile", "records");
 
 // Bump when selection or decision logic changes in a way config does not show.
-const ENGINE_LOGIC = "v2: ideal/equivalence/decide (engine-algorithm 4-5); soft must-haves rank as themes, ties by evidence credit";
+const ENGINE_LOGIC = "v3: ideal/equivalence/decide (engine-algorithm 4-5); soft must-haves rank as themes, ties by evidence credit; gate-blocked bullets never chosen";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
 
@@ -26,7 +28,8 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0,
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
   if (v && typeof v === "object") {
-    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`;
+    // Approving a reworded line (a bullet's approved_terms) is not a bank change that makes records stale.
+    return `{${Object.keys(v).filter((k) => k !== "approved_terms").sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(",")}}`;
   }
   return JSON.stringify(v);
 }
@@ -64,7 +67,19 @@ export function originalContent(bank: Bank): ResumeContent {
   };
 }
 
-export type NewRecord = Omit<ResumeRecord, "resume_id" | "created_at" | "content" | "hashes"> & { content: ResumeContent };
+// First use of a related keyword (K2): a reworded bullet that names one its bank text does not
+// waits for the user's review (the exit gate blocks it as keyword_review until approved).
+export function pendingReview(bullets: { id: string; text: string }[], bank: Bank, extra: SkillsExtra): { bullet_id: string; keyword: string }[] {
+  const bankText = new Map([...bank.roles, ...bank.projects].flatMap((e) => e.bullets.map((b) => [b.id, b.text] as const)));
+  const related = relatedKeywords(extra);
+  return bullets.flatMap((b) => {
+    const was = bankText.get(b.id);
+    if (was === undefined || was === b.text) return [];
+    return related.filter((r) => hasTerm(b.text, r.name) && !hasTerm(was, r.name)).map((r) => ({ bullet_id: b.id, keyword: r.name }));
+  });
+}
+
+export type NewRecord =Omit<ResumeRecord, "resume_id" | "created_at" | "content" | "hashes"> & { content: ResumeContent };
 
 function index(db: Db, r: ResumeRecord, path: string): void {
   db.prepare(

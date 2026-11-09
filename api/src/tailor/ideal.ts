@@ -1,7 +1,8 @@
-import { vocabulary } from "../profile/bank.ts";
+import { dropUnlinked, vocabulary, withRelatedTags } from "../profile/bank.ts";
+import { blockedBullets, listableExtras } from "../profile/gate.ts";
 import type { Bank, Bullet, Preferences, SkillsExtra } from "../profile/schema.ts";
 import type { Requirements } from "../requirements/schema.ts";
-import { allBullets, bulletRecency, scoreRequirements } from "../scoring/score.ts";
+import { allBullets, bulletRecency, buildIndex, evidence, scoreRequirements } from "../scoring/score.ts";
 import type { Verdicts } from "../scoring/score.ts";
 import { hasTerm, norm, terms } from "../scoring/terms.ts";
 import { softSkills, synonyms } from "../lists.ts";
@@ -24,6 +25,10 @@ export type ResumeContent = {
   summary_text: string;
   bullets: ContentBullet[]; // in resume order: entries in bank order, must-have evidence first
   skills: string[];
+  // Bank bullets the render gate refuses (bulletBlocked) that this JD would have used: evidence
+  // for one of its requirements, or a role's bullets when the role is left with none. Not
+  // content (storedContent drops it); the tailor copies it to the record. Sorted by id.
+  left_out?: { bullet_id: string; codes: string[] }[];
 };
 
 export type Budget = Preferences["tailoring"];
@@ -81,6 +86,7 @@ export function idealContent(
   budget: Budget,
   opts: { start?: ResumeContent; jobId?: string; verdicts?: Verdicts } = {}
 ): ResumeContent {
+  bank = withRelatedTags(bank, extra);
   const bullets = allBullets(bank);
   const entry = entryOf(bank);
   const rec = bulletRecency(bank);
@@ -114,8 +120,11 @@ export function idealContent(
   // A bullet's own evidence credit (§3): a measured result earns supported_metric, times
   // its recency. Breaks ties before the id does.
   const credit = (b: Bullet) => (/\d/.test(b.text) ? CREDIT.supported_metric : CREDIT.supported) * (rec.get(b.id) ?? 1);
+  // A bullet the render gate would refuse is never chosen: the next best one is (user, 2026-11-07).
+  // Scoring already gives it no credit; it is left out of the ranking too.
+  const blocked = blockedBullets(bank);
   // Rank: must-have evidence, then themes, then impact, then evidence credit, then id.
-  const rank = [...bullets].sort((a, b) =>
+  const rank = bullets.filter((b) => !blocked.has(b.id)).sort((a, b) =>
     (musts.get(b.id)?.size ?? 0) - (musts.get(a.id)?.size ?? 0) ||
     (themes.get(b.id) ?? 0) - (themes.get(a.id) ?? 0) ||
     IMPACT[b.impact] - IMPACT[a.impact] ||
@@ -168,6 +177,17 @@ export function idealContent(
     take(best);
   }
 
+  // Left out: blocked bullets the index matches to one of this JD's requirements (scoring no
+  // longer sees them), or of a role left with no bullet.
+  const roleIds = new Set(bank.roles.map((r) => r.id));
+  const blockedList = bullets.filter((b) => blocked.has(b.id));
+  const bIndex = buildIndex(blockedList, vocab);
+  const relevant = new Set([...req.must_have, ...req.themes, ...req.nice_to_have]
+    .flatMap((r) => evidence(r, blockedList, bIndex, vocab)));
+  const left_out = [...blocked].filter(([id]) => relevant.has(id) ||
+    (roleIds.has(entry.get(id) ?? "") && !perEntry.get(entry.get(id) ?? "")))
+    .map(([bullet_id, codes]) => ({ bullet_id, codes })).sort((a, b) => a.bullet_id.localeCompare(b.bullet_id));
+
   // Resume order: entries in bank order; inside an entry, by rank (must-have evidence first).
   const order = new Map(rank.map((b, i) => [b.id, i]));
   const entries = [...bank.roles, ...bank.projects].map((e) => e.id);
@@ -189,7 +209,7 @@ export function idealContent(
   // to evidence; a long unevidenced list reads padded and ATS parsers drop it).
   // Nothing is added beyond the bank and user-confirmed skills.
   const existing = [...new Set([...Object.values(bank.skills).flat(),
-    ...extra.skills.filter((s) => s.status === "have").map((s) => s.name)])];
+    ...listableExtras(bank, extra).filter((s) => s.status === "have").map((s) => s.name)])];
   const byCanon = new Map(existing.map((s) => [norm(s), s]));
   // A JD keyword goes first, in the JD's own spelling, when it is already one of the
   // candidate's skills (literal JD terms for ATS search; nothing new is added).
@@ -201,9 +221,11 @@ export function idealContent(
   const shown = (skill: string) => chosen.some((b) => b.tags.some((t) => norm(t) === norm(skill)) || hasTerm(b.text, skill));
   for (const s of existing) if (!skills.some((x) => norm(x) === norm(s)) && shown(s)) skills.push(s);
   const soft = softSkills().pattern;
-  skills.splice(0, skills.length, ...skills.filter((s) => !soft.test(s)).slice(0, MAX_SKILLS));
+  const kept = dropUnlinked(skills, chosen.map((b) => b.id), extra);
+  skills.splice(0, skills.length, ...kept.filter((s) => !soft.test(s)).slice(0, MAX_SKILLS));
 
   // Summary: the bank variant the JD asks for, as written (never reworded).
   const summary = bank.summaries.find((s) => s.variant === req.summary_variant) ?? bank.summaries[0];
-  return { summary_variant: summary?.variant ?? "", summary_text: summary?.text ?? "", bullets: out, skills };
+  return { summary_variant: summary?.variant ?? "", summary_text: summary?.text ?? "", bullets: out, skills,
+    ...(left_out.length ? { left_out } : {}) };
 }

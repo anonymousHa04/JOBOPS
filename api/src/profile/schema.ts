@@ -11,6 +11,12 @@ export const BulletSchema = z.object({
   source: z.enum(['resume', 'user']).default('resume'),
   // For source: user, the user's answer the bullet is written from ("answer YYYY-MM-DD: ...").
   evidence: z.string().optional(),
+  // YYYY-MM-DD the user read the bullet against its evidence (`bullet review`): its
+  // term_added and scope_raised codes no longer block output.
+  reviewed: z.string().optional(),
+  // Related keywords the user approved in a reworded line of this bullet (K2 first-use review):
+  // text_hash is sha256 of that reworded text, so an approval holds only while the text is the same.
+  approved_terms: z.array(z.object({ term: z.string(), text_hash: z.string(), at: z.string() })).optional(),
 });
 
 // Define Entry schema
@@ -70,6 +76,11 @@ export const SkillsExtraSchema = z.object({
     status: z.enum(['have', 'dont_have']),
     evidence: z.string().optional(),
     added_at: z.string(),
+    // same: another spelling of a bank skill (a synonym). related: related work, a tag on the
+    // linked bank bullets only (never a synonym). Unset: saved before K2, works as before.
+    kind: z.enum(['same', 'related']).optional(),
+    // Bank bullet ids a related skill is shown by (see linkedBullets in bank.ts).
+    bullets: z.array(z.string()).optional(),
   })),
   dismissed: z.array(z.string()).default([]),
   // Learnable-skill answers, kept per JD so earlier answers can be shown again.
@@ -165,6 +176,11 @@ export const ResumeRecordSchema = z.object({
     bullets: z.array(z.object({ id: z.string(), entry_id: z.string(), text: z.string() })),
     skills: z.array(z.string()),
   }),
+  // Bank bullets the bank gate kept off this resume (ids and reason codes, sorted by id).
+  left_out: z.array(z.object({ bullet_id: z.string(), codes: z.array(z.string()) })).optional(),
+  // Reworded bullets that name a related keyword their bank text does not: the exit gate blocks
+  // (keyword_review) until the user approves that wording (bullet approved_terms).
+  pending_review: z.array(z.object({ bullet_id: z.string(), keyword: z.string() })).optional(),
   hashes: z.object({ content: z.string(), bank: z.string(), engine: z.string() }),
   meta: z.object({
     model: z.string().optional(),

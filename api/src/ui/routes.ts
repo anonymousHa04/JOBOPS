@@ -1,17 +1,31 @@
 // Routes for the web UI (ui/, served by Vite on localhost; it calls these under /api).
 // Local only: the API listens on 127.0.0.1 and there is no login.
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db.ts";
-import { addPrepTask, APP_STATUSES, board, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
+import { setMarker, takeMarker } from "../db.ts";
+import { addPrepTask, APP_STATUSES, board, boardCard, jobDetail, jobExists, scoreDetail, setApplication, setPrepTask } from "./data.ts";
 import { health } from "./health.ts";
-import { QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
+import { gapHelpTasks, QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
 import { markRescoredAll, rescoreAllStatus, rescoreCandidates, tailorStatus } from "./tailor-ready.ts";
-import { draftBullet, gapHelp } from "./gap-model.ts";
-import { answerGap, gapList } from "./gaps.ts";
+import { draftBullet } from "./gap-model.ts";
+import { gapKey } from "./gap-related.ts";
+import { answerGap, cachedHelp, gapList } from "./gaps.ts";
 import { autoCarry, carryAnswers, declineCarried, linkSame, matchSimilar, reuseAnswer, setAutoCarry } from "./gap-memory.ts";
 import { analysisPrompt } from "./prompt.ts";
+import { addByLink, AddRefused } from "./add-job.ts";
+import { checkSettings, checkView, hasPdf, recordById, setCheckSettings } from "./check.ts";
+import { checkRunning, chooseResume, decideCheck } from "../extension/step.ts";
+import { restartLoop } from "../extension/rounds.ts";
+import { openFactFlags, SOURCES } from "../extension/reports.ts";
+import { bankGate, pdfChecksPassed, pdfDir } from "../render/render.ts";
+import { loadBank, loadSkillsExtra } from "../profile/bank.ts";
+import { exitIssues } from "../render/exit-gate.ts";
+import { keywordApprove, render as renderResume, verifyApprove } from "../tools.ts";
+import { createReadStream } from "node:fs";
+import { join } from "node:path";
 import { event, shortId, warnEvent } from "../log.ts";
+import { updateBoard, updateBoardCandidates } from "./update-board.ts";
 import { bulkDelete, bulkPreview, deleteHints, deleteJob, DeleteRefused, deleteSkipMatches, setKept, skipMatches } from "../jobs/delete.ts";
 
 const AppBody = z.object({ status: z.enum(APP_STATUSES).nullable(), note: z.string().max(2000).nullable().optional() }).strict();
@@ -27,6 +41,8 @@ const AnswerBody = z.object({
   as_skill: z.boolean().optional(), entry_ids: z.array(z.string().max(120)).max(30).optional(),
   extra_skills: z.array(z.string().max(80)).max(10).optional(),
   with_skill: z.boolean().optional(),
+  draft_codes: z.array(z.string().max(60)).max(20).optional(),
+  relation: z.enum(["same", "related"]).optional(), bullet_ids: z.array(z.string().max(120)).max(30).optional(),
   // The answer reuses an earlier answer to another ask: remember the two asks as the same.
   from_previous: z.object({ from_requirement: z.string().min(1).max(500) }).strict().optional()
 }).strict();
@@ -42,8 +58,21 @@ const DeleteBody = z.object({
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+// Queue gap help for these requirements of a job (202), or say the queue is down (503).
+async function queueHelp(reply: FastifyReply, jobId: string, requirements: string[]) {
+  try {
+    const r = await gapHelpTasks(jobId, requirements.map(gapKey));
+    event(`gap help queued (job ${shortId(jobId)}): ${requirements.length} asked, ${r.queued} new, batch ${r.batch_id}`);
+    return reply.status(202).send(requirements.length === 1 ? { queued: true, batch_id: r.batch_id } : { queued: r.queued, batch_id: r.batch_id });
+  } catch (err) {
+    return reply.status(503).send({ error: "queue_down", message: message(err) });
+  }
+}
+
 export function uiRoutes(app: FastifyInstance, db: Db): void {
   app.get("/ui/board", async () => ({ jobs: board(db) }));
+  // One card, for the change feed: { job: null } when the job is gone (deleted).
+  app.get<{ Params: { id: string } }>("/ui/board/:id", async (request) => ({ job: boardCard(db, request.params.id) }));
 
   app.get("/ui/health", async () => ({ services: await health() }));
 
@@ -94,15 +123,30 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     }
   });
 
+  // Explain one gap: a saved explanation comes back at once ({ help }). Otherwise (or with
+  // refresh) it is queued for the Mac worker (202 { queued }), which runs one at a time on the
+  // one-slot 14B; the change feed tells the UI when it is saved. Called directly, many clicks
+  // waited behind each other inside llama-server until they timed out.
   app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/gaps/help", async (request, reply) => {
     if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
     const body = HelpBody.safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const saved = body.data.refresh ? null : cachedHelp(db, request.params.id, body.data.requirement);
+    if (saved) return { help: saved };
+    return queueHelp(reply, request.params.id, [body.data.requirement]);
+  });
+
+  // Explain all: every gap with no explanation and no answer, one request to the queue.
+  app.post<{ Params: { id: string } }>("/ui/jobs/:id/gaps/help-all", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    let todo: string[];
     try {
-      return await gapHelp(db, request.params.id, body.data.kind, body.data.requirement, { refresh: body.data.refresh });
+      todo = gapList(db, request.params.id).gaps.filter((g) => !g.help && !g.answer && !g.help_queued).map((g) => g.requirement);
     } catch (err) {
-      return reply.status(503).send({ error: "model_failed", message: message(err) });
+      return reply.status(400).send({ error: "no_gaps", message: message(err) });
     }
+    if (!todo.length) return { queued: 0, batch_id: 0 };
+    return queueHelp(reply, request.params.id, todo);
   });
 
   app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/gaps/draft", async (request, reply) => {
@@ -166,8 +210,113 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     return { ok: true };
   });
 
+  // Check tab: the resume against the job's score, the chat check's rounds and report.
+  app.get<{ Params: { id: string } }>("/ui/jobs/:id/check", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    try {
+      return checkView(db, request.params.id);
+    } catch (err) {
+      return reply.status(500).send({ error: "check_failed", message: message(err) });
+    }
+  });
+
+  // Your choice at the end of a check: use the new version (it becomes your resume and gets its
+  // PDF) or keep the previous one.
+  app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/check/decide", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    const body = z.object({ source: z.enum(["claude", "chatgpt"]), use: z.enum(["new", "previous"]).optional(),
+      resume_id: z.string().min(1).max(160).optional() }).strict().safeParse(request.body ?? {});
+    if (!body.success || (!body.data.use && !body.data.resume_id)) return reply.status(400).send({ error: "invalid body" });
+    let r;
+    try {
+      r = await decideCheck(db, request.params.id, body.data.source, { use: body.data.use, resume_id: body.data.resume_id });
+    } catch (err) {
+      return reply.status(409).send({ error: "no_choice", message: message(err) });
+    }
+    event(`check: version ${r.version} chosen (job ${shortId(request.params.id)}): ${r.resume_id}${r.pdf_error ? ` (PDF failed: ${r.pdf_error})` : ""}`);
+    // The job is scored again with the chosen resume as its own (Rescore).
+    try {
+      return { ...r, rescore_batch: (await rescore(request.params.id)).batch_id };
+    } catch (err) {
+      return { ...r, rescore_batch: null, rescore_error: message(err) };
+    }
+  });
+
+  // Restart the chat check for one site: its rounds are kept as a timestamped file, and the next
+  // check opens a new chat at round 1.
+  app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/check/restart", async (request, reply) => {
+    if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    const body = z.object({ source: z.enum(SOURCES) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    if (checkRunning(request.params.id, body.data.source)) {
+      return reply.status(409).send({ error: "check_running", message: "A round of this check is running; restart it when the round is done." });
+    }
+    const archived = restartLoop(db, request.params.id, body.data.source);
+    event(`check restarted (job ${shortId(request.params.id)}, ${body.data.source})${archived ? `: rounds kept in ${archived}` : ""}`);
+    return { archived };
+  });
+
+  // Choose one of the job's resumes (Check tab list): it becomes the resume (its PDF made again,
+  // through the bank gate), the job is re-scored, and the next check starts a new chat.
+  app.post<{ Params: { id: string; rid: string } }>("/ui/jobs/:id/resumes/:rid/choose", async (request, reply) => {
+    const { id, rid } = request.params;
+    if (!jobExists(db, id)) return reply.status(404).send({ error: "not_found" });
+    let r;
+    try {
+      r = await chooseResume(db, id, rid);
+    } catch (err) {
+      return reply.status(404).send({ error: "not_found", message: message(err) });
+    }
+    event(`resume chosen (job ${shortId(id)}): ${rid}${r.pdf_error ? ` (PDF failed: ${r.pdf_error})` : ""}`);
+    try {
+      return { resume_id: rid, ...r, rescore_batch: (await rescore(id)).batch_id };
+    } catch (err) {
+      return { resume_id: rid, ...r, rescore_batch: null, rescore_error: message(err) };
+    }
+  });
+
+  // A tailored resume's PDF (opens in the browser). Only ids of stored records: the path comes
+  // from the id, never from the request, so no other file can be read.
+  app.get<{ Params: { rid: string } }>("/ui/resumes/:rid/pdf", async (request, reply) => {
+    const rid = request.params.rid;
+    const record = /^[\w-]{1,120}$/.test(rid) ? recordById(db, rid) : null;
+    if (!record || !hasPdf(rid)) return reply.status(404).send({ error: "no_pdf" });
+    // A PDF made before the bank gate is not served while its bullets fail it.
+    const bank = loadBank();
+    const issues = bank ? bankGate(record, bank) : [];
+    if (issues.length) return reply.status(409).send({ error: "bank_gate", issues });
+    if (!pdfChecksPassed(rid)) return reply.status(409).send({ error: "checks", detail: "not every check ran and passed; render again" });
+    const flags = openFactFlags(record.jd_id, record.content.bullets.map((b) => b.id));
+    const exit = bank ? exitIssues(record, bank, loadSkillsExtra(), flags) : [];
+    if (exit.length) return reply.status(409).send({ error: "exit_gate", issues: exit });
+    return reply.type("application/pdf").header("content-disposition", `inline; filename="${rid}.pdf"`)
+      .send(createReadStream(join(pdfDir(), `${rid}.pdf`)));
+  });
+
+  // Add a job by its link (top bar): fetch, store, keep, queue parse and score (no tailor).
+  app.post<{ Body: unknown }>("/ui/jobs/add", async (request, reply) => {
+    const body = z.object({ url: z.string().trim().min(1).max(2000) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body", message: "Paste a job link." });
+    try {
+      return await addByLink(db, body.data.url);
+    } catch (err) {
+      if (err instanceof AddRefused) return reply.status(400).send({ error: "add_refused", message: message(err) });
+      return reply.status(500).send({ error: "add_failed", message: message(err) });
+    }
+  });
+
   // Whether exact earlier answers are filled in automatically (default) or only proposed.
   app.get("/ui/gaps/settings", async () => ({ auto_carry: autoCarry(db) }));
+
+  // Check tab: start a Claude/ChatGPT check by itself after each tailor that made a resume.
+  app.get("/ui/check/settings", async () => checkSettings(db));
+  app.post<{ Body: unknown }>("/ui/check/settings", async (request, reply) => {
+    const body = z.object({ auto_check: z.boolean().optional(), source: z.enum(["claude", "chatgpt"]).optional() }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const s = setCheckSettings(db, body.data);
+    event(`check setting: after each tailor ${s.auto_check ? `on (${s.source})` : "off"}`);
+    return s;
+  });
   app.post<{ Body: unknown }>("/ui/gaps/settings", async (request, reply) => {
     const body = z.object({ auto_carry: z.boolean() }).strict().safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: "invalid body" });
@@ -245,8 +394,62 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     }
   });
 
-  app.post<{ Params: { id: string } }>("/ui/jobs/:id/tailor", async (request, reply) => {
+  // Approve wording (Tailor box): the user read a reworded line with a related keyword's first use;
+  // the approval is saved on the bank bullet for this exact text, then the PDF is made again.
+  app.post<{ Params: { id: string; rid: string }; Body: unknown }>("/ui/jobs/:id/resumes/:rid/approve-wording", async (request, reply) => {
+    const { id, rid } = request.params;
+    const body = z.object({ bullet_id: z.string().min(1).max(120) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const record = /^[\w.-]{1,120}$/.test(rid) ? recordById(db, rid) : null;
+    if (!record || record.jd_id !== id) return reply.status(404).send({ error: "not_found" });
+    let approved;
+    try {
+      approved = keywordApprove(db, rid, body.data.bullet_id);
+    } catch (err) {
+      return reply.status(400).send({ error: "approve_failed", message: message(err) });
+    }
+    event(`wording approved (job ${shortId(id)}): ${rid} ${approved.bullet_id}: ${approved.terms.join(", ")}`);
+    let pdf_error: string | null = null;
+    try {
+      const r = await renderResume(db, rid);
+      if (!r.ok) pdf_error = r.error ?? [...new Set(r.issues.map((i) => i.code))].join(", ");
+    } catch (err) {
+      pdf_error = message(err);
+    }
+    return { ...approved, pdf_error };
+  });
+
+  // Approve (Tailor box, send to review A3): the user read an item the verifier did not confirm
+  // (kind claim | summary | skill); the approval is saved for its current text, then the PDF is made again.
+  app.post<{ Params: { id: string; rid: string }; Body: unknown }>("/ui/jobs/:id/resumes/:rid/approve-verify", async (request, reply) => {
+    const { id, rid } = request.params;
+    const body = z.object({ kind: z.enum(["claim", "summary", "skill"]), id: z.string().min(1).max(120) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const record = /^[\w.-]{1,120}$/.test(rid) ? recordById(db, rid) : null;
+    if (!record || record.jd_id !== id) return reply.status(404).send({ error: "not_found" });
+    let approved;
+    try {
+      approved = verifyApprove(db, rid, body.data.kind, body.data.id);
+    } catch (err) {
+      return reply.status(400).send({ error: "approve_failed", message: message(err) });
+    }
+    event(`verifier item approved (job ${shortId(id)}): ${rid} ${approved.kind} ${approved.id}`);
+    let pdf_error: string | null = null;
+    try {
+      const r = await renderResume(db, rid);
+      if (!r.ok) pdf_error = r.error ?? [...new Set(r.issues.map((i) => i.code))].join(", ");
+    } catch (err) {
+      pdf_error = message(err);
+    }
+    return { ...approved, pdf_error };
+  });
+
+  // { fresh: true }: Re-tailor from scratch. Earlier records do not start the new one (they stay
+  // for history); the worker reads the marker this leaves, since a queue task carries no options.
+  app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/tailor", async (request, reply) => {
     if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
+    const body = z.object({ fresh: z.boolean().optional() }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
     let st;
     try {
       st = tailorStatus(db, request.params.id);
@@ -254,11 +457,20 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
       return reply.status(500).send({ error: "tailor_status_failed", message: message(err) });
     }
     if (!st.can_tailor) return reply.status(409).send({ error: "not_ready", message: st.reasons.join(" ") });
+    // The marker holds the batch id, so only this run is fresh ("pending" while it is queued).
+    // Batch 0 (a task is already open): that task was not asked to be fresh; no marker.
+    const marker = `fresh_tailor:${request.params.id}`;
+    if (body.data.fresh) setMarker(db, marker, "pending");
     try {
       const batch = (await tailorNow(request.params.id)).batch_id;
-      event(`tailor queued (job ${shortId(request.params.id)}): batch ${batch}`);
+      if (body.data.fresh) {
+        if (batch > 0) setMarker(db, marker, String(batch));
+        else takeMarker(db, marker);
+      }
+      event(`tailor queued (job ${shortId(request.params.id)})${body.data.fresh ? " from scratch" : ""}: batch ${batch}`);
       return { tailor_batch: batch };
     } catch (err) {
+      if (body.data.fresh) takeMarker(db, marker);
       return reply.status(503).send({ error: "queue_down", message: message(err) });
     }
   });
@@ -323,6 +535,18 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     } catch (err) {
       if (err instanceof DeleteRefused) return reply.status(message(err) === "job not found" ? 404 : 409).send({ error: "refused", message: message(err) });
       return reply.status(500).send({ error: "delete_failed", message: message(err) });
+    }
+  });
+
+  // Update board: tailored jobs now below 75 move to Not tailored; their tailored resumes are
+  // backed up and deleted. The preview is what the confirm panel lists. updateBoard publishes
+  // one change per job (no :id in the path, so the onResponse hook does not).
+  app.get("/ui/board/update/preview", async () => ({ jobs: updateBoardCandidates(db) }));
+  app.post("/ui/board/update", async (_request, reply) => {
+    try {
+      return updateBoard(db);
+    } catch (err) {
+      return reply.status(500).send({ error: "update_failed", message: message(err) });
     }
   });
 

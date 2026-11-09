@@ -113,11 +113,25 @@ need; the raw ones, if you want to look around:
 ## Differences from running locally
 
 - The careers crawler uses Debian's Chromium in the image (Google Chrome has no Linux arm64 build).
-- The OpenResume parse-back reader (AGPL, `.scout/`, git-ignored) is not in the image; renders in
-  the cluster use the other two readers (pdftotext, pdf.js).
+- The OpenResume parse-back reader (AGPL, `.scout/`, git-ignored) is not in the image; it is
+  mounted (next section).
 - The health bar sees workers through the queue (each leases or pings every 15 s), not `pgrep`.
 - The local way still works (`RUNBOOK-M5.md`, `.claude/bin/batch-up.sh`, `npm run ui`) but uses
   `data/jobops.db` on the Mac: run one or the other, never both.
+
+## OpenResume runner
+
+The third parse-back reader. Every render needs pdftotext, pdf.js and OpenResume; a missing one
+fails the render with `reader_missing` (tests set `JOBOPS_PARSE_READERS=pdftotext,pdfjs`).
+
+- It lives in `.scout/openresume-runner` (AGPL, git-ignored, never in the image) and is mounted
+  read-only at `/app/.scout/openresume-runner` in the api and both worker pods. If the folder is
+  missing, Kubernetes creates it empty: the pods start, every render fails with `reader_missing`.
+- It runs as `node dist/parse.mjs <pdf>` (a bundle; pdfjs-dist comes from its `node_modules`).
+- After changing the runner, rebuild the bundle (from that folder):
+  `./node_modules/.bin/esbuild parse.ts --bundle --platform=node --format=esm --target=node24 --external:pdfjs-dist --outfile=dist/parse.mjs`
+- Check: `node api/src/cli.ts ats check` lists three readers; `ats recheck` re-reads the PDFs
+  already in `profile/pdf` (read-only).
 
 ## Troubleshooting
 

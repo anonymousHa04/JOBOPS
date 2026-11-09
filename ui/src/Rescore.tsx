@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, bandClass } from "./api";
+import { onChange } from "./events";
 import type { ScoreDetail } from "./api";
 
 export function RescoreBar({ id, watch, onDone }: { id: string; watch: number | null; onDone: () => void }) {
@@ -7,7 +8,8 @@ export function RescoreBar({ id, watch, onDone }: { id: string; watch: number | 
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const beforeRef = useRef<number | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null); // the 10-minute give-up
+  const unfollow = useRef<(() => void) | null>(null); // stop listening to the change feed
 
   const loadScore = () => api.score(id).then(setScore).catch(() => setScore(null));
 
@@ -20,12 +22,24 @@ export function RescoreBar({ id, watch, onDone }: { id: string; watch: number | 
       if (timer.current) {
         clearTimeout(timer.current);
       }
+      unfollow.current?.();
     };
   }, []);
 
+  // No polling: the job's tasks are read once now and again on each change-feed event for this
+  // job; it gives up after 10 minutes.
   const follow = (batch: number) => {
-    let attempts = 0;
+    unfollow.current?.();
+    let over = false;
+    const stop = () => {
+      over = true;
+      unfollow.current?.();
+      unfollow.current = null;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+    };
     const poll = () => {
+      if (over) return;
       api.job(id)
         .then((detail) => {
           const tasks = detail.tasks;
@@ -34,12 +48,14 @@ export function RescoreBar({ id, watch, onDone }: { id: string; watch: number | 
           const tailorTask = mine.find((t) => t.stage === "tailor");
 
           if (scoreTask?.state === "failed") {
+            stop();
             setStatus("Re-score failed: " + (scoreTask.error_code ?? "error"));
             setBusy(false);
             return;
           }
 
           if ((batch === 0 && mine.length === 0) || (scoreTask?.state === "done" && (!tailorTask || tailorTask.state === "done" || tailorTask.state === "failed"))) {
+            stop();
             finish();
             return;
           }
@@ -51,21 +67,20 @@ export function RescoreBar({ id, watch, onDone }: { id: string; watch: number | 
           } else {
             setStatus("Queued…");
           }
-
-          attempts++;
-          if (attempts < 200) {
-            timer.current = setTimeout(poll, 3000);
-          } else {
-            setStatus("Still running after 10 minutes: check the Batches tab.");
-            setBusy(false);
-          }
         })
         .catch((e: Error) => {
+          stop();
           setStatus("Lost the API: " + e.message);
           setBusy(false);
         });
     };
 
+    unfollow.current = onChange((c) => { if (c.kind === "resync" || c.job_id === id) poll(); });
+    timer.current = setTimeout(() => {
+      stop();
+      setStatus("Still running after 10 minutes: check the Batches tab.");
+      setBusy(false);
+    }, 10 * 60_000);
     poll();
   };
 

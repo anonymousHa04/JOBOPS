@@ -73,8 +73,12 @@ func (s *statusWriter) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
-// logWrites logs every request that changes something (not GET/HEAD, which the UI polls every
-// 15 s) and every failed request: method, path, status, time. bin/jobops watch shows these.
+// Unwrap lets the proxy reach the real writer's Flush: without it an event stream
+// (GET /api/ui/events) would sit in a buffer instead of reaching the browser.
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// logWrites logs every request that changes something (not GET/HEAD: reads, and the UI's
+// event stream) and every failed request: method, path, status, time. bin/jobops watch shows these.
 func logWrites(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

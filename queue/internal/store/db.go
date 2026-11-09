@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+
+	"jobops/queue/internal/events"
 
 	_ "modernc.org/sqlite"
 )
@@ -25,6 +30,28 @@ type Store struct {
 	db  *sql.DB
 	mu  sync.Mutex
 	now func() time.Time
+	// Events gets a change event after every commit that moves a job or batch (nil: none).
+	Events *events.Hub
+}
+
+// commit commits tx, then publishes the events (only when the commit worked).
+func (s *Store) commit(tx *sql.Tx, evs ...events.Event) error {
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, e := range evs {
+		s.Events.Publish(e)
+	}
+	return nil
+}
+
+// taskEvent: a task changed state. A fetch task's job_id is "batch:<n>", not a job.
+func taskEvent(t *Task, stage, state string) events.Event {
+	e := events.Event{Kind: "task", BatchID: t.BatchID, Stage: stage, State: state}
+	if !strings.HasPrefix(t.JobID, "batch:") {
+		e.JobID = t.JobID
+	}
+	return e
 }
 
 func Open(path string) (*Store, error) {
@@ -85,16 +112,26 @@ func groupOf(stage string) string {
 	switch stage {
 	case "parse", "score":
 		return "laptop"
-	case "tailor":
+	case "tailor", "gap_help":
 		return "mac"
 	default:
 		return ""
 	}
 }
 
-var groupLimit = map[string]int{
-	"laptop": 3,
-	"mac":    3,
+// groupLimit: how many tasks of a group run at once (default 3 each). It must match the model
+// server's slots: a task leased beyond them waits inside llama-server while its timeout runs.
+// general7 on the laptop has LLM_GENERAL7_SLOTS (3), general14 on the Mac LLM_GENERAL14_SLOTS
+// (3, llm.sh). JOBOPS_LAPTOP_SLOTS and JOBOPS_MAC_SLOTS change the queue's side.
+func groupLimit(g string) int {
+	def, key := 3, "JOBOPS_LAPTOP_SLOTS"
+	if g == "mac" {
+		key = "JOBOPS_MAC_SLOTS"
+	}
+	if n, err := strconv.Atoi(os.Getenv(key)); err == nil && n > 0 {
+		return n
+	}
+	return def
 }
 
 var leaseFor = map[string]time.Duration{
@@ -102,6 +139,8 @@ var leaseFor = map[string]time.Duration{
 	"parse":  10 * time.Minute,
 	"score":  15 * time.Minute,
 	"tailor": 30 * time.Minute,
+	// gap help: one 14B answer, plus loading the model if it was asleep.
+	"gap_help": 10 * time.Minute,
 }
 
 type Task struct {

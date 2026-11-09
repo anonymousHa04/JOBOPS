@@ -15,6 +15,11 @@ import { loadRecords } from "../tailor/records.ts";
 import { planJob } from "../tailor/tailor.ts";
 import { board, jobDetail, scoreDetail } from "./data.ts";
 import { gapList } from "./gaps.ts";
+import { latestRecord } from "../extension/reports.ts";
+import { wordingApproved } from "../render/exit-gate.ts";
+import { lastVerifierIssues } from "../render/render.ts";
+import { reviewItems } from "../render/verify.ts";
+import type { VerifyKind } from "../render/verify-approvals.ts";
 
 // What Tailor now would do, worked out the way the tailor does it (cached judge verdicts, no
 // model calls, no files). It decides on the job's score (one score, as on the Score tab), so
@@ -25,7 +30,8 @@ export type ResumePlan = {
 };
 
 // The last tailor run for this job, so the drawer can say why it did not make a resume.
-export type LastTailor = { at: string; state: string; ok: boolean; message: string };
+// left_out: bank bullets the gate kept off the resume (ids and codes), when the run had any.
+export type LastTailor = { at: string; state: string; ok: boolean; message: string; left_out?: { bullet_id: string; codes: string[] }[] };
 
 export type TailorStatus = {
   score: number | null; band: string | null;
@@ -35,7 +41,29 @@ export type TailorStatus = {
   reasons: string[];   // why the button is disabled
   plan: ResumePlan | null;
   last: LastTailor | null;
+  // The latest resume's reworded lines whose related keyword waits for approval (exit gate keyword_review).
+  pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
+  // The latest resume's items the verifier did not confirm (send to review, A3), from its last
+  // render's checks file (no model call): the checked text and, for a skill, its evidence.
+  verify_review: { resume_id: string; kind: VerifyKind; id: string; code: string; text: string; evidence?: string }[];
 };
+
+function pendingLines(db: Db, jobId: string): TailorStatus["pending_review"] {
+  const rec = latestRecord(db, jobId);
+  const bank = rec?.pending_review?.length ? loadBank() : null;
+  if (!rec || !bank) return [];
+  return (rec.pending_review ?? []).filter((p) => !wordingApproved(rec, bank, p)).map((p) => ({
+    resume_id: rec.resume_id, ...p, text: rec.content.bullets.find((b) => b.id === p.bullet_id)?.text ?? "" }));
+}
+
+function verifyLines(db: Db, jobId: string): TailorStatus["verify_review"] {
+  const rec = latestRecord(db, jobId);
+  const issues = rec ? lastVerifierIssues(rec.resume_id) : null;
+  const bank = issues?.length ? loadBank() : null;
+  if (!rec || !issues || !bank) return [];
+  return reviewItems(rec, bank, loadSkillsExtra(), issues).map(({ kind, id, code, text, evidence }) => ({
+    resume_id: rec.resume_id, kind, id, code, text, ...(evidence !== undefined ? { evidence } : {}) }));
+}
 
 export function resumePlan(db: Db, jobId: string): ResumePlan | null {
   const req = loadRequirements(db, jobId);
@@ -60,11 +88,13 @@ function lastTailor(tasks: Task[]): LastTailor | null {
   const at = t.updated_at;
   if (t.state === "failed") return { at, state: t.state, ok: false, message: `failed (${t.error_code ?? "error"}): ${t.error_detail ?? "no detail"}` };
   if (t.state !== "done") return { at, state: t.state, ok: true, message: t.state };
-  const r = (t.result ?? {}) as { decision?: string; reason?: string; resume_id?: string | null; created?: boolean; pdf_ok?: boolean | null; pdf_issue?: string };
+  const r = (t.result ?? {}) as { decision?: string; reason?: string; resume_id?: string | null; created?: boolean; pdf_ok?: boolean | null; pdf_issue?: string;
+    left_out?: { bullet_id: string; codes: string[] }[] };
+  const left = r.left_out?.length ? { left_out: r.left_out } : {};
   if (r.decision === "not_tailored") return { at, state: t.state, ok: false, message: `not tailored: ${r.reason ?? "below 75"}.` };
   if (r.decision === "blocked") return { at, state: t.state, ok: false, message: `stopped: ${r.reason ?? "open risk questions"}.` };
-  if (r.pdf_ok === false) return { at, state: t.state, ok: false, message: `resume ${r.resume_id ?? ""} made (${r.decision}), but the PDF failed: ${r.pdf_issue ?? "parse-back check"}.` };
-  return { at, state: t.state, ok: true, message: `resume ${r.resume_id ?? ""} made (${r.decision})${r.created === false ? ", same bullets as before" : ""}.` };
+  if (r.pdf_ok === false) return { at, state: t.state, ok: false, message: `resume ${r.resume_id ?? ""} made (${r.decision}), but the PDF failed: ${r.pdf_issue ?? "parse-back check"}.`, ...left };
+  return { at, state: t.state, ok: true, message: `resume ${r.resume_id ?? ""} made (${r.decision})${r.created === false ? ", same bullets as before" : ""}.`, ...left };
 }
 
 export function tailorStatus(db: Db, jobId: string): TailorStatus {
@@ -104,7 +134,7 @@ export function tailorStatus(db: Db, jobId: string): TailorStatus {
   const can = !busy && inBand && planOk;
   return {
     score, band, open_questions: open, tailored, busy, ready: can && !tailored, can_tailor: can, reasons, plan,
-    last: lastTailor(d.tasks)
+    last: lastTailor(d.tasks), pending_review: pendingLines(db, jobId), verify_review: verifyLines(db, jobId)
   };
 }
 

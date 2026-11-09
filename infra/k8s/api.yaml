@@ -8,6 +8,8 @@
 #            needs an absolute path, so the files say __REPO__ and bin/jobops puts in this
 #            repo's path when it applies them. Your resume data stays on the Mac this way and is
 #            never copied into an image.
+#   openresume: .scout/openresume-runner (the third parse-back reader), read-only at
+#            /app/.scout/openresume-runner; see RUNBOOK-M8.md.
 #
 # Probes: tcpSocket (port open = alive). /ui/health is not used because it calls the models,
 # and a model being down must not restart the API.
@@ -37,6 +39,7 @@ spec:
           volumeMounts:
             - { name: data, mountPath: /app/data }
             - { name: profile, mountPath: /app/profile }
+            - { name: openresume, mountPath: /app/.scout/openresume-runner, readOnly: true }
           readinessProbe:
             tcpSocket: { port: http }
             periodSeconds: 5
@@ -52,6 +55,10 @@ spec:
           persistentVolumeClaim: { claimName: jobops-data }
         - name: profile
           hostPath: { path: __REPO__/profile, type: Directory }
+        # OpenResume parse-back reader (AGPL), kept outside the image. A missing folder is
+        # created empty: pods still start, and every render fails with reader_missing.
+        - name: openresume
+          hostPath: { path: __REPO__/.scout/openresume-runner, type: DirectoryOrCreate }
 ---
 apiVersion: v1
 kind: Service

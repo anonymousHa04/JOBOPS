@@ -1,10 +1,11 @@
 // The score record of one job's report loop (ids, scores, requirement names; never text) and
 // the engine score of a resume record.
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
 import type { Db } from "../db.ts";
+import { hasMarker, setMarker, takeMarker } from "../db.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import { loadBank } from "../profile/bank.ts";
 import { loadSkillsExtra } from "../profile/bank.ts";
@@ -14,7 +15,14 @@ import { latestRecord, reportsDir } from "./reports.ts";
 import type { ResumeRecord } from "../profile/schema.ts";
 
 export type RoundEntry = { version: number; resume_id: string; engine_score: number; chat_score: number | null; needs_facts: string[] };
-export type Loop = { job_id: string; source: string; versions: RoundEntry[]; best: { version: number; resume_id: string; engine_score: number } | null; stopped: null | "no_gain" | "round_limit" | "error" };
+type Version = { version: number; resume_id: string; engine_score: number };
+// stopped: covered (nothing left the loop can fix), no_change (a round changed nothing),
+// repeat (a round made a version the check already had), round_limit, error; no_gain is from loops before 2026-11-07. candidate: the best version when
+// it scores the same or higher than the resume the check started from, waiting for your choice
+// (decision).
+export type Loop = { job_id: string; source: string; versions: RoundEntry[]; best: Version | null;
+  stopped: null | "covered" | "no_change" | "repeat" | "no_gain" | "round_limit" | "error";
+  candidate?: Version | null; decision?: null | "new" | "previous" | "chosen"; chosen?: string };
 
 export function engineScore(db: Db, jobId: string, record: ResumeRecord): number {
   const req = loadRequirements(db, jobId);
@@ -50,15 +58,45 @@ export function loadLoop(jobId: string, source: string): Loop | null {
       resume_id: z.string(),
       engine_score: z.number()
     }).nullable(),
-    stopped: z.union([z.literal(null), z.literal("no_gain"), z.literal("round_limit"), z.literal("error")])
+    stopped: z.union([z.literal(null), z.literal("covered"), z.literal("no_change"), z.literal("repeat"), z.literal("no_gain"), z.literal("round_limit"), z.literal("error")]),
+    candidate: z.object({ version: z.number(), resume_id: z.string(), engine_score: z.number() }).nullable().optional(),
+    decision: z.union([z.literal(null), z.literal("new"), z.literal("previous"), z.literal("chosen")]).optional(),
+    chosen: z.string().optional()
   }).safeParse(JSON.parse(content));
   return result.success ? result.data : null;
 }
 
 export function saveLoop(loop: Loop): void {
   const path = loopPath(loop.job_id, loop.source);
+  mkdirSync(reportsDir(), { recursive: true });
   writeFileSync(path, JSON.stringify(loop, null, 1));
 }
+
+// Restart the chat check for one site (UI): the loop file is kept under a timestamped name, and
+// the next prompt the extension fetches for this site says fresh_chat once (a new chat, round 1).
+// Its per-round reports (<job>.<source>.r<n>.yaml) get the same timestamp. The latest report
+// <job>.<source>.yaml stays (bank audit reads its fact flags). Returns the archived loop's name.
+export function restartLoop(db: Db, jobId: string, source: string): string | null {
+  const path = loopPath(jobId, source);
+  let archived: string | null = null;
+  if (existsSync(path)) {
+    const stamp = new Date().toISOString().replace(/:/g, "-");
+    archived = `${jobId}.${source}.loop.${stamp}.json`;
+    renameSync(path, join(reportsDir(), archived));
+    const prefix = `${jobId}.${source}.`;
+    for (const f of readdirSync(reportsDir())) {
+      const round = f.startsWith(prefix) ? f.slice(prefix.length).match(/^(r\d+)\.yaml$/)?.[1] : undefined;
+      if (round) renameSync(join(reportsDir(), f), join(reportsDir(), `${prefix}${round}.${stamp}.yaml`));
+    }
+  }
+  setMarker(db, freshChatKey(jobId, source));
+  return archived;
+}
+
+const freshChatKey = (jobId: string, source: string) => `fresh_chat:${jobId}:${source}`;
+export const hasFreshChat = (db: Db, jobId: string, source: string) => hasMarker(db, freshChatKey(jobId, source));
+// True once after restartLoop, then false.
+export const takeFreshChat = (db: Db, jobId: string, source: string) => takeMarker(db, freshChatKey(jobId, source));
 
 export function startLoop(db: Db, jobId: string, source: string): Loop {
   const record = latestRecord(db, jobId);
@@ -105,6 +143,8 @@ export function summary(loop: Loop) {
   return {
     rounds: loop.versions,
     best: loop.best,
-    stopped: loop.stopped
+    stopped: loop.stopped,
+    candidate: loop.candidate ?? null,
+    decision: loop.decision ?? null
   };
 }

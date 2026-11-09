@@ -61,7 +61,7 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   }
   // Fixed fields byte-for-byte (after whitespace and dash normalization).
   for (const e of entries) {
-    for (const field of ["title", "company", "dates", "location"] as const) {
+    for (const field of ["title", "company", "dates", "location", "client"] as const) {
       if (e[field] && !t.includes(norm(e[field]))) add("field_missing", `${e.id}.${field}`);
     }
   }
@@ -77,7 +77,7 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   for (const [i, l] of data.links.entries()) if (!flat.includes(norm(l.text).replace(/ /g, ""))) add("contact_missing", `link#${i + 1}`);
   if (data.links.some((l) => !t.includes(norm(l.text)))) add("link_wrapped", "a link is split across lines");
   // Sections in order, skills listed.
-  const titles = ["summary", "experience", "projects", "education", "skills"].filter((s) =>
+  const titles = ["summary", "skills", "experience", "projects", "education"].filter((s) =>
     s === "summary" ? data.summary : s === "skills" ? data.skills.length : (data as unknown as Record<string, unknown[]>)[s].length);
   // A heading is a line of its own; the word alone ("skills" in a bullet, "experience" in the
   // summary) is not one, and finding it first failed good resumes.
@@ -93,27 +93,51 @@ export function checkText(text: string, data: ResumeData, extractor: string): Is
   // still matches, because expected text is compared with its spaces removed.
   const hidden = hiddenChars(text.replace(/\u00AD/g, "")); // soft hyphens from line breaks are layout
   if (hidden.length) add("hidden_chars", hidden.join(","));
-  const expected = norm([data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "summary experience projects education skills",
-    data.summary, ...entries.flatMap((e) => [e.title, e.company, e.location, e.dates, ...e.bullets]),
+  const expected = norm([data.name, data.phone, data.location, data.email, ...data.links.map((l) => l.text), "summary experience projects education skills client",
+    data.summary, ...entries.flatMap((e) => [e.title, e.company, e.location, e.dates, e.client ?? "", ...e.bullets]),
     ...data.education.flatMap((e) => [e.school, e.degree, e.dates, ...e.details]), ...data.skills].join(" ")).replace(/[^a-z0-9]/g, "");
   const extra = [...new Set(t.match(/[a-z0-9]+/g) ?? [])].filter((w) => !expected.includes(w));
   if (extra.length) add("extra_text", `${extra.length} words not in the record`);
   return issues;
 }
 
-export async function parseBack(pdf: string, data: ResumeData, maxPages: number): Promise<{ ok: boolean; issues: Issue[] }> {
+// Layout limits from an iCIMS upload (2026-11-08, gaps-and-rejection-risks.md "ATS parsing"),
+// checked on the render data. Blocking, like the bank gate (plan-parser-icims.md A7).
+export function layoutIssues(data: ResumeData): Issue[] {
   const issues: Issue[] = [];
+  const entries = [...data.experience, ...data.projects];
+  // iCIMS keeps at most 5 dated entries and drops a random one beyond that. Education not counted.
+  const dated = entries.filter((e) => e.dates.trim()).length;
+  if (dated > 5) issues.push({ code: "too_many_entries", extractor: "layout", detail: `${dated} > 5` });
+  // iCIMS took the name inside parentheses as the employer; a client goes through splitClient.
+  for (const e of entries) if (/[()]/.test(e.company)) issues.push({ code: "company_has_parens", extractor: "layout", detail: e.id });
+  return issues;
+}
+
+// The readers a render must pass, from JOBOPS_PARSE_READERS (comma list). Unset means all
+// three; tests set "pdftotext,pdfjs" because CI has no OpenResume copy.
+export function requiredReaders(): string[] {
+  return (process.env.JOBOPS_PARSE_READERS ?? "pdftotext,pdfjs,openresume").split(",").map((r) => r.trim()).filter(Boolean);
+}
+
+export async function parseBack(pdf: string, data: ResumeData, maxPages: number): Promise<{ ok: boolean; issues: Issue[] }> {
+  const issues: Issue[] = layoutIssues(data);
+  const readers = requiredReaders();
   const info = pdfInfo(pdf);
   if (info.pages > maxPages) issues.push({ code: "too_many_pages", extractor: "pdfinfo", detail: `${info.pages} > ${maxPages}` });
   if (!info.fontsEmbedded) issues.push({ code: "fonts_not_embedded", extractor: "pdffonts", detail: "" });
-  issues.push(...checkText(pdftotext(pdf), data, "pdftotext"));
-  issues.push(...checkText(await pdfjsText(pdf), data, "pdfjs"));
-  // Third reader when its local copy is installed; skipped (and said so by ats check) if not.
-  if (openResumeAvailable()) {
-    try {
-      issues.push(...checkOpenResume(runOpenResume(pdf), data));
-    } catch (err) {
-      issues.push({ code: "reader_failed", extractor: "openresume", detail: err instanceof Error ? err.message.slice(0, 200) : String(err) });
+  if (readers.includes("pdftotext")) issues.push(...checkText(pdftotext(pdf), data, "pdftotext"));
+  if (readers.includes("pdfjs")) issues.push(...checkText(await pdfjsText(pdf), data, "pdfjs"));
+  // A required reader that is not installed fails the check: a skipped reader once let a
+  // resume through that an ATS read wrong (plan-parser-icims.md).
+  if (readers.includes("openresume")) {
+    if (!openResumeAvailable()) issues.push({ code: "reader_missing", extractor: "openresume", detail: "runner not found" });
+    else {
+      try {
+        issues.push(...checkOpenResume(runOpenResume(pdf), data));
+      } catch (err) {
+        issues.push({ code: "reader_failed", extractor: "openresume", detail: err instanceof Error ? err.message.slice(0, 200) : String(err) });
+      }
     }
   }
   return { ok: issues.length === 0, issues };

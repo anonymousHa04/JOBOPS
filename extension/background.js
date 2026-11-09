@@ -6,6 +6,19 @@ const CHAT = {
   chatgpt: { match: "https://chatgpt.com/*", newUrl: "https://chatgpt.com/" }
 };
 
+// Chrome stops an extension's service worker after about 30 s without extension events or API
+// calls, even while it waits for a fetch, and the fetch is lost with it. A fix round takes
+// minutes (rewording on the local 14B), so the answer to /x/fix never arrived and the check
+// stayed at "fixing" (2026-11-07). An extension API call every 20 s keeps it running.
+async function keepAlive(work) {
+  const timer = setInterval(() => chrome.runtime.getPlatformInfo(() => undefined), 20000);
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 async function setStatus(fields) {
   const status = { ...fields, at: new Date().toISOString() };
   await chrome.storage.local.set({ status });
@@ -46,19 +59,26 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
     sendResponse({ ok: true });
 
+    // A new conversation when asked (the Check tab after you chose a version): forget this
+    // job's saved chat, so the prompt is the first one and a new chat opens.
+    if (message.newChat) await forgetChat(jobId, target);
+
     await setStatus({ jobId, target, step: "prompt" });
 
     try {
       // A job that already has a chat gets the follow-up prompt ("Attempt N: based on your input ...").
-      const followup = (await savedChat(jobId, target)) ? `?followup=1&source=${target}` : "";
-      const response = await fetch(`${API}/x/prompt/${encodeURIComponent(jobId)}${followup}`);
+      // source always: after Restart check (UI) the API answers fresh_chat once for this site.
+      const followup = (await savedChat(jobId, target)) ? "&followup=1" : "";
+      const response = await fetch(`${API}/x/prompt/${encodeURIComponent(jobId)}?source=${target}${followup}`);
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         const error = body.detail || body.error || `status ${response.status}`;
         await setStatus({ jobId, target, step: "failed", error });
         return;
       }
-      const { prompt } = await response.json();
+      const { prompt, fresh_chat } = await response.json();
+      // Restarted check: forget this job's chat on this site, so a new chat opens at round 1.
+      if (fresh_chat) await forgetChat(jobId, target);
 
       // Back to this job's conversation when there is one, else a new chat.
       const url = (await savedChat(jobId, target)) ?? CHAT[target].newUrl;
@@ -113,17 +133,21 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       await setStatus({ jobId, target, step: "saving" });
       if (sender.tab) await rememberChat(jobId, target, (await chrome.tabs.get(sender.tab.id)).url);
 
-      const { round } = await chrome.storage.local.get("loop");
-      const ok = await saveReport(jobId, target, text, round);
+      // The round of this job's loop (storage holds { loop: { jobId, target, round } }). It was
+      // read as { round } before, which is always undefined, so no fix round ever ran.
+      const { loop: saved } = await chrome.storage.local.get("loop");
+      let round = saved && saved.jobId === jobId && saved.target === target ? saved.round : 1;
+      const ok = await keepAlive(() => saveReport(jobId, target, text, round)); // report_normalize can call a model
 
-      if (ok && round < 5) {
+      // Up to 5 fix rounds (the server stops the loop earlier when nothing is left to fix).
+      if (ok && round <= 5) {
         await setStatus({ jobId, target, step: "fixing", round });
         try {
-          const fixResponse = await fetch(`${API}/x/fix/${encodeURIComponent(jobId)}`, {
+          const fixResponse = await keepAlive(() => fetch(`${API}/x/fix/${encodeURIComponent(jobId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ round, source: target })
-          });
+          }));
           if (!fixResponse.ok) {
             const body = await fixResponse.json().catch(() => ({}));
             const error = body.detail || body.error || `status ${fixResponse.status}`;

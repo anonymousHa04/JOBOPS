@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { lintRecord, tenure } from "../src/tailor/lint.ts";
 import { aiTellsIn, cleanText, hiddenChars } from "../src/tailor/writing.ts";
 import { checkRewrite, guardedReword } from "../src/tailor/guard.ts";
 import { checkText } from "../src/render/parseback.ts";
+import { openResumeAvailable, runOpenResume } from "../src/render/openresume.ts";
 import { riskCheck } from "../src/scoring/risk.ts";
 import { norm } from "../src/scoring/terms.ts";
 import { idealContent } from "../src/tailor/ideal.ts";
@@ -27,6 +28,9 @@ import { judgeRequirements, judgeSettled } from "../src/scoring/judge.ts";
 import { needsJudge } from "../src/scoring/score.ts";
 import { fitPages } from "../src/tailor/tailor.ts";
 import { MAX_SKILLS } from "../src/scoring/config.ts";
+
+// CI has no OpenResume copy; production requires all three readers (parseBack reads this per call).
+process.env.JOBOPS_PARSE_READERS = "pdftotext,pdfjs";
 
 // Career breaks, degree and soft-skill must-haves, synonym-aware skill questions,
 // preferences commands, the careers crawler's page reading, and `job add <url>`.
@@ -105,41 +109,30 @@ test("bank mark-break: sets the title, drops company and location, refuses a rol
 const breakRecord = () => ({ resume_id: "fake", content: { summary_variant: "backend", summary_text: "Backend engineer.", skills: ["TypeScript", "Kubernetes"],
   bullets: [{ id: "cur-1", entry_id: "cur", text: "Moved 20 services to Kubernetes" }, { id: "old-1", entry_id: "old", text: "Wrote the TypeScript billing service" }] } }) as unknown as ResumeRecord;
 
-test("render data: a career break appears in its place, shaped like a job (company line, then title)", () => {
+test("render data: a career break stays in the bank but is left off the PDF", () => {
   const data = resumeData(breakRecord(), bank);
-  assert.deepEqual(data.experience.map((e) => [e.id, e.bullets.length]), [["cur", 1], ["brk", 0], ["old", 1]]);
-  assert.deepEqual([data.experience[1].company, data.experience[1].title, data.experience[1].kind], ["Career break", "Family", "break"],
-    "Workday reads a company line then a title line, and drops 'Career break' from the dated line");
+  assert.deepEqual(data.experience.map((e) => [e.id, e.bullets.length]), [["cur", 1], ["old", 1]],
+    "iCIMS keeps at most 5 dated entries; a break pushed a real job out");
 });
 
 // Third parse-back check (with pdftotext and pdf.js in render): OpenResume's resume
 // parser (AGPL-3.0), run from its local copy in .scout/openresume-runner, never part of
 // JobOps. Its phone and location patterns are US-only ("(xxx) xxx-xxxx", "City, ST"), so
 // those two fields are not compared.
-const OPENRESUME = join(import.meta.dirname, "..", "..", ".scout", "openresume-runner");
-const hasOpenResume = existsSync(join(OPENRESUME, "node_modules", ".bin", "tsx")) && ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
+const hasOpenResume = openResumeAvailable() && ["typst", "pdftotext"].every((c) => !spawnSync(c, ["--version"]).error);
 
-test("OpenResume reads every entry back: titles, companies, dates, bullets, education, and the career break", { skip: !hasOpenResume && "OpenResume runner, typst, or pdftotext missing" }, async () => {
+test("OpenResume reads every entry back: titles, companies, dates, bullets, education; no career break", { skip: !hasOpenResume && "OpenResume runner, typst, or pdftotext missing" }, async () => {
   tempProfile();
   const b = structuredClone(bank);
   b.basics = { ...b.basics, email: "test.person@example.com", links: ["https://github.com/testperson"] };
   const record = breakRecord();
   const r = await renderRecord(record, b);
   assert.ok(r.ok && r.path, JSON.stringify(r.issues));
-  const run = spawnSync(join(OPENRESUME, "node_modules", ".bin", "tsx"), ["parse.ts", r.path!], { cwd: OPENRESUME, encoding: "utf8" });
-  const json = run.stdout.split("\n").filter((l) => l.startsWith("{")).at(-1); // pdf.js prints warnings first
-  assert.ok(json, run.stderr);
-  const parsed = JSON.parse(json!) as {
-    profile: Record<string, string>;
-    workExperiences: { company: string; jobTitle: string; date: string; descriptions: string[] }[];
-    educations: { school: string; degree: string; date: string }[];
-    skills: { descriptions: string[] };
-  };
+  const parsed = runOpenResume(r.path!);
   assert.deepEqual([parsed.profile.name, parsed.profile.email, parsed.profile.url, parsed.profile.summary],
     ["Test Person", "test.person@example.com", "github.com/testperson", "Backend engineer."]);
   assert.deepEqual(parsed.workExperiences.map((w) => [w.jobTitle, w.company, w.date, w.descriptions]), [
     ["Senior Engineer", "Acme, Bangalore", "Mar 2025 - Oct 2026", ["Moved 20 services to Kubernetes"]],
-    ["", "Career break", "Sep 2024 - Feb 2025", []], // OpenResume finds titles by job words; "Family" is not one
     ["Engineer", "OldCo, Pune", "Jan 2020 - Aug 2024", ["Wrote the TypeScript billing service"]]
   ]);
   assert.deepEqual(parsed.educations.map((e) => [e.school, e.degree, e.date]), [["Some University", "B.Tech in Mechanical Engineering", "2015 - 2019"]]);

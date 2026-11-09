@@ -15,6 +15,152 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
 
+## Bank gate (branch `atlassian-resume-fix` from milestone-8, 2026-11-07, uncommitted)
+
+Why: Gaps answers on 2026-11-05 put unsupported bullets into the bank (a 1M claim, MCP before
+2024-11, model wording, copied evidence, the job post's own term). Tailor and render trusted the
+bank, so they reached the Atlassian application on iCIMS. Plan: `.claude/specs/plan-atlassian-fix.md`.
+Code by Claude subagents (the user's choice for this work), with a review and a test run for every step.
+- `api/src/profile/gate.ts`: one deterministic gate. Every bank write (`addBullet`: Gaps, CLI,
+  MCP) blocks with reason codes. A story is required. Render blocks on the hard codes; term_added
+  and scope_raised block unless the bullet is `reviewed` (`bullet review <id>`). The PDF route
+  returns 409 for a failing resume.
+- `bank audit` (read-only) lists failing bullets and skills, plus the chats' `fact_flags`.
+- Gaps form: nothing pre-ticked; you pick the job or project, with its dates; Save is off on a
+  refused draft. Restart options: Re-tailor from scratch, Restart check (new chat at round 1),
+  Start over on a gap.
+- Tailoring never picks a bullet the gate refuses: it takes the next best one and lists the rest
+  as `left_out` in the Tailor box. The score and the skills line count only passing bullets. A job
+  left with no bullets blocks the PDF (`role_dropped`).
+- Tests: `api/test/bank-gate.test.ts`, `api/test/restart.test.ts`.
+- Bank cleaned on 2026-11-07 with the user's OK: 13 bullets removed, 5 rewritten, 32 skills and the
+  `platform engineering` synonym removed; backup in `data/backups/bank-gate-2026-11-07/`.
+- 2026-11-08, from the user's answers: 12 bullets reviewed, 6 rewritten (production peak, Adadda
+  10k at peak, mentoring merged, JobOps "designed; built by AI coding agents under my review",
+  local models exact); "at peak" counts as a scale label. Backup `data/backups/bank-gate-2026-11-08/`.
+  `bank audit` lists only `jobops-ats-parseback`, left out until the parser fix makes "three
+  parsers" true. Tests 189 pass; pods rebuilt.
+- Bank gate done (user, 2026-11-08). Atlassian re-tailored from scratch by the user.
+- Bank gate is committed (95be7b4 and before).
+
+## Parser / iCIMS fix (same branch, 2026-11-08, in progress)
+
+Plan and findings: `.claude/specs/plan-parser-icims.md`. Tested with copies of resume 202f9634
+uploaded by the user to Atlassian's iCIMS form (`data/ats/icims/v1-v3.pdf`): iCIMS keeps at most 5
+dated entries (the career break pushed one job out), takes the employer from a recognised name
+("(Client: X)" gave the client), one-line entries were worse, and Education/LinkedIn never fill
+from any resume (the user fills them). User (2026-11-08): Claude subagents write the code; commit
+at the end of every phase (T1-T6).
+- T1 (parse gate): a required reader that is missing fails the check (`reader_missing`); tests opt
+  out with `JOBOPS_PARSE_READERS=pdftotext,pdfjs`. OpenResume runs as a bundle
+  (`.scout/openresume-runner/dist/parse.mjs`, plain node) hostPath-mounted read-only into the api
+  and both worker pods. `ats recheck` (read-only) of the 8 PDFs since 2026-11-06: 3 pass
+  (202f9634, 742bd6f6, 42105606-5467923b); 4 read Education as 0 entries, 2 miss a skill
+  (OpenResume, which the pods skipped).
+- T2 (772623f): career breaks stay in the bank but are off the PDF and the chat's resume text;
+  `splitClient` prints "Client: Y" on its own line; skills boxed; Skills under the Summary.
+- T3 (d21c7d0): `layoutIssues` blocks more than 5 dated entries and parentheses in a company;
+  iCIMS findings in the m3-notes skill (ATS parsing).
+- T4: Gurgoan -> Gurugram, India in profile/bank.yaml (user OK; backup
+  `data/backups/parser-icims-2026-11-08/`). Atlassian record 202f9634 re-rendered to a scratch
+  folder: passes all checks, 2 pages.
+- Open for the user (found by `bank audit` 2026-11-08, outside this plan): 10 skills fail
+  `skill_unsupported`, most on the Atlassian skills line; the render gate checks bullets, not the
+  skills line. Chat fact flags on schneider-electric-load-test (number), schneider-electric-12,
+  atdrive-group-3, mcp-server-mcp-servers (wording).
+- T5 (2341dc9): `api/test/parser-icims.test.ts`, the 8 approved cases; 209 tests pass.
+- T6: pods rebuilt (`bin/jobops up`); the runner is mounted in api, worker-laptop and worker-mac,
+  and `ats check` in api and worker-mac lists three readers and passes.
+- Skills clean-up (user's decisions, 2026-11-08; backup `data/backups/k3-2026-11-08/`): kept as
+  same thing reactjs, containerization, cloud infrastructure; removed core engineering principles,
+  compute platform; related work with the user's story and a linked bullet: self-healing
+  infrastructure (schneider-electric-5), cell-based architecture (new patch-infotech-6, regional
+  cells), Kubernetes control plane (kubeadm; mcp-server-mcp-servers), platform engineering (new
+  conde-nast-8 Terraform, new schneider-electric-15 GitHub Actions + Docker), artifact pipelines
+  (jobops-kubectl-go-cli; Condé Nast's Vogue pipelines are content/media, not artifacts); new
+  skills terraform, ai product engineering (schneider-electric-ai-agents). The 7 related-work
+  synonyms are removed (a synonym let a rewording put "Kubernetes control plane" into
+  jobops-kubectl-go-cli). jobops-ats-parseback reviewed. `bank audit`: nothing fails; 4 chat flags
+  left. Until the accepted-keywords plan: a related skill shows on every skills line.
+
+## Exit gate (plan `.claude/specs/plan-exit-gate.md`, 2026-11-09, in progress)
+
+Why: every check guarded a path, not the output, so each failure came through the next unchecked
+path (workflow page https://claude.ai/artifact/8Aba5bqrQMPDCSfFvRCv3J). User's workflow: local
+coders write code, Claude subagents write tests and escalated code, I PR-review; a commit per phase.
+Docker runs only for Qdrant while coders work (user turns it off otherwise); JobOps pods are at 0
+(`bin/jobops down`); general14 is stopped while the coder server runs.
+- K0 done: `exitIssues` (render/exit-gate.ts) runs with the bank gate before every render: skills
+  line (skill_unsupported), summary (summary_changed), open chat fact flags (fact_flag_open).
+  Every render writes `<id>.checks.json` (7 checks; a reader not required or missing has ran=false);
+  the PDF route serves only when `pdfChecksPassed` and the live gates pass, so PDFs made before K0
+  need a new render. `flag resolve <bullet-id> --why` dismisses a chat flag
+  (profile/reports/flag-resolutions.yaml); bank audit skips resolved flags. A static test fails on
+  a new caller of saveBank / saveSkillsExtra / addSynonym (replaces the planned write.ts).
+  Coder record: 3 of 10 tasks passed on the local coder (k0-02, k0-06, k0-09); 7 escalated to
+  Claude subagents (k0-01, 03, 04, 05, 07, 08, and k0-10 only for its test); lessons recorded.
+  Tests: api/test/exit-gate.test.ts (16); 225 pass.
+- 2026-11-09: the user stopped the local coders (too slow: most tasks escalated); Claude subagents
+  now write code and tests. Coder and embed servers, Qdrant and Docker are stopped.
+- K1 done (verifier, off until calibrated): render/verify.ts + verify-rules.ts. The 7B model
+  (task "verify", qwen2.5:7b, JOBOPS_VERIFY_MODEL) lists claims with quotes; code checks every
+  quote is in the source and every number and skill term of the new text is in a quote
+  (claim_unsupported), skills-extra skills against their evidence and linked bullets
+  (skill_unsupported_model), and the summary against all bullets. Any model failure ->
+  verify_not_run (blocks). Cached in verify_cache. With JOBOPS_VERIFY=on, renders through
+  tools.render and `ats check <id>` add an 8th check "verifier". `verify eval [file]` (default
+  data/verify-eval.yaml) checks A4; `synonyms audit` classifies synonym pairs (read-only).
+  Tests api/test/verify.test.ts (28); 253 pass.
+  Before turning it on: build the calibration file (user's known-bad and known-good cases), run
+  `verify eval` with the laptop's 7B up; a summary "7+ years" claim cannot be quoted from a bullet,
+  so add a derived "Total experience: N years" line from role dates to the summary source first.
+- K2 done (accepted keywords): skills-extra skills get kind same|related and bullets[] (old
+  "(used at ...; bullet X)" evidence still links). A related keyword is a tag on its linked bullets
+  only, in memory (withRelatedTags; never written to bank.yaml, never a synonym), so scoring,
+  missingKeywords/reword allowed and lint use it there only; the skills line lists it only when a
+  linked bullet is on the resume (dropUnlinked), and the exit gate blocks it otherwise
+  (skill_unlinked, kind related only). Gaps "Under another name": Same thing (skill + synonym) or
+  Related work (pick bullets, story must name the term; no synonym). First use: a rewording that
+  adds a related keyword is pending_review -> keyword_review blocks until "Approve wording" (Tailor
+  box) or `keyword approve <resume_id> <bullet_id>`; approved_terms hold while the text hash is the
+  same. Tests api/test/accepted-keywords.test.ts (12); 265 pass.
+- K3 (data, user's decisions 2026-11-09; backups data/backups/k3-labels-2026-11-09/ and
+  k3-flags-2026-11-09/): the 10 skills labelled (same: reactjs, containerization, cloud
+  infrastructure; related with bullets: self-healing infrastructure, cell-based architecture,
+  kubernetes control plane, platform engineering, artifact pipelines, terraform, ai product
+  engineering). Chat flags: schneider-electric-load-test confirmed as source of truth
+  (`flag resolve --confirm`: every later chat flag on it is resolved and the chat is told not to
+  flag it); schneider-electric-12 dismissed (stale); the microservices bullet moved from AtDrive
+  (atdrive-group-3 removed) to Schneider as schneider-electric-16 (user: the work was at
+  Schneider); mcp-server-mcp-servers rewritten with the kubeadm facts and marked reviewed (the
+  user approved the wording). `bank audit`: nothing fails, no open flags. 269 tests pass.
+  Still open in K3: `synonyms audit` (needs the laptop's 7B).
+- K4 done (4d96f58): iCIMS reports save as references (`ats references` compares every saved
+  report in data/ats/ with today's fake resume and says when to re-upload); the summary check's
+  source has a "Total experience: N years" line. Template for the user's upload:
+  data/ats/icims-TEMPLATE.json -> icims-<date>.json.
+- Calibration (779804b, data/verify-eval.yaml, 26 cases, git-ignored): round 1 failed A4 ("same as
+  X" quotes passed); rules tuned (skill quote must name the skill); round 2 A4 holds: 0 false
+  passes, 14/17 good (82%). False blocks: summary, mcp-server-mcp-servers, conde-nast-7 reword.
+- Review mode (2987c8d, user chose "Send to review"): what the verifier cannot confirm is listed
+  in the Tailor box ("Not confirmed by the verifier", Approve) or `verify approve <resume_id>
+  claim|summary|skill <id>`; approvals in profile/verify-approvals.yaml hold while the text hash
+  is the same. JOBOPS_VERIFY=on in infra/k8s/config.yaml (e3f371f).
+- K6 done 2026-11-09: `bin/jobops up` + `start` (Kubernetes had been switched off in Docker
+  Desktop settings; turned back on). `verify eval` in the api pod: A4 holds (same 0 / 82%).
+  Atlassian re-tailored from scratch (batch 147) -> draft b841ad36-...-2104dc41. Verifier held 4
+  items (conde-nast-7, jobops-kubectl-go-cli, skill Cloud Infrastructure, summary); the user
+  approved all 4 as true. All 8 checks ran and passed (bank_gate, exit_gate, verifier, layout,
+  pages_fonts, pdftotext, pdfjs, openresume); `ats check` ok. It is a draft that passes the
+  checks, not "ready": not checked are iCIMS's real parse (user's upload) and the fields filled
+  by hand.
+- **Next (user):** upload draft 2104dc41 to iCIMS (fill Education and LinkedIn by hand) and share
+  what autofill shows; upload the fake resume once to iCIMS and Workday (fill
+  data/ats/icims-TEMPLATE.json); rewrite the Cloud Infrastructure skill evidence in your own words
+  (part of it is model-written guesses). Then: commit STATUS, `/graphify . --update`, merge
+  `atlassian-resume-fix` into `dev` when asked.
+- Known follow-up: skill evidence matching (names()) does not handle plurals/synonyms.
+
 ## Where things are
 
 - Branches: `dev` is the development branch; each milestone is a sub-branch merged into
@@ -137,6 +283,107 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
       - Each job in the panel has a checkbox, and only ticked jobs are deleted. Tailored jobs
         (`resumes` > 0) are listed first, marked "tailored · N resumes", with a **Keep tailored
         jobs** toggle (user, 2026-11-06).
+  - **Add a job by link** (user, 2026-11-06, manager-written on `milestone-8`, uncommitted, not
+    deployed): toolbar box "Paste a job link…" (`ui/src/AddJob.tsx`, `POST /ui/jobs/add`,
+    `api/src/ui/add-job.ts`). Fetches with `fetchJob` (Greenhouse, Lever, Ashby, Workday,
+    SmartRecruiters, careers pages), stores it, marks it kept, and queues an `add` batch (queue
+    `POST /add`, `store.Add`): parse, then score, which is final (no tailor; Tailor now stays a
+    click). LinkedIn, Naukri, Indeed, Glassdoor, foundit/Monster, Instahyre, iimjobs, hirist and
+    Wellfound links are refused. Checked on demo data (curl, the queue chain by hand, Playwright).
+    Tests not written: test plan waits for the user.
+  - **Change feed, no polling** (user, 2026-11-06, manager-written on `milestone-8`, uncommitted,
+    not deployed). Every wait follows Server-Sent Events; health checks still poll (user).
+    - Queue: `internal/events` hub; the store publishes after each commit (task queued, leased,
+      done, failed; batches; forget; preference check), one event per job a fetch queues.
+      `GET /events` streams it. The fetch loop waits on it (30 s fallback for retry backoff).
+    - API: `api/src/events/` (SSE client on the npm `eventsource` package, MIT, added by the
+      user's choice 2026-11-06; bus). It relays the queue's feed and adds its own writes
+      (any write with a job in the path; add, deletes and new `/jobs` publish their own).
+      `GET /ui/events` for the browser; `GET /ui/board/:id` returns one card.
+    - Workers: idle loops wait on the queue's feed (30 s fallback); SIGTERM wakes them.
+    - UI (`ui/src/events.ts`): one EventSource per tab. The board re-reads only the changed card
+      (more than 25 at once, a preference check, or a reconnect: one full load). Batches tab, the
+      open drawer and Re-score follow it too. No setInterval left except the health bar.
+    - Gateway: `statusWriter.Unwrap`, without which the proxy buffered the stream.
+    - Checked on demo data: events through the gateway about 20 ms after a queue change;
+      Playwright: a card moved Parsing → Scoring → Not tailored in about 0.6 s with one full load
+      (two in Vite dev: StrictMode), the drawer followed a lease. Tests wait for the user's plan.
+    - Open (older code, not changed): a failed task shows in Failed only when `final = 1`, and
+      `failTask` never sets it. Ask the user whether that is intended.
+  - **Gap help through the queue, smaller prompts, general14 on demand** (user, 2026-11-07,
+    manager-written on `milestone-8`, uncommitted, not deployed; tests first, user's request).
+    - Cause of the "Explain all" timeouts: the API called general14 (1 slot) directly while the
+      queue leased up to 3 Mac tasks at once; extra requests waited inside llama-server.
+    - Queue: stage `gap_help` (Mac group, leased before tailor, final when done), `POST /gap-help`
+      (`store.GapHelp`, one task per gap key, open ones not queued twice). Group limits match the
+      servers' slots: 3 and 3 (`JOBOPS_MAC_SLOTS`, `JOBOPS_LAPTOP_SLOTS`). general14 back to 3
+      slots with `-kvu` (`LLM_GENERAL14_SLOTS`, user 2026-11-07); it ran with 1 before.
+    - API: `POST /ui/jobs/:id/gaps/help` returns a saved explanation, else 202 queued;
+      `POST .../gaps/help-all`; gap list `help_queued`. The Mac worker runs it (`runStage`).
+    - Prompt: `api/src/ui/gap-related.ts` picks at most 5 bullets: word match (scoring index) plus
+      Qdrant's nearest (collection `bank_bullets`, re-embedded when the bullets change); none
+      found: the whole bank. Was ~1,770 prompt tokens per call.
+    - general14: `llm.sh` adds `--sleep-idle-seconds ${LLM_GENERAL14_SLEEP:-300}` (frees the model
+      after 5 idle minutes; health stays 200; a request wakes it). Needs a general14 restart.
+      Test: `.claude/bin/test_llm_sleep.sh` (0.5B on port 8099).
+    - Tests: `api/test/gap-queue.test.ts` (12), `queue/internal/store/gap_test.go`; m5-worker's
+      groups test updated. Checked on demo data: Explain all, 3 gaps, fake 14B saw 1 at a time.
+  - **Check tab: Claude check after tailoring** (user, 2026-11-07, manager-written on
+    `milestone-8`, uncommitted, not deployed). User's choices: the loop applies on its own (best
+    engine score kept), the drawer button talks to the extension, flag a score drop and never
+    keep a lower version, Claude by default.
+    - `api/src/ui/check.ts` + `GET /ui/jobs/:id/check`: the current resume's engine score against
+      the job's (whole bank), requirements it lost, each loop round (scores, kept, current, bullets
+      added/removed/reworded), the report's missed gaps, bullet notes and from-memory facts.
+      `GET /ui/resumes/:rid/pdf` serves a stored record's PDF (path from the id only).
+    - `api/src/extension/step.ts` `fixStep` (POST /x/fix): best version always current on return
+      (also after a throw); a new best is rendered to PDF (fix rounds never rendered before).
+      `saveLoop` creates `profile/reports/`.
+    - Extension: bug fixed in background.js (`const { round } = get("loop")` was always
+      undefined, so no fix round ever ran from the popup). New `jobops.js` bridge on the JobOps
+      page (8080, Vite 5173): `check` message starts the run; status forwarded to the page.
+      The user must reload the unpacked extension.
+    - Workflow changed the same day (user): the loop goes on until nothing it can fix is left
+      (`covered`), a round changes nothing (`no_change`), an error, or 5 fix rounds (was 4; the
+      extension now sends round 5). Ties count as kept. Your resume is current again at the end;
+      the best version, if it scores the same or higher, waits as `candidate`. Check tab: "Use new
+      resume" (current + PDF) / "Keep previous" (`POST /ui/jobs/:id/check/decide`, `decideCheck`).
+      Old tests for "round 5 stops" and "no gain keeps the best" were updated to this.
+    - Tests: `api/test/check-step.test.ts` (9). Checked on demo data with Playwright and a
+      stand-in bridge (Chrome no longer loads unpacked extensions in automated runs).
+    - First real check (user, 2026-11-07) stuck at "Fixing (round 1)". Three bugs, each reproduced
+      end to end with the real extension in Chrome for Testing (Playwright's cache), a fake
+      claude.ai over local HTTPS (--host-resolver-rules), the demo API behind a proxy that holds
+      /x/fix like a real round (scratchpad e2e/, not in the repo):
+      1. Chrome stops the extension's service worker after ~30 s idle even while it awaits fetch;
+         a 2-minute fix round lost its answer. Fixed: `keepAlive` in background.js (an API call
+         every 20 s) around saveReport and /x/fix. Shown only with nothing attached to the worker
+         (raw DevTools driver on the page, `cdp-run.mjs`): old stuck, fixed passes at 70 s and 3 min.
+      2. chat.js gave up on an answer after 6 minutes; now 5 minutes without progress, 20 at most.
+         Old failed at 6:04 on a 7-minute answer; fixed saved it.
+      3. A round whose resume equals an older record (same content) did not become the newest, so
+         the loop saw no change. fixRound makes the tailor's own resume current.
+      4. (user, same day) Every attempt sent Claude the same resume: a round that scored lower put
+         the best version back, so the prompt carried it with "No bullets changed" and Claude
+         repeated itself. Now the chat always gets the round's own version and its real changes,
+         the next round builds on it, the best is tracked apart (only it is offered), and a round
+         that recreates a version of this check stops the loop (`repeat`). Nike job's loop file
+         showed it: v0 83.2, v1 82.3, v2 82.3.
+    - Choose this (user, 2026-11-07): each round row of a finished check has a button. The chosen
+      version becomes the resume (PDF made unless it is the starting one), the job is re-scored
+      (queue `/rescore`), and the next Check starts a new chat (`newChat` → extension
+      `forgetChat`). `POST /ui/jobs/:id/check/decide` takes `use` or `resume_id`; loop records
+      `chosen`. Buttons wait until the extension reports done. Checked end to end (cdp-run.mjs
+      CHOOSE=1): round 1 chosen, PDF made, then prompt 3 was the first-time prompt with it.
+    - Resume list (user, same day): the Check tab lists every tailored resume of the job (tailor,
+      re-tailor, check rounds), best engine score first, with Claude's fit score and PDF link (a
+      "whole bank" row was added, then removed at the user's request).
+    - Drawer header (user): "Job score N ⓘ" (whole bank; decides Tailor now) and "Resume N ⓘ" (the
+      current resume's own bullets, from GET /ui/jobs/:id/check), each with a hover explanation,
+      in place of the bare score next to the state chip. Board cards unchanged. Choose this on
+      any row: `POST /ui/jobs/:id/resumes/:rid/choose` (`chooseResume`: own job only, PDF if
+      missing, re-score, checks marked chosen so the next one is a new chat). The rounds table
+      lost its buttons (details only).
   - **Milestone 8: containers and local Kubernetes** (branch `milestone-8`, committed; written
     by the manager on the user's request, no local coders). One image `jobops:dev` (`Dockerfile`,
     allow-list `.dockerignore`; Chromium, typst, poppler). `infra/k8s/` (kustomize): Deployments
@@ -156,6 +403,27 @@ CI run (needs a push); the open test plans (each needs the user's approval); the
   hand with `C:\llama\start-server.cmd` (never an auto-start task); general14 (bank build,
   rewording; 3 slots, -kvu) on the Mac via `.claude/bin/llm.sh`. Never load general7 on the
   Mac next to general14.
+
+- **Gap answers may name their own requirement** (user, 2026-11-08, on `atlassian-resume-fix`,
+  manager-written, uncommitted). A bullet saved from a Gaps answer keeps which gap it answers in its
+  evidence: `answer YYYY-MM-DD (for: <requirement>): <story>` (`answerEvidence`, `readAnswer` in
+  `api/src/profile/gate.ts`). The bank gate (draft, save, tailor, render) then allows that
+  requirement and its terms (`answerAllows`) though the story does not use the word; any other term
+  the story lacks is still `term_added`, and other bullets are unchanged. Was: "multi-cloud" for a
+  story about AWS + GCP blocked the draft. Tests: 5 in `api/test/bank-gate.test.ts`.
+- **Draft wording** (same day): the draft prompt lists the AI-wording words to avoid; a failed draft's
+  retry names the exact words ("Do not use: ensuring"); a draft still blocked returns `words` and the
+  Gaps message says "Remove or reword: ...". The bank gate's story rule: one listed word used
+  normally in the user's own story ("writing and suggesting code") is not model_wording; a phrase,
+  a rider, a listed word as a comma rider, or two listed words still are. The bullet stays strict.
+  Tests: `api/test/draft-wording.test.ts` (3), 3 more in `bank-gate.test.ts`.
+- **Auto-check after tailor** (user, 2026-11-08): Check tab switch "Check with Claude|ChatGPT after
+  each tailor, for every job" (`ui_state` check_settings, `GET/POST /ui/check/settings`). `ui/src/
+  AutoCheck.tsx` (always mounted): a tailor task done with a new resume (`created` not false, not
+  not_tailored) starts a check in a new chat through the extension bridge (`ui/src/extension.ts`,
+  shared with the Check tab); one at a time, others wait; a localStorage mark stops a second tab
+  starting the same one. Needs a JobOps page open in Chrome. Checked end to end with a real queue
+  and a stand-in bridge (off, on, existing resume, queueing, two tabs). Test: settings route.
 
 ## Where to start next
 

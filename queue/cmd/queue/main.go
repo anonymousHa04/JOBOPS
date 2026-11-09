@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"jobops/queue/internal/api"
+	"jobops/queue/internal/events"
 	"jobops/queue/internal/fetch"
 	"jobops/queue/internal/store"
 )
@@ -46,6 +47,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer s.Close()
+	s.Events = events.NewHub()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -57,7 +59,10 @@ func main() {
 		log.Printf("sweep: off (JOBOPS_SWEEP_EVERY=%q)", os.Getenv("JOBOPS_SWEEP_EVERY"))
 	}
 
-	srv := &http.Server{Addr: *addr, Handler: api.Handler(s), ReadHeaderTimeout: 10 * time.Second}
+	// BaseContext: stopping cancels every request's context, so open event streams end at once
+	// and Shutdown does not wait for them.
+	srv := &http.Server{Addr: *addr, Handler: api.Handler(s), ReadHeaderTimeout: 10 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() {
 		<-ctx.Done()
 		shut, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -113,14 +118,25 @@ func expireLoop(ctx context.Context, s *store.Store) {
 // the preferences exclude it). A failed check fails the fetch task (code check_failed); the
 // batch then uses the last saved verdicts.
 func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetch.Checker) {
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
+	// Wakes when a fetch task is queued (a batch started or retried, a fetch retried); the
+	// timer is only a fallback, for a retry whose backoff ends with no event.
+	feed, cancel := s.Events.Subscribe()
+	defer func() { cancel() }()
+	fallback := time.NewTimer(0)
+	defer fallback.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case e, ok := <-feed:
+			if !ok { // dropped (fell behind): subscribe again, and look now
+				feed, cancel = s.Events.Subscribe()
+			} else if !(e.State == "queued" && (e.Stage == "fetch" || (e.Kind == "batch" && e.Stage == ""))) {
+				continue
+			}
+		case <-fallback.C:
 		}
+		fallback.Reset(30 * time.Second)
 		for {
 			task, err := s.Lease([]string{"fetch"}, "queue-fetch")
 			if err != nil {

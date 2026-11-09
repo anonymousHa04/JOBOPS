@@ -59,7 +59,12 @@ spec() {
             echo "8081 qwen2.5-coder-14b-instruct-q4_k_m.gguf qwen2.5-coder-14b -c $(( ${LLM_CODER_CTX:-16384} * slots )) -np $slots --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics $spec" ;;
     embed)     echo "8082 mxbai-embed-large-v1-f16.gguf mxbai-embed-large --embeddings --pooling cls -c 512 -b 512 -ub 512 -np 1" ;;
     general7)  echo "8084 qwen2.5-7b-instruct-q4_k_m.gguf qwen2.5-7b -c 16384 -np ${LLM_GENERAL7_SLOTS:-3} -kvu --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
-    general14) echo "8085 qwen2.5-14b-instruct-q4_k_m.gguf qwen2.5-14b -c 16384 -np 1 --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics" ;;
+    # -np LLM_GENERAL14_SLOTS (3) with -kvu: the slots share the one 16k context (no more memory);
+    # the queue leases at most JOBOPS_MAC_SLOTS (3) Mac tasks at once to match.
+    # --sleep-idle-seconds: after LLM_GENERAL14_SLEEP idle seconds (default 300) llama-server
+    # unloads the 14B and frees its memory; the next request loads it again (health stays 200,
+    # so JobOps' model check passes and the request wakes it). Test: .claude/bin/test_llm_sleep.sh
+    general14) echo "8085 qwen2.5-14b-instruct-q4_k_m.gguf qwen2.5-14b -c 16384 -np ${LLM_GENERAL14_SLOTS:-3} -kvu --cache-reuse 256 -fa on -ctk q8_0 -ctv q8_0 --jinja --metrics --sleep-idle-seconds ${LLM_GENERAL14_SLEEP:-300}" ;;
     *) return 1 ;;
   esac
 }

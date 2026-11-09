@@ -23,6 +23,7 @@
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@mozilla/readability": "^0.6.0",
     "better-sqlite3": "^13.0.3",
+    "eventsource": "^5.1.4",
     "fastify": "^5.12.7",
     "linkedom": "^0.18.14",
     "pdfjs-dist": "^6.4.299",

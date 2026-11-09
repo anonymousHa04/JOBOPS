@@ -1,11 +1,13 @@
 // Third parse-back reader: OpenResume's resume parser (AGPL-3.0), run from its local copy
-// (.scout/openresume-runner, or JOBOPS_OPENRESUME_DIR), never part of JobOps. It splits
+// (.scout/openresume-runner, or JOBOPS_OPENRESUME_DIR), never part of JobOps: a bundle
+// (dist/parse.mjs, RUNBOOK-M8.md) run with plain node, with pdfjs-dist from the runner's
+// own node_modules, so it runs the same on the Mac and in the pods (hostPath mount). It splits
 // a resume into entries the way many ATS do, by lines and text gaps, so it catches layout
-// problems the plain extractors miss (a career break merged into the next job). Its phone
+// problems the plain extractors miss (an entry merged into the next one). Its phone
 // and location patterns are US-only, so those two fields are not compared.
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ResumeData } from "./render.ts";
 import type { Issue } from "./parseback.ts";
 
@@ -19,12 +21,14 @@ export type OpenResumeParsed = {
 const runnerDir = () => process.env.JOBOPS_OPENRESUME_DIR ?? join(import.meta.dirname, "..", "..", "..", ".scout", "openresume-runner");
 
 export function openResumeAvailable(): boolean {
-  return existsSync(join(runnerDir(), "node_modules", ".bin", "tsx"));
+  const dir = runnerDir();
+  return existsSync(join(dir, "dist", "parse.mjs")) && existsSync(join(dir, "node_modules", "pdfjs-dist"));
 }
 
 export function runOpenResume(pdf: string): OpenResumeParsed {
   const dir = runnerDir();
-  const r = spawnSync(join(dir, "node_modules", ".bin", "tsx"), ["parse.ts", pdf], { cwd: dir, encoding: "utf8", timeout: 60_000 });
+  // Absolute path: the runner runs in its own folder, so a relative one would not be found.
+  const r = spawnSync(process.execPath, ["dist/parse.mjs", resolve(pdf)], { cwd: dir, encoding: "utf8", timeout: 60_000 });
   const json = (r.stdout ?? "").split("\n").filter((l) => l.startsWith("{")).at(-1); // pdf.js prints warnings first
   if (!json) throw new Error(`openresume: ${(r.stderr ?? "").split("\n").filter(Boolean).at(-1) ?? "no output"}`);
   return JSON.parse(json) as OpenResumeParsed;
@@ -48,14 +52,16 @@ export function checkOpenResume(parsed: OpenResumeParsed, data: ResumeData): Iss
     const company = [e.company, e.location].filter(Boolean).join(", ");
     // An entry without a company (a project) is read with its title as the company.
     const [wantTitle, wantCompany] = company ? [e.title, company] : ["", e.title];
-    // OpenResume finds titles by job words (engineer, manager): a career break's reason
-    // ("Family relocation") is not one, so its title is not compared.
-    // It also marks down any title with a digit (to tell titles from dates), so "Engineer 2"
+    // OpenResume marks down any title with a digit (to tell titles from dates), so "Engineer 2"
     // reads as no title; lint suggests "II" (title_has_number), the check skips it.
-    if (e.kind !== "break" && !/\d/.test(e.title) && clean(g.jobTitle) !== clean(wantTitle)) add("entry_field", `${e.id}.title`);
+    if (!/\d/.test(e.title) && clean(g.jobTitle) !== clean(wantTitle)) add("entry_field", `${e.id}.title`);
     if (clean(g.company) !== clean(wantCompany)) add("entry_field", `${e.id}.company`);
     if (clean(g.date) !== clean(e.dates)) add("entry_field", `${e.id}.dates`);
-    if (g.descriptions.map(clean).join("\n") !== e.bullets.map(clean).join("\n")) add("entry_field", `${e.id}.bullets`);
+    // The "Client: Y" line is not a bullet; OpenResume reads it as one only when the entry
+    // has no bullet marks (with bullets it starts the description at the first one).
+    const descs = g.descriptions.map(clean);
+    if (e.client && descs[0] === clean(`Client: ${e.client}`)) descs.shift();
+    if (descs.join("\n") !== e.bullets.map(clean).join("\n")) add("entry_field", `${e.id}.bullets`);
   });
   if (parsed.educations.length !== data.education.length) add("entry_count", `education: ${parsed.educations.length} read, ${data.education.length} written`);
   data.education.forEach((e, i) => {

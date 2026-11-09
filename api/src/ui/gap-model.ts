@@ -2,11 +2,15 @@ import { z } from "zod";
 import type { Db } from "../db.ts";
 import { generate } from "../model/llm.ts";
 import { loadBank, loadSkillsExtra, vocabulary } from "../profile/bank.ts";
+import { answerAllows, answerEvidence, gateBullet } from "../profile/gate.ts";
 import { loadRequirements } from "../requirements/parse.ts";
-import { allBullets, bankHasTerm } from "../scoring/score.ts";
+import { bankHasTerm } from "../scoring/score.ts";
 import { checkRewrite } from "../tailor/guard.ts";
-import type { GuardCode } from "../tailor/guard.ts";
+import { aiTellsIn, tellWords } from "../tailor/writing.ts";
+import { terms } from "../scoring/terms.ts";
 import { cachedHelp, saveHelp } from "./gaps.ts";
+import { relatedBullets } from "./gap-related.ts";
+import type { VectorSearch } from "./gap-related.ts";
 import type { GapHelp, GapKind } from "./gaps.ts";
 
 const MAX_WORDS = 25;
@@ -19,7 +23,7 @@ const HelpSchema = z.object({
 });
 const DraftSchema = z.object({ text: z.string(), tags: z.array(z.string()), skills: z.array(z.string()).default([]) });
 
-export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement: string, opts: { refresh?: boolean; baseUrl?: string } = {}): Promise<GapHelp> {
+export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement: string, opts: { refresh?: boolean; baseUrl?: string; search?: VectorSearch } = {}): Promise<GapHelp> {
   if (!opts.refresh) {
     const cached = cachedHelp(db, jobId, requirement);
     if (cached) return cached;
@@ -29,7 +33,9 @@ export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement:
   if (!bank) throw new Error("no bank; run bank build first");
 
   const role = loadRequirements(db, jobId)?.role ?? "";
-  const list = allBullets(bank).map((b) => b.id + " | " + b.text).join("\n");
+  // Only the bullets that may show it (word match plus Qdrant's nearest), not the whole bank.
+  const related = await relatedBullets(bank, vocabulary(bank, loadSkillsExtra()), requirement, opts.search);
+  const list = related.bullets.map((b) => b.id + " | " + b.text).join("\n");
 
   const prompt = `
     A job (role: ${role}) asks for this ${KIND_LABEL[kind]}: "${requirement}".
@@ -47,7 +53,7 @@ export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement:
   const res = await generate({ task: "gap_help", prompt, schema: HelpSchema, baseUrl: opts.baseUrl });
   if (!res.ok) throw new Error("gap help: " + res.error);
 
-  const ids = new Set(allBullets(bank).map((b) => b.id));
+  const ids = new Set(related.bullets.map((b) => b.id));
   const help: GapHelp = {
     meaning: res.value.meaning.trim().slice(0, 400),
     similar_terms: res.value.similar_terms.filter(term => term.trim() !== "").slice(0, 6),
@@ -62,7 +68,7 @@ export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement:
   return help;
 }
 
-export async function draftBullet(input: { requirement: string; kind: GapKind; entry_id: string; story: string; proof?: string }, opts: { baseUrl?: string } = {}): Promise<{ text: string; tags: string[]; codes: GuardCode[]; skills: string[] }> {
+export async function draftBullet(input: { requirement: string; kind: GapKind; entry_id: string; story: string; proof?: string }, opts: { baseUrl?: string } = {}): Promise<{ text: string; tags: string[]; codes: string[]; skills: string[]; words: string[] }> {
   const bank = loadBank();
   if (!bank) throw new Error("no bank; run bank build first");
 
@@ -82,6 +88,7 @@ export async function draftBullet(input: { requirement: string; kind: GapKind; e
     - A past-tense verb true to what they did (assisted < built < designed < led); never raise it.
     - Action, then what was built or decided, then scope or outcome. At most ${MAX_WORDS} words. Do not start with a number.
     - Plain words: no dashes between clauses, no ", ensuring ..." endings.
+    - Never use these words or phrases: ${tellWords().join(", ")}.
     - tags: 2 to 6 lowercase skill or topic words the bullet shows, including the requirement's key term.
     - skills: 0 to 6 tools, technologies or practices the account itself names, written exactly as
       in the account (for example a tool's name). Not the requirement itself, nothing the account does not say.
@@ -105,12 +112,28 @@ export async function draftBullet(input: { requirement: string; kind: GapKind; e
     && s.toLowerCase() !== input.requirement.toLowerCase() && !bankHasTerm(bank, extra, s)))].slice(0, 6);
   let skills = named(res.value.skills);
 
-  let codes = checkRewrite(source, text, { vocab, allowed: [input.requirement], maxWords: MAX_WORDS });
+  // Checked as it will be saved: an answer to this requirement may name it (and its terms),
+  // nothing else the story lacks (the bank gate reads the same "(for: ...)" evidence).
+  const evidence = answerEvidence(new Date().toISOString().slice(0, 10), input.requirement, input.story)
+    + (input.proof?.trim() ? " Proof: " + input.proof : "");
+  const check = (t: string) => [...new Set([...checkRewrite(source, t, { vocab, allowed: answerAllows(input.requirement, vocab), maxWords: MAX_WORDS }),
+    ...gateBullet(bank, input.entry_id, t, evidence)])];
+  // The words that made it fail: model wording, and terms the answer does not have (the
+  // retry and the user both need the words, not just the code; 2026-11-08).
+  const allowed = new Set(answerAllows(input.requirement, vocab).map((x) => x.toLowerCase()));
+  const sourceTerms = new Set(terms(source, vocab));
+  const flagged = (t: string) => [...new Set([
+    ...aiTellsIn(t).filter((x) => !aiTellsIn(source).includes(x)).map((x) => x.replace(/^rider: /, "")),
+    ...terms(t, vocab).filter((x) => !sourceTerms.has(x) && !allowed.has(x))
+  ])];
+  let codes = check(text);
   if (codes.length === 0) {
-    return { text, tags, codes, skills };
+    return { text, tags, codes, skills, words: [] };
   }
 
-  const retryPrompt = `${prompt}\nThe previous draft was rejected for: ${codes.join(", ")}. Fix only that.`;
+  const bad = flagged(text);
+  const retryPrompt = `${prompt}\nThe previous draft was rejected for: ${codes.join(", ")}.`
+    + (bad.length ? ` Do not use: ${bad.join(", ")}.` : "") + " Fix only that.";
   res = await generate({ task: "gap_help", prompt: retryPrompt, schema: DraftSchema, baseUrl: opts.baseUrl });
   if (!res.ok) throw new Error("draft: " + res.error);
 
@@ -120,7 +143,7 @@ export async function draftBullet(input: { requirement: string; kind: GapKind; e
     tags.unshift(input.requirement.toLowerCase());
   }
 
-  codes = checkRewrite(source, text, { vocab, allowed: [input.requirement], maxWords: MAX_WORDS });
+  codes = check(text);
   skills = named([...skills, ...res.value.skills]);
-  return { text, tags, codes, skills };
+  return { text, tags, codes, skills, words: codes.length ? flagged(text) : [] };
 }

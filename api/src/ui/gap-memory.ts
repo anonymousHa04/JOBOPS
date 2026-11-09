@@ -18,6 +18,7 @@ import type { Bank, SkillsExtra } from "../profile/schema.ts";
 import { allBullets } from "../scoring/score.ts";
 import { norm } from "../scoring/terms.ts";
 import { event, plural, shortId, warnEvent } from "../log.ts";
+import { readAnswer, storyNames } from "../profile/gate.ts";
 import { gapList } from "./gaps.ts";
 import type { GapAnswer, GapKind } from "./gaps.ts";
 
@@ -35,7 +36,8 @@ export type Previous = {
 export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Match };
 export type Reuse = { exact: Previous | null; similar: Previous[] };
 // The story, proof, roles and other name given with a "have" or "other name" answer.
-export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string };
+export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string;
+  relation?: "same" | "related"; bullet_ids?: string[] }; // other_name: related work and its bullets
 
 type Prior = Omit<Previous, "match" | "input"> & { key: string; at: string; carried: boolean; raw_input: string | null; carried_from: string | null };
 
@@ -124,7 +126,7 @@ type Ctx = { db: Db; bank: Bank | null; extra: SkillsExtra };
 const ctx = (db: Db): Ctx => ({ db, bank: loadBank(), extra: loadSkillsExtra() });
 
 export function parseEvidence(ev: string): { story: string; proof: string; used_at: string[] } {
-  let s = ev.replace(/^answer \d{4}-\d{2}-\d{2}:\s*/, "");
+  let s = readAnswer(ev).story; // without "answer <date> (for: ...): "
   let proof = "";
   const p = s.lastIndexOf(" Proof: ");
   if (p >= 0) { proof = s.slice(p + 8).trim(); s = s.slice(0, p); }
@@ -148,7 +150,7 @@ function fromEvidence(c: Ctx, requirement: string, answer: GapAnswer, outcome: s
   const out: EarlierInput = { answer, story: "", proof: "", entry_ids: [], same_as: "" };
   const skill = c.extra.skills.find((s) => s.name === requirement.trim().toLowerCase() && s.status === "have");
   if (answer === "other_name") {
-    const ev = (skill?.evidence ?? "").replace(/^answer \d{4}-\d{2}-\d{2}:\s*/, "");
+    const ev = readAnswer(skill?.evidence ?? "").story;
     const m = ev.match(/^same as (.+?)(?:: (.*))?$/s) ?? outcome?.match(/same as ([^)]+)\)/);
     if (!m) return null;
     return { ...out, same_as: m[1].trim(), story: (m[2] ?? "").trim() };
@@ -290,6 +292,11 @@ export function reuseAnswer(db: Db, jobId: string, input: { kind: GapKind; requi
     markDeclined(db, jobId, g);
     event(`gap (job ${shortId(jobId)}): earlier answer not used for "${g.requirement}"`);
     return { outcome: "not used for this job", rescore: false };
+  }
+  // The keyword is then answered as a skill from the earlier story: refuse before writing
+  // anything when that story does not name it (the as_skill answer would be blocked).
+  if (input.accept && g.kind === "keyword" && p.answer === "have" && !storyNames(p.input?.story ?? "", g.requirement)) {
+    throw new Error("blocked: skill_unsupported");
   }
   saveLink(db, askKey(g.requirement), askKey(p.requirement), input.accept ? "same" : "different", "user", null);
   event(`gap (job ${shortId(jobId)}): "${g.requirement}" ${input.accept ? "=" : "≠"} "${p.requirement}" (your verdict, remembered)`);

@@ -9,6 +9,8 @@ export type Card = {
   first_seen_at: string; state: Pipeline; score: number | null; band: string | null; decision: string | null;
   error_code: string | null; failed_stage: string | null; skip_reason: string | null; ready_to_tailor: boolean;
   application: AppStatus | null; open_tasks: number;
+  // Set when Update board moved the job to Not tailored.
+  reason?: string | null;
 };
 
 export type QueueTask = {
@@ -72,10 +74,12 @@ export type Previous = {
   input: EarlierInput | null;
 };
 // What was typed with an earlier "have" or "other name" answer, to fill a form from.
-export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string };
+export type EarlierInput = { answer: GapAnswer; story: string; proof: string; entry_ids: string[]; same_as: string;
+  relation?: "same" | "related"; bullet_ids?: string[] };
 export type CarriedFrom = { job_id: string | null; requirement: string; company: string; title: string; match: Previous["match"] };
 export type Gap = {
   kind: GapKind; requirement: string; note: string | null; known_as: string | null; help: GapHelp | null;
+  help_queued: boolean; // its explanation is queued or running (Mac worker, one at a time)
   answer: GapAnswer | null; outcome: string | null; updated_at: string | null;
   carried_from: CarriedFrom | null; carried_input: EarlierInput | null; declined: boolean;
   reuse: { exact: Previous | null; similar: Previous[] };
@@ -87,6 +91,10 @@ export type Gap = {
 // A ticked board job in the delete panel: resumes it would lose, tracking status, keep mark.
 export type BulkItem = { id: string; title: string; company: string; resumes: number; status: string | null; kept: boolean };
 export type SkipMatch = { id: string; title: string; company: string; word: string; status: string | null; resumes: number };
+export type UpdateCandidate = { id: string; company: string; title: string; score: number | null; band: string | null;
+  application: AppStatus | null; resumes: string[] };
+export type UpdateResult = { jobs: number; records: number; files: number; backup_dir: string | null;
+  refused: { id: string; company: string; title: string; message: string }[] };
 export type SkipMatches = { keywords: string[]; jobs: SkipMatch[]; kept: SkipMatch[] };
 export type DeleteHints ={ title: string[]; keywords: string[]; current: string[]; protected: string[] };
 export type DeleteResult = {
@@ -95,15 +103,19 @@ export type DeleteResult = {
 };
 export type MatchStats ={ gaps: number; checked: number; same: number; failed: number; error: string | null };
 export type Rescored = { rescore_batch: number; rescore_error?: string | null; rescore_skipped?: boolean };
-export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null };
+export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
+  bullet_list: { id: string; short: string }[] };
 export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: GapEntry[] };
-export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[] };
+export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[]; words?: string[] };
 export type AnswerBody = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
   as_skill?: boolean; entry_ids?: string[]; extra_skills?: string[];
+  draft_codes?: string[]; // the codes the draft had (kept with the answer)
   with_skill?: boolean; // the bullet answer also saves the skill
   from_previous?: { from_requirement: string }; // answered from an earlier answer to that ask
+  // other_name: same thing (another spelling, the default) or related work on these bank bullets.
+  relation?: "same" | "related"; bullet_ids?: string[];
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -113,6 +125,37 @@ export type Batch = {
   id: number; limit: number; created_at: string; running: boolean; stages: Record<string, StageCount>;
   failed?: { id: number; job_id: string; stage: string; attempts: number; error_code?: string; error_detail?: string }[];
   tailored: number; skipped?: Record<string, number>;
+};
+
+// Check tab: the resume against the job's score, the chat check's rounds and report.
+type Line = { id: string; text: string };
+export type CheckRound = {
+  version: number; resume_id: string; engine_score: number; chat_score: number | null; kept: boolean; current: boolean;
+  added: Line[]; removed: Line[]; reworded: { id: string; before: string; after: string }[];
+};
+export type CheckSettings = { auto_check: boolean; source: "claude" | "chatgpt" };
+export type ResumeRow = {
+  resume_id: string; made_by: string; engine_score: number; chat_score: number | null;
+  created_at: string; pdf: boolean; current: boolean;
+};
+export type CheckView = {
+  resumes: ResumeRow[];
+  job_score: number | null;
+  resume: null | { resume_id: string; decision: string; engine_score: number; job_score: number; pdf: boolean;
+    lost: { requirement: string; kind: string; job_credit: number; resume_credit: number }[] };
+  loops: {
+    source: string; stopped: string | null; rounds: CheckRound[];
+    candidate: null | { resume_id: string; engine_score: number; start_score: number; added: Line[]; removed: Line[]; reworded: { id: string; before: string; after: string }[] };
+    decision: null | "new" | "previous" | "chosen"; chosen: string | null;
+  }[];
+  reports: { source: string; fit_score: number | null; missed_gaps: { requirement: string; why: string }[];
+    bullet_notes: { bullet_id: string; note: string }[]; from_memory: { fact: string; fills_gap: string }[] }[];
+};
+
+// A job added by its link: queued for parse/score (batch_id), or why not (queue_note).
+export type AddedJob = {
+  job_id: string; company: string; title: string; created: boolean;
+  batch_id: number | null; stage: string | null; queue_note: string | null;
 };
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -135,6 +178,20 @@ export class ApiError extends Error {
 
 export const api = {
   board: () => call<{ jobs: Card[] }>("GET", "/ui/board").then((r) => r.jobs),
+  // One card (the change feed re-reads only the job that changed); null: the job is gone.
+  check: (id: string) => call<CheckView>("GET", `/ui/jobs/${id}/check`),
+  checkSettings: () => call<CheckSettings>("GET", "/ui/check/settings"),
+  setCheckSettings: (s: Partial<CheckSettings>) => call<CheckSettings>("POST", "/ui/check/settings", s),
+  // End of a check: "new" / "previous", or any version by resume_id (Choose this). Re-scores.
+  decideCheck: (id: string, source: string, choice: { use?: "new" | "previous"; resume_id?: string }) =>
+    call<{ resume_id: string; version: number; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/check/decide`, { source, ...choice }),
+  // Restart the chat check for one site: its rounds are kept as a file; the next check opens a new chat.
+  restartCheck: (id: string, source: string) => call<{ archived: string | null }>("POST", `/ui/jobs/${id}/check/restart`, { source }),
+  chooseResume: (id: string, rid: string) =>
+    call<{ resume_id: string; pdf_error: string | null; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/resumes/${encodeURIComponent(rid)}/choose`),
+  pdfUrl: (resumeId: string) => `/api/ui/resumes/${encodeURIComponent(resumeId)}/pdf`,
+  card: (id: string) => call<{ job: Card | null }>("GET", `/ui/board/${id}`).then((r) => r.job),
+  addJob: (url: string) => call<AddedJob>("POST", "/ui/jobs/add", { url }),
   health: () => call<{ services: Service[] }>("GET", "/ui/health").then((r) => r.services),
   job: (id: string) => call<JobDetail>("GET", `/ui/jobs/${id}`),
   score: (id: string) => call<ScoreDetail>("GET", `/ui/jobs/${id}/score`),
@@ -158,8 +215,11 @@ export const api = {
   sweep: () => call<{ batch_id: number; queued: number }>("POST", "/batches/sweep"),
   retryBatch: (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`),
   gaps: (id: string) => call<GapList>("GET", `/ui/jobs/${id}/gaps`),
+  // A saved explanation ({ help }), or queued for the Mac worker ({ queued }): the change feed
+  // says when it is saved.
   gapHelp: (id: string, kind: GapKind, requirement: string, refresh = false) =>
-    call<GapHelp>("POST", `/ui/jobs/${id}/gaps/help`, { kind, requirement, refresh }),
+    call<{ help?: GapHelp; queued?: boolean; batch_id?: number }>("POST", `/ui/jobs/${id}/gaps/help`, { kind, requirement, refresh }),
+  gapHelpAll: (id: string) => call<{ queued: number; batch_id: number }>("POST", `/ui/jobs/${id}/gaps/help-all`),
   draft: (id: string, body: { kind: GapKind; requirement: string; entry_id: string; story: string; proof?: string }) =>
     call<Draft>("POST", `/ui/jobs/${id}/gaps/draft`, body),
   answer: (id: string, body: AnswerBody) =>
@@ -174,7 +234,15 @@ export const api = {
   rescore: (id: string) => call<{ rescore_batch: number }>("POST", `/ui/jobs/${id}/rescore`),
   prompt: (id: string) => call<{ prompt: string }>("GET", `/ui/jobs/${id}/prompt`),
   tailorStatus: (id: string) => call<TailorStatus>("GET", `/ui/jobs/${id}/tailor`),
-  tailorNow: (id: string) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`),
+  // fresh: Re-tailor from scratch (earlier versions do not start it; it builds from the bank).
+  tailorNow: (id: string, fresh = false) => call<{ tailor_batch: number }>("POST", `/ui/jobs/${id}/tailor`, fresh ? { fresh } : undefined),
+  approveWording: (id: string, rid: string, bullet_id: string) =>
+    call<{ bullet_id: string; terms: string[]; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-wording`, { bullet_id }),
+  approveVerify: (id: string, rid: string, kind: string, itemId: string) =>
+    call<{ resume_id: string; kind: string; id: string; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-verify`, { kind, id: itemId }),
+  // Update board: tailored jobs now below 75 move to Not tailored; their resumes are deleted (backed up first).
+  updateBoardPreview: () => call<{ jobs: UpdateCandidate[] }>("GET", "/ui/board/update/preview").then((r) => r.jobs),
+  updateBoard: () => call<UpdateResult>("POST", "/ui/board/update"),
   rescoreAllStatus: () => call<{ changed: boolean; candidates: number }>("GET", "/ui/rescore-all"),
   rescoreAll: () => call<{ batch_id: number; queued: number }>("POST", "/ui/rescore-all")
 };
@@ -184,7 +252,11 @@ export type TailorStatus = {
   ready: boolean; can_tailor: boolean; reasons: string[];
   // What Tailor now would do (it decides on the job's score).
   plan: { decision: string; reason: string; open_risks: string[] } | null;
-  last: { at: string; state: string; ok: boolean; message: string } | null;
+  last: { at: string; state: string; ok: boolean; message: string; left_out?: { bullet_id: string; codes: string[] }[] } | null;
+  // Reworded lines with a related keyword's first use, waiting for "Approve wording".
+  pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
+  // Items the verifier did not confirm (claim, summary, skill), waiting for "Approve".
+  verify_review: { resume_id: string; kind: "claim" | "summary" | "skill"; id: string; code: string; text: string; evidence?: string }[];
 };
 
 // Shared labels and helpers.

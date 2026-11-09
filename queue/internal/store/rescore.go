@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"jobops/queue/internal/events"
 )
 
 // ErrNotParsed: Rescore was asked for a job that has no parsed requirements.
@@ -64,13 +66,15 @@ func (s *Store) RescoreJobs(jobIDs []string) (int64, int, error) {
 	}
 	// Its own prompt_version (rescore-<batch>): a job has one task per stage and version, and the
 	// job's earlier score (and maybe tailor) task holds the default one.
+	evs := make([]events.Event, 0, len(todo))
 	for _, jobID := range todo {
 		if _, err := tx.Exec(`INSERT INTO queue_tasks (batch_id, job_id, stage, prompt_version, state, created_at, updated_at)
 			VALUES (?, ?, 'score', ?, 'queued', ?, ?)`, batchID, jobID, RescoreVersion(batchID), now, now); err != nil {
 			return 0, 0, fmt.Errorf("rescore: %w", err)
 		}
+		evs = append(evs, events.Event{Kind: "task", JobID: jobID, BatchID: batchID, Stage: "score", State: "queued"})
 	}
-	return batchID, len(todo), tx.Commit()
+	return batchID, len(todo), s.commit(tx, evs...)
 }
 
 // Tailor queues one tailor task for a job (the UI's Tailor now), under a new batch
@@ -96,7 +100,7 @@ func (s *Store) Tailor(jobID string) (int64, error) {
 		VALUES (?, ?, 'tailor', ?, 'queued', ?, ?)`, batchID, jobID, TailorVersion(batchID), now, now); err != nil {
 		return 0, fmt.Errorf("tailor: %w", err)
 	}
-	return batchID, tx.Commit()
+	return batchID, s.commit(tx, events.Event{Kind: "task", JobID: jobID, BatchID: batchID, Stage: "tailor", State: "queued"})
 }
 
 // ready: the job is parsed (else ErrNotParsed) and has no open score or tailor task.

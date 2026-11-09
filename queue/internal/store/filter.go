@@ -3,6 +3,8 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+
+	"jobops/queue/internal/events"
 )
 
 // JobText is a stored job as the preference check reads it (jd-search check).
@@ -70,7 +72,7 @@ func (s *Store) SaveVerdicts(verdicts []Verdict) (map[string]int, error) {
 			return nil, fmt.Errorf("save verdicts: %w", err)
 		}
 	}
-	return skipped, tx.Commit()
+	return skipped, s.commit(tx, events.Event{Kind: "filter"})
 }
 
 // skippedOf reads the per-reason skip counts the fetch step stored in its task result.

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { configFiles, readMerged } from "../lists.ts";
 
-export const TASKS = ["jd_parse", "judge", "bank_build", "retag", "reword", "report_normalize", "gap_help", "gap_match"] as const;
+export const TASKS = ["jd_parse", "judge", "bank_build", "retag", "reword", "report_normalize", "gap_help", "gap_match", "verify"] as const;
 export type Task = (typeof TASKS)[number];
 
 const ModelSchema = z.object({

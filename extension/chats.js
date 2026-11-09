@@ -49,6 +49,12 @@ async function rememberChat(jobId, target, url) {
   return true;
 }
 
+async function forgetChat(jobId, target) {
+  const { chats = {} } = await chrome.storage.local.get("chats");
+  if (chats[jobId]) delete chats[jobId][target];
+  await chrome.storage.local.set({ chats });
+}
+
 // Right after the prompt is sent, the new chat gets its id in the URL: save it then, so a
 // failed or slow answer does not lose the conversation (it used to be saved only on answer).
 async function rememberChatWhenCreated(tabId, jobId, target) {

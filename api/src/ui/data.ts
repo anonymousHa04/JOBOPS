@@ -66,8 +66,27 @@ function filters(db: Db, jobId?: string): Map<string, { ok: boolean; reason: str
   return out;
 }
 
+// Update board (update-board.ts) moved a tailored job below the bands to Not tailored and
+// deleted its records; ui_state board_cleared:<job_id> holds the batch_id of its last tailor
+// task then. A later tailor task (higher batch_id) or a new tailored record supersedes it.
+export const CLEARED_PREFIX = "board_cleared:";
+export const CLEARED_REASON = "score below 75; tailored resume removed by Update board";
+
+function clearedMarks(db: Db, jobId?: string): Map<string, number> {
+  const rows = (jobId
+    ? db.prepare("SELECT key, value FROM ui_state WHERE key = ?").all(CLEARED_PREFIX + jobId)
+    : db.prepare("SELECT key, value FROM ui_state WHERE key LIKE 'board_cleared:%'").all()) as { key: string; value: string }[];
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const n = Number(r.value);
+    if (Number.isFinite(n)) out.set(r.key.slice(CLEARED_PREFIX.length), n);
+  }
+  return out;
+}
+
 // Newest task per stage decides the state; a failure only counts when it is final.
-function pipelineOf(tasks: TaskRow[], parsed: boolean, tailoredRecord: boolean, skipped: boolean) {
+// cleared: the job's board_cleared marker (a batch_id), or null.
+function pipelineOf(tasks: TaskRow[], parsed: boolean, tailoredRecord: boolean, skipped: boolean, cleared: number | null = null) {
   const last = new Map<string, TaskRow>();
   for (const t of tasks) last.set(t.stage, t);
   const scoreRes = json(last.get("score")?.result ?? null);
@@ -82,15 +101,25 @@ function pipelineOf(tasks: TaskRow[], parsed: boolean, tailoredRecord: boolean, 
     failed_stage: failed?.stage ?? null,
     // A rescore that reached a tailoring band: the job stays in its column until the user
     // clicks Tailor now (rescores never start tailoring on their own).
-    ready_to_tailor: false
+    ready_to_tailor: false,
+    reason: null as string | null
   };
   const lastScore = last.get("score");
   const lastTailor = last.get("tailor");
   const rescored = !!lastScore && lastScore.prompt_version.startsWith("rescore-") && !(lastTailor && lastTailor.batch_id > lastScore.batch_id);
+  const isCleared = cleared !== null && !tailoredRecord && cleared >= (lastTailor?.batch_id ?? 0);
   let state: Pipeline;
   const open = ["parse", "score", "tailor"].find((s) => last.get(s)?.state === "queued" || last.get(s)?.state === "leased");
   if (open) state = open === "parse" ? "parsing" : open === "score" ? "scoring" : "tailoring";
   else if (failed) state = "failed";
+  else if (isCleared) {
+    state = "not_tailored";
+    base.decision = "not_tailored";
+    base.reason = CLEARED_REASON;
+    // Re-scored into a tailoring band after the cleanup: Tailor now, as for any rescore.
+    base.ready_to_tailor = rescored && lastScore!.batch_id > cleared! &&
+      (scoreRes?.decision === "reuse" || scoreRes?.decision === "adapt");
+  }
   else if (tailoredRecord || (last.get("tailor")?.state === "done" && base.decision !== "not_tailored")) state = "tailored";
   else if (base.decision === "not_tailored") state = "not_tailored";
   else if ((base.decision === "reuse" || base.decision === "adapt") && rescored) {
@@ -108,7 +137,7 @@ export type Card = {
   id: string; title: string; company: string; location: string | null; source_name: string | null;
   first_seen_at: string; state: Pipeline; score: number | null; band: string | null; decision: string | null;
   error_code: string | null; failed_stage: string | null; skip_reason: string | null; ready_to_tailor: boolean;
-  application: AppStatus | null; open_tasks: number;
+  application: AppStatus | null; open_tasks: number; reason: string | null;
 };
 
 export function board(db: Db): Card[] {
@@ -121,12 +150,28 @@ export function board(db: Db): Card[] {
   const open = new Map((db.prepare("SELECT job_id, COUNT(*) AS n FROM application_tasks WHERE done = 0 GROUP BY job_id").all() as { job_id: string; n: number }[]).map((r) => [r.job_id, r.n]));
   const tasks = tasksByJob(db);
   const filter = filters(db);
+  const cleared = clearedMarks(db);
   return jobs.map((j) => {
     const f = filter.get(j.id);
     const skipped = !!f && !f.ok;
-    const p = pipelineOf(tasks.get(j.id) ?? [], parsed.has(j.id), tailored.has(j.id), skipped);
+    const p = pipelineOf(tasks.get(j.id) ?? [], parsed.has(j.id), tailored.has(j.id), skipped, cleared.get(j.id) ?? null);
     return { ...j, ...p, skip_reason: skipped ? f.reason : null, application: apps.get(j.id) ?? null, open_tasks: open.get(j.id) ?? 0 };
   });
+}
+
+// One board card (the UI's change feed re-reads only the job that changed); null: no such job.
+export function boardCard(db: Db, id: string): Card | null {
+  const j = db.prepare("SELECT id, title, company, location, source_name, first_seen_at FROM jobs WHERE id = ?").get(id) as
+    { id: string; title: string; company: string; location: string | null; source_name: string | null; first_seen_at: string } | undefined;
+  if (!j) return null;
+  const parsed = !!db.prepare("SELECT 1 FROM job_requirements WHERE job_id = ? LIMIT 1").get(id);
+  const tailored = !!db.prepare("SELECT 1 FROM resume_records WHERE jd_id = ? AND decision != 'not_tailored' LIMIT 1").get(id);
+  const app = db.prepare("SELECT status FROM applications WHERE job_id = ?").get(id) as { status: AppStatus } | undefined;
+  const open = (db.prepare("SELECT COUNT(*) AS n FROM application_tasks WHERE job_id = ? AND done = 0").get(id) as { n: number }).n;
+  const f = filters(db, id).get(id);
+  const skipped = !!f && !f.ok;
+  const p = pipelineOf(tasksByJob(db, id).get(id) ?? [], parsed, tailored, skipped, clearedMarks(db, id).get(id) ?? null);
+  return { ...j, ...p, skip_reason: skipped ? f.reason : null, application: app?.status ?? null, open_tasks: open };
 }
 
 export function jobDetail(db: Db, id: string) {
@@ -141,7 +186,8 @@ export function jobDetail(db: Db, id: string) {
   const resumes = db.prepare(
     "SELECT resume_id, decision, band, score, path, created_at FROM resume_records WHERE jd_id = ? ORDER BY created_at DESC"
   ).all(id);
-  const p = pipelineOf(tasks, !!req, resumes.some((r) => (r as { decision: string }).decision !== "not_tailored"), !!f && !f.ok);
+  const p = pipelineOf(tasks, !!req, resumes.some((r) => (r as { decision: string }).decision !== "not_tailored"), !!f && !f.ok,
+    clearedMarks(db, id).get(id) ?? null);
   const parsedTasks = tasks.map((t) => ({ ...t, result: json(t.result), final: t.final === 1 }));
   return {
     job,

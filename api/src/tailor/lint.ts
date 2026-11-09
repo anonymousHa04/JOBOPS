@@ -1,4 +1,4 @@
-import { vocabulary } from "../profile/bank.ts";
+import { vocabulary, withRelatedTags } from "../profile/bank.ts";
 import type { Bank, ResumeRecord, SkillsExtra } from "../profile/schema.ts";
 import { span, totalYears } from "../scoring/score.ts";
 import { softSkills } from "../lists.ts";
@@ -63,7 +63,8 @@ export function lintRecord(record: ResumeRecord, bank: Bank, extra: SkillsExtra,
   }
   // Skills shown in no bullet (interviewers probe them); soft skills listed as skills.
   const vocab = new Set([...vocabulary(bank, extra)].map(norm));
-  const tagged = new Set(bank.roles.concat(bank.projects).flatMap((e) => e.bullets).filter((b) => bullets.some((x) => x.id === b.id)).flatMap((b) => b.tags.map(norm)));
+  const withTags = withRelatedTags(bank, extra); // a related keyword is evidenced by its linked bullet's tag
+  const tagged = new Set(withTags.roles.concat(withTags.projects).flatMap((e) => e.bullets).filter((b) => bullets.some((x) => x.id === b.id)).flatMap((b) => b.tags.map(norm)));
   record.content.skills.forEach((s, i) => {
     if (softSkills().pattern.test(s)) add("soft_skill_listed", `skill#${i + 1}`, "engine");
     else if (!tagged.has(norm(s)) && !bullets.some((b) => hasTerm(b.text, s))) add("skill_not_evidenced", `skill#${i + 1}`, "engine");

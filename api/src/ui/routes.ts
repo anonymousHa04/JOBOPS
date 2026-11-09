@@ -295,12 +295,14 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
 
   // Add a job by its link (top bar): fetch, store, keep, queue parse and score (no tailor).
   app.post<{ Body: unknown }>("/ui/jobs/add", async (request, reply) => {
-    const body = z.object({ url: z.string().trim().min(1).max(2000) }).strict().safeParse(request.body ?? {});
+    const body = z.object({ url: z.string().trim().min(1).max(2000), undelete: z.boolean().optional() }).strict().safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: "invalid body", message: "Paste a job link." });
     try {
-      return await addByLink(db, body.data.url);
+      return await addByLink(db, body.data.url, { undelete: body.data.undelete });
     } catch (err) {
-      if (err instanceof AddRefused) return reply.status(400).send({ error: "add_refused", message: message(err) });
+      if (err instanceof AddRefused) {
+        return reply.status(400).send({ error: err.code, message: message(err), ...(err.deleted_at ? { deleted_at: err.deleted_at } : {}) });
+      }
       return reply.status(500).send({ error: "add_failed", message: message(err) });
     }
   });

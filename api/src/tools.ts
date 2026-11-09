@@ -456,7 +456,7 @@ export async function synonymsAudit(d: Db, opts: { baseUrl?: string } = {}) {
 // (only one heavy model fits in memory).
 type Step = { step: string; status: "done" | "cached" | "skipped" | "stopped"; detail?: string };
 
-export async function jobAdd(d: Db, url: string, opts: { company?: string; force?: boolean; render?: boolean } = {}) {
+export async function jobAdd(d: Db, url: string, opts: { company?: string; force?: boolean; render?: boolean; undelete?: boolean } = {}) {
   const steps: Step[] = [];
   const out = (extra: Record<string, unknown> = {}) => ({ url, steps, ...extra });
   const stop = (step: string, spec: TaskSpec, why: string) => {
@@ -473,9 +473,14 @@ export async function jobAdd(d: Db, url: string, opts: { company?: string; force
   }
   const input = await fetchJob(url, { company: opts.company, known });
   const repo = createJobRepository(d);
-  if (repo.isDeleted(input)) throw new Error("You deleted this job earlier, so it is not added again.");
+  const deleted = repo.deletedRows(input);
+  if (deleted.length && !opts.undelete) {
+    throw new Error(`You deleted this job on ${deleted[0].deleted_at.slice(0, 10)}, so it is not added again. Add --undelete to add it anyway.`);
+  }
+  if (deleted.length) repo.removeDeleted(input);
   const { job, created } = repo.upsert(input);
-  steps.push({ step: "fetch", status: created ? "done" : "cached", detail: `${job.company}: ${job.title}` });
+  steps.push({ step: "fetch", status: created ? "done" : "cached",
+    detail: `${job.company}: ${job.title}${deleted.length ? ` (added anyway; deleted ${deleted[0].deleted_at.slice(0, 10)})` : ""}` });
   const base = { job_id: job.id, company: job.company, title: job.title, location: job.location ?? null };
 
   // 2. Parse the JD.

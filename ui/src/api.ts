@@ -156,6 +156,7 @@ export type CheckView = {
 export type AddedJob = {
   job_id: string; company: string; title: string; created: boolean;
   batch_id: number | null; stage: string | null; queue_note: string | null;
+  skip_words_kept?: string[];
 };
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -191,7 +192,8 @@ export const api = {
     call<{ resume_id: string; pdf_error: string | null; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/resumes/${encodeURIComponent(rid)}/choose`),
   pdfUrl: (resumeId: string) => `/api/ui/resumes/${encodeURIComponent(resumeId)}/pdf`,
   card: (id: string) => call<{ job: Card | null }>("GET", `/ui/board/${id}`).then((r) => r.job),
-  addJob: (url: string) => call<AddedJob>("POST", "/ui/jobs/add", { url }),
+  // undelete: "Add it anyway" for a job deleted earlier (error deleted_before without it).
+  addJob: (url: string, undelete = false) => call<AddedJob>("POST", "/ui/jobs/add", undelete ? { url, undelete: true } : { url }),
   health: () => call<{ services: Service[] }>("GET", "/ui/health").then((r) => r.services),
   job: (id: string) => call<JobDetail>("GET", `/ui/jobs/${id}`),
   score: (id: string) => call<ScoreDetail>("GET", `/ui/jobs/${id}/score`),

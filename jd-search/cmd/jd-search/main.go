@@ -25,7 +25,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jd-search run [--dry-run] [--workers N] | jd-search check | jd-search mcp")
+		fmt.Fprintln(os.Stderr, "usage: jd-search run [--dry-run] [--workers N] [--only NAME --slug S --ats A] [--unskip w1,w2] | jd-search check [--unskip w1,w2] | jd-search mcp")
 		os.Exit(2)
 	}
 	// The careers crawler; the default runs ../api/src/careers/crawl.ts from jd-search/.
@@ -37,7 +37,7 @@ func main() {
 	case "run":
 		err = cmdRun(os.Args[2:])
 	case "check":
-		err = cmdCheck(os.Stdin, os.Stdout)
+		err = cmdCheck(os.Args[2:], os.Stdin, os.Stdout)
 	case "mcp":
 		err = cmdMCP()
 	default:
@@ -83,6 +83,10 @@ func cmdRun(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	dry := fs.Bool("dry-run", false, "match only; do not send jobs to the API")
 	workers := fs.Int("workers", 6, "companies fetched at once")
+	only := fs.String("only", "", "search one company")
+	slug := fs.String("slug", "", "board slug for --only, this run only")
+	ats := fs.String("ats", "", "board type for --only, this run only")
+	unskip := fs.String("unskip", "", "comma-separated skip words to ignore this run")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -90,10 +94,62 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := applyRunFlags(&prefs, *only, *slug, *ats, *unskip); err != nil {
+		return err
+	}
 	rep := run.Search(context.Background(), prefs, options(*dry, *workers))
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(rep)
+}
+
+// applyRunFlags narrows prefs for one run (--only/--slug/--ats/--unskip).
+// It changes p in memory only; the preferences file is never written.
+func applyRunFlags(p *filter.Prefs, only, slug, ats, unskip string) error {
+	if unskip != "" {
+		drop := map[string]bool{}
+		for _, w := range strings.Split(unskip, ",") {
+			if w = strings.TrimSpace(w); w != "" {
+				drop[strings.ToLower(w)] = true
+			}
+		}
+		kept := p.SkipKeywords[:0:0]
+		for _, w := range p.SkipKeywords {
+			if !drop[strings.ToLower(strings.TrimSpace(w))] {
+				kept = append(kept, w)
+			}
+		}
+		p.SkipKeywords = kept
+	}
+	if only == "" {
+		return nil
+	}
+	var picked *filter.Company
+	for _, c := range p.Companies.Include {
+		if strings.EqualFold(c.Name, only) {
+			c := c
+			picked = &c
+			break
+		}
+	}
+	if picked == nil {
+		return fmt.Errorf("no company %s in preferences", only)
+	}
+	if slug != "" {
+		picked.Slug = slug
+	}
+	if ats != "" {
+		picked.ATS = ats
+	}
+	p.Companies.Include = []filter.Company{*picked}
+	var exclude []string
+	for _, name := range p.Companies.Exclude {
+		if !strings.EqualFold(name, picked.Name) {
+			exclude = append(exclude, name)
+		}
+	}
+	p.Companies.Exclude = exclude
+	return nil
 }
 
 // Verdict is one stored job's result from cmdCheck.
@@ -105,9 +161,17 @@ type Verdict struct {
 
 // cmdCheck checks stored jobs against the current preferences (no network): the queue runs it
 // before every batch so a job saved by an older search is skipped once the preferences exclude it.
-func cmdCheck(in io.Reader, out io.Writer) error {
+func cmdCheck(args []string, in io.Reader, out io.Writer) error {
+	fs := flag.NewFlagSet("check", flag.ContinueOnError)
+	unskip := fs.String("unskip", "", "comma-separated skip words to ignore this run")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	prefs, err := filter.Load(prefsPath())
 	if err != nil {
+		return err
+	}
+	if err := applyRunFlags(&prefs, "", "", "", *unskip); err != nil {
 		return err
 	}
 	var jobs []filter.Stored

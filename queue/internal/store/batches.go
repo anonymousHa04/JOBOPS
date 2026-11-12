@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"jobops/queue/internal/events"
@@ -9,11 +10,24 @@ import (
 
 // StartBatch records a batch and queues its fetch task. limit 0 means MaxLimit.
 func (s *Store) StartBatch(limit int, parseVersion string) (int64, error) {
+	return s.StartBatchWith(limit, parseVersion, nil)
+}
+
+// StartBatchWith records a batch with the skip words it turns off, and queues its fetch task.
+// limit 0 means MaxLimit.
+func (s *Store) StartBatchWith(limit int, parseVersion string, unskip []string) (int64, error) {
 	if limit == 0 {
 		limit = MaxLimit
 	}
 	if limit < 0 || limit > MaxLimit {
 		return 0, ErrBadLimit
+	}
+	if unskip == nil {
+		unskip = []string{}
+	}
+	b, err := json.Marshal(unskip)
+	if err != nil {
+		return 0, fmt.Errorf("start batch: %w", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -24,7 +38,7 @@ func (s *Store) StartBatch(limit int, parseVersion string) (int64, error) {
 	}
 	defer tx.Rollback()
 	now := s.ts(0)
-	res, err := tx.Exec(`INSERT INTO queue_batches (limit_n, parse_version, created_at) VALUES (?, ?, ?)`, limit, parseVersion, now)
+	res, err := tx.Exec(`INSERT INTO queue_batches (limit_n, parse_version, created_at, unskip) VALUES (?, ?, ?, ?)`, limit, parseVersion, now, string(b))
 	if err != nil {
 		return 0, fmt.Errorf("start batch: %w", err)
 	}
@@ -41,7 +55,8 @@ func (s *Store) StartBatch(limit int, parseVersion string) (int64, error) {
 
 // queueJobs runs when a batch's fetch task ends: it takes up to the batch's limit of jobs,
 // newest first, skipping finished jobs, jobs already queued in a running batch, and jobs the
-// last preference check rejected (job_filter; a job never checked is taken). Failed
+// last preference check rejected (job_filter; a job never checked is taken). A batch that
+// turned skip words off uses its own verdicts (batch_filter) instead of job_filter. Failed
 // tasks are queued again; a new job gets a parse task. Returns the ids of the jobs taken.
 func (s *Store) queueJobs(tx *sql.Tx, batchID int64) ([]string, error) {
 	var limit int
@@ -49,9 +64,25 @@ func (s *Store) queueJobs(tx *sql.Tx, batchID int64) ([]string, error) {
 	if err := tx.QueryRow(`SELECT limit_n, parse_version FROM queue_batches WHERE id = ?`, batchID).Scan(&limit, &version); err != nil {
 		return nil, fmt.Errorf("queue jobs: %w", err)
 	}
+	// Decide the filter before opening rows: one connection, so only one result set at a time.
+	var one int
+	ownVerdicts := true
+	if err := tx.QueryRow(`SELECT 1 FROM batch_filter WHERE batch_id = ? LIMIT 1`, batchID).Scan(&one); err != nil {
+		if err != sql.ErrNoRows {
+			return nil, fmt.Errorf("queue jobs: %w", err)
+		}
+		ownVerdicts = false
+	}
 	// Read the ids first: one connection, so no statement runs while rows are open.
-	rows, err := tx.Query(`SELECT id FROM jobs WHERE id NOT IN (SELECT job_id FROM job_filter WHERE ok = 0)
+	var rows *sql.Rows
+	var err error
+	if ownVerdicts {
+		rows, err = tx.Query(`SELECT id FROM jobs WHERE id NOT IN (SELECT job_id FROM batch_filter WHERE batch_id = ? AND ok = 0)
+		ORDER BY first_seen_at DESC`, batchID)
+	} else {
+		rows, err = tx.Query(`SELECT id FROM jobs WHERE id NOT IN (SELECT job_id FROM job_filter WHERE ok = 0)
 		ORDER BY first_seen_at DESC`)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("queue jobs: %w", err)
 	}

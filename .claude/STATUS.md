@@ -3,19 +3,65 @@
 Handoff for the next session. Update this file at the end of every milestone
 (and whenever a decision changes). Commit only when the user asks.
 
-Last updated: 2026-11-06. **Milestone 8 is done** (user, 2026-11-06): containers, local Kubernetes,
-gateway, CI workflow, the Go `bin/jobops` (`ctl/`), plus the M3/M7 follow-ups built on branch
-`milestone-8` (Gaps tab and answer memory, click-to-tailor, one score, delete with reasons and skip
-keywords, Keep this job, bulk deletes, readable logs for `bin/jobops watch`). JobOps runs in Docker
-Desktop's Kubernetes: UI at localhost:8080 (`RUNBOOK-M8.md`), `bin/jobops start` brings everything
-up (78 s from cold). The local tmux stack is stopped: run one or the other, never both.
-Next: the user commits what is still uncommitted and merges `milestone-8` into `dev`; the first
-CI run (needs a push); the open test plans (each needs the user's approval); then Milestone 6.
+Last updated: 2026-11-12. **Milestone 8 is done** (user, 2026-11-06) and merged: `atlassian-resume-fix`
+-> `milestone-8` (e0b07fb) -> `dev` (70f69b0), 2026-11-12. M8 covers containers, local Kubernetes,
+gateway, CI workflow, the Go `bin/jobops` (`ctl/`), plus the M3/M7 follow-ups (Gaps tab and answer
+memory, click-to-tailor, one score, delete with reasons and skip keywords, Keep this job, bulk
+deletes, readable logs for `bin/jobops watch`), the bank gate, the parser/iCIMS fix and the exit
+gate (K0-K6). JobOps runs in Docker Desktop's Kubernetes: UI at localhost:8080 (`RUNBOOK-M8.md`),
+`bin/jobops start` brings everything up (78 s from cold). The local tmux stack is stopped: run one
+or the other, never both.
+Current branch: `fix/dev-start` (from `dev` at 70f69b0, nothing on it yet).
+Next: the batch company view (plan `.claude/specs/plan-batch-companies.md`, waiting for the user's
+OK); the first CI run (needs a push); the open test plans (each needs the user's approval); the
+K3 `synonyms audit` (needs the laptop's 7B); then Milestone 6.
+
+Batch 183 (2026-11-12) added no jobs: 37 companies, 28 reached, 5,070 postings, 13 matched, all
+already stored. 7 companies are never searched (auto-detect finds no Greenhouse/Lever/Ashby board):
+Chargebee, Dream11, Hasura, Juspay, Meesho, Rippling, Zepto. The batch saved only counts, so this
+was found by a dry run; the company view plan fixes that (per-company table, slug entry, retry).
 
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
 
-## Bank gate (branch `atlassian-resume-fix` from milestone-8, 2026-11-07, uncommitted)
+## Batch company view (branch `fix/dev-start`, plan `.claude/specs/plan-batch-companies.md`, 2026-11-12, uncommitted)
+
+Why: a batch saved only counts, so companies that were never searched (7 in batch 183) did not show
+up anywhere in the UI. Tasks: `.claude/specs/plan-batch-companies-tasks.md` (bc-01..bc-16, one file
+each). Workflow (user): local coders first, Claude subagents on escalation, manager reviews every diff
+(`CODER-FLOW.md` explains the flow).
+- jd-search: `Report.CompaniesDetail` (json companies_detail: fetched / unreachable / no_slug /
+  excluded with counts and titles); `run --only NAME [--slug S --ats A] [--unskip w1,w2]` and
+  `check --unskip` change the preferences in memory only.
+- queue: tables `batch_companies`, `batch_filter`, column `queue_batches.unskip` (ALTER on open);
+  `StartBatchWith`; the fetch task saves the company rows, and a batch with unskip words gets a second
+  check saved to batch_filter only (job_filter, the sweep and later batches are unchanged);
+  `POST /batches/{id}/companies/retry` (jd-search --only; new jobs queued under the batch's limit);
+  `GET /batches/{id}` has companies and unskip.
+- api: `POST /batches` takes unskip (sent only when non-empty); `POST /batches/:id/companies/retry`
+  saves the slug to preferences.yaml (setCompany) only when the retry comes back fetched and a
+  non-empty slug was sent; `GET /batches/skip-words`.
+- UI: Batches tab: skip-word chips next to Limit (× = off for the next batch only), Limit tooltip
+  (most jobs per batch, newest first; not parallelism), Companies table (`ui/src/BatchCompanies.tsx`,
+  plain table, sort on header click, slug input + board select on failed rows or Edit, Retry per row).
+- Coder record: 2 of 16 tasks passed on the local coder (bc-07 still needed a fix, bc-08 clean); 14
+  escalated to Claude subagents; lessons recorded per escalation. `feedback.py stats`: supplied
+  lessons have not yet turned a failing run into a pass.
+- Tests (cases approved by the user 2026-11-12; `.claude/specs/plan-batch-companies-tests.md`):
+  jd-search `TestSearchReportsEveryCompany` (run_test.go), `TestApplyRunFlags` (cmd/jd-search/main_test.go);
+  queue `TestOpenAddsUnskipOnce`, `TestBatchOnlyVerdicts`, `TestCompanyRows` (store/companies_test.go);
+  api `api/test/batch-companies.test.ts` (slug saved only after a fetched retry; a failed retry leaves
+  preferences.yaml byte-identical; POST /batches with unskip). bt-02 passed on the local coder (then
+  tidied); bt-01, bt-03, bt-04 escalated. All checks: go vet + go test -race clean in both modules;
+  tsc api + ui clean; 324 tests pass; ui build ok; profile/preferences.yaml checksum unchanged.
+- Tooling bug found (not fixed, no tooling edits mid-run): `pipeline.py verify` refuses `node:test` as
+  "not a Node built-in" (DEPENDENCY_FAILURE on bt-04). Fix on its own tooling branch from dev.
+- Next: deploy (`bin/jobops db-backup && bin/jobops up`; check the gateway timeout for 3-minute
+  retries), retry the 7 companies from the UI, restore general14 and scale worker-mac back to 1;
+  commit when the user asks (autofix left the code files staged; nothing is committed).
+- Running state: coder server up, general14 stopped, worker-mac scaled to 0 (since 2026-11-12).
+
+## Bank gate (branch `atlassian-resume-fix` from milestone-8, 2026-11-07, merged into dev 2026-11-12)
 
 Why: Gaps answers on 2026-11-05 put unsupported bullets into the bank (a 1M claim, MCP before
 2024-11, model wording, copied evidence, the job post's own term). Tailor and render trusted the
@@ -461,11 +507,10 @@ Docker runs only for Qdrant while coders work (user turns it off otherwise); Job
 
 ## Where to start next
 
-- Milestone 8 is done. Still uncommitted on `milestone-8` (the user commits): the 2026-11-05/06
-  work below and in "Where things are" (answer memory, delete reasons, skip keywords, Keep this
-  job, bulk deletes, logging). Deployed by the user except the last UI changes (Skipped-only
-  checkboxes, the always-shown skip-keyword button): redeploy with `bin/jobops db-backup &&
-  bin/jobops up`.
+- Milestone 8 is done, committed and merged into `dev` (70f69b0, 2026-11-12). If the last UI
+  changes (Skipped-only checkboxes, the always-shown skip-keyword button) are not in the pods yet,
+  redeploy with `bin/jobops db-backup && bin/jobops up`.
+- Batch company view: `.claude/specs/plan-batch-companies.md` (branch `fix/dev-start`).
 - **Gaps answer memory** (`api/src/ui/gap-memory.ts`, deployed and used by the user).
   - Exact asks (normalized, synonyms included) take your earlier answer automatically, marked
     "from <job>", with Undo. Undo marks the gap `declined` for that job.

@@ -124,11 +124,18 @@ export type AnswerBody = {
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
 
+// One preferred company of a batch (same fields as the API's QueueCompany). error is empty unless unreachable.
+export type BatchCompany = {
+  name: string; board: string; slug: string; status: "fetched" | "unreachable" | "no_slug" | "excluded"; error: string;
+  postings: number; matched: number; created: number; duplicates: number; titles: string[]; retried_at?: string;
+};
 export type StageCount = { queued: number; leased: number; done: number; failed: number };
 export type Batch = {
   id: number; limit: number; created_at: string; running: boolean; stages: Record<string, StageCount>;
   failed?: { id: number; job_id: string; stage: string; attempts: number; error_code?: string; error_detail?: string }[];
   tailored: number; skipped?: Record<string, number>;
+  companies?: BatchCompany[]; // every preferred company of the batch and how its search went
+  unskip?: string[]; // skip words turned off for this batch only
 };
 
 // Check tab: the resume against the job's score, the chat check's rounds and report.
@@ -217,7 +224,13 @@ export const api = {
   deleteJob: (id: string, why: { reason?: string; keywords?: string[] } = {}) => call<DeleteResult>("DELETE", `/ui/jobs/${id}`, why),
   batches: () => call<Batch[]>("GET", "/batches"),
   batch: (id: number) => call<Batch>("GET", `/batches/${id}`),
-  startBatch: (limit: number) => call<{ batch_id: number }>("POST", "/batches", { limit }),
+  // unskip: skip words turned off for this batch only (sent only when there are some).
+  startBatch: (limit: number, unskip: string[] = []) =>
+    call<{ batch_id: number }>("POST", "/batches", unskip.length ? { limit, unskip } : { limit }),
+  // Retry one company with a new slug/ATS; runs a real search (the API waits up to 3 minutes).
+  retryCompany: (batchId: number, body: { name: string; slug?: string; ats?: string }) =>
+    call<{ company: BatchCompany; saved: string[] }>("POST", `/batches/${batchId}/companies/retry`, body),
+  skipWords: () => call<{ words: string[] }>("GET", "/batches/skip-words"),
   sweep: () => call<{ batch_id: number; queued: number }>("POST", "/batches/sweep"),
   retryBatch: (id: number) => call<{ requeued: number }>("POST", `/batches/${id}/retry`),
   gaps: (id: string) => call<GapList>("GET", `/ui/jobs/${id}/gaps`),

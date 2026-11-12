@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,7 +62,7 @@ func main() {
 
 	// BaseContext: stopping cancels every request's context, so open event streams end at once
 	// and Shutdown does not wait for them.
-	srv := &http.Server{Addr: *addr, Handler: api.Handler(s), ReadHeaderTimeout: 10 * time.Second,
+	srv := &http.Server{Addr: *addr, Handler: api.HandlerWith(s, retryCompany(s, fetch.JDSearch(root))), ReadHeaderTimeout: 10 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return ctx }}
 	go func() {
 		<-ctx.Done()
@@ -116,7 +117,10 @@ func expireLoop(ctx context.Context, s *store.Store) {
 // Fetch tasks run here, each in its own goroutine (no limit): the search, then the preference
 // check of every stored job a batch could take (a job saved by an older search is skipped once
 // the preferences exclude it). A failed check fails the fetch task (code check_failed); the
-// batch then uses the last saved verdicts.
+// batch then uses the last saved verdicts. The run's per-company rows (searched, unreachable,
+// no slug, excluded) are saved for the batch; the task result keeps only the counts. A batch
+// that turned skip words off searches with them unskipped and gets a second check saved for
+// that batch only (its skipped counts are the task's).
 func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetch.Checker) {
 	// Wakes when a fetch task is queued (a batch started or retried, a fetch retried); the
 	// timer is only a fallback, for a retry whose backoff ends with no event.
@@ -148,7 +152,20 @@ func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetc
 			}
 			log.Printf("batch %d task %d fetch leased", task.BatchID, task.ID)
 			go func(task *store.Task) {
-				sum, err := run(ctx)
+				unskip, err := s.BatchUnskip(task.BatchID)
+				if err != nil {
+					if ferr := s.Fail(task.ID, "fetch_failed", err.Error()); ferr != nil {
+						log.Printf("batch %d task %d fetch: %v", task.BatchID, task.ID, ferr)
+					}
+					log.Printf("batch %d task %d fetch failed: %v", task.BatchID, task.ID, err)
+					return
+				}
+				var sum fetch.Summary
+				if len(unskip) > 0 {
+					sum, err = run(ctx, "--unskip", strings.Join(unskip, ","))
+				} else {
+					sum, err = run(ctx)
+				}
 				if err != nil {
 					if ferr := s.Fail(task.ID, "fetch_failed", err.Error()); ferr != nil {
 						log.Printf("batch %d task %d fetch: %v", task.BatchID, task.ID, ferr)
@@ -156,6 +173,10 @@ func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetc
 					log.Printf("batch %d task %d fetch failed", task.BatchID, task.ID)
 					return
 				}
+				if serr := s.SaveCompanies(task.BatchID, sum.Companies); serr != nil {
+					log.Printf("batch %d task %d save companies: %v", task.BatchID, task.ID, serr)
+				}
+				sum.Companies = nil
 				skipped, err := fetch.Recheck(ctx, s, check)
 				if err != nil {
 					if ferr := s.Fail(task.ID, "check_failed", err.Error()); ferr != nil {
@@ -163,6 +184,16 @@ func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetc
 					}
 					log.Printf("batch %d task %d preference check failed: %v", task.BatchID, task.ID, err)
 					return
+				}
+				if len(unskip) > 0 {
+					skipped, err = fetch.RecheckBatch(ctx, s, check, task.BatchID, unskip)
+					if err != nil {
+						if ferr := s.Fail(task.ID, "check_failed", err.Error()); ferr != nil {
+							log.Printf("batch %d task %d fetch: %v", task.BatchID, task.ID, ferr)
+						}
+						log.Printf("batch %d task %d batch preference check failed: %v", task.BatchID, task.ID, err)
+						return
+					}
 				}
 				sum.Skipped = skipped
 				b, _ := json.Marshal(sum)
@@ -173,6 +204,54 @@ func fetchLoop(ctx context.Context, s *store.Store, run fetch.Runner, check fetc
 				log.Printf("batch %d task %d fetch done (matched %d, new %d, skipped %v)", task.BatchID, task.ID, sum.Matched, sum.Created, sum.Skipped)
 			}(task)
 		}
+	}
+}
+
+// retryCompany searches one company of a batch again (jd-search --only, with an optional new
+// slug and ats, and the batch's unskipped words), saves its row, and queues the batch's next
+// jobs when the search added any.
+func retryCompany(s *store.Store, run fetch.Runner) api.RetryFunc {
+	return func(ctx context.Context, batchID int64, name, slug, ats string) (store.Company, error) {
+		unskip, err := s.BatchUnskip(batchID)
+		if err != nil {
+			return store.Company{}, err
+		}
+		args := []string{"--only", name}
+		if slug != "" {
+			args = append(args, "--slug", slug)
+		}
+		if ats != "" {
+			args = append(args, "--ats", ats)
+		}
+		if len(unskip) > 0 {
+			args = append(args, "--unskip", strings.Join(unskip, ","))
+		}
+		sum, err := run(ctx, args...)
+		if err != nil {
+			return store.Company{}, err
+		}
+		var row *store.Company
+		for i := range sum.Companies {
+			if strings.EqualFold(sum.Companies[i].Name, name) {
+				row = &sum.Companies[i]
+				break
+			}
+		}
+		if row == nil {
+			return store.Company{}, fmt.Errorf("jd-search returned no row for %s", name)
+		}
+		if err := s.UpsertCompany(batchID, *row); err != nil {
+			return store.Company{}, err
+		}
+		if row.Created > 0 {
+			ids, err := s.QueueMore(batchID)
+			if err != nil {
+				log.Printf("batch %d retry %s: %v", batchID, name, err)
+			} else {
+				log.Printf("batch %d retry %s: queued %d jobs", batchID, name, len(ids))
+			}
+		}
+		return *row, nil
 	}
 }
 

@@ -41,12 +41,18 @@ function rowToJob(row: any): Job {
   return job;
 }
 
+export type DeletedRow = { source_url: string; deleted_at: string; keywords: string[] };
+
 export type JobRepository = {
   insert(input: JobInput): Job;
   getById(id: string): Job | undefined;
   upsert(input: JobInput): { job: Job; created: boolean };
   // The user deleted this posting earlier (same link or same content): callers skip upsert.
   isDeleted(input: JobInput): boolean;
+  // The deleted_jobs rows that match this posting (the same rule as isDeleted), newest first.
+  deletedRows(input: JobInput): DeletedRow[];
+  // "Add it anyway": forget those rows so the posting can be added again. Returns rows removed.
+  removeDeleted(input: JobInput): number;
   list(query: JobListQuery): { items: Job[]; total: number };
 };
 
@@ -66,6 +72,12 @@ export function createJobRepository(db: Db): JobRepository {
   `);
   const deletedStmt = db.prepare(`
     SELECT 1 FROM deleted_jobs WHERE source_url = @source_url OR content_hash = @content_hash LIMIT 1
+  `);
+  const deletedRowsStmt = db.prepare(`
+    SELECT source_url, deleted_at, keywords FROM deleted_jobs WHERE source_url = @source_url OR content_hash = @content_hash ORDER BY deleted_at DESC
+  `);
+  const removeDeletedStmt = db.prepare(`
+    DELETE FROM deleted_jobs WHERE source_url = @source_url OR content_hash = @content_hash
   `);
   const touchStmt = db.prepare(`
     UPDATE jobs SET last_seen_at = @last_seen_at WHERE id = @id
@@ -130,6 +142,23 @@ export function createJobRepository(db: Db): JobRepository {
     },
     isDeleted(input: JobInput): boolean {
       return !!deletedStmt.get({ source_url: input.source_url, content_hash: computeContentHash(input) });
+    },
+    deletedRows(input: JobInput): DeletedRow[] {
+      const rows = deletedRowsStmt.all({ source_url: input.source_url, content_hash: computeContentHash(input) }) as
+        { source_url: string; deleted_at: string; keywords: string | null }[];
+      return rows.map((r) => {
+        let keywords: string[] = [];
+        try {
+          const k = r.keywords ? JSON.parse(r.keywords) : [];
+          if (Array.isArray(k)) keywords = k.filter((w): w is string => typeof w === "string");
+        } catch {
+          // Not JSON: no keywords to report.
+        }
+        return { source_url: r.source_url, deleted_at: r.deleted_at, keywords };
+      });
+    },
+    removeDeleted(input: JobInput): number {
+      return Number(removeDeletedStmt.run({ source_url: input.source_url, content_hash: computeContentHash(input) }).changes);
     },
     upsert(input: JobInput): { job: Job; created: boolean } {
       const now = new Date().toISOString();

@@ -7,6 +7,8 @@ import { loadRequirements } from "../requirements/parse.ts";
 import { bankHasTerm } from "../scoring/score.ts";
 import { checkRewrite } from "../tailor/guard.ts";
 import { aiTellsIn, tellWords } from "../tailor/writing.ts";
+import { draftTellFixes } from "../tailor/tell-fixes.ts";
+import type { TellFix } from "../tailor/tell-fixes.ts";
 import { terms } from "../scoring/terms.ts";
 import { cachedHelp, saveHelp } from "./gaps.ts";
 import { relatedBullets } from "./gap-related.ts";
@@ -68,7 +70,7 @@ export async function gapHelp(db: Db, jobId: string, kind: GapKind, requirement:
   return help;
 }
 
-export async function draftBullet(input: { requirement: string; kind: GapKind; entry_id: string; story: string; proof?: string }, opts: { baseUrl?: string } = {}): Promise<{ text: string; tags: string[]; codes: string[]; skills: string[]; words: string[] }> {
+export async function draftBullet(input: { requirement: string; kind: GapKind; entry_id: string; story: string; proof?: string }, opts: { baseUrl?: string } = {}): Promise<{ text: string; tags: string[]; codes: string[]; skills: string[]; words: string[]; fixes?: TellFix[] }> {
   const bank = loadBank();
   if (!bank) throw new Error("no bank; run bank build first");
 
@@ -128,7 +130,7 @@ export async function draftBullet(input: { requirement: string; kind: GapKind; e
   ])];
   let codes = check(text);
   if (codes.length === 0) {
-    return { text, tags, codes, skills, words: [] };
+    return { text, tags, codes, skills, words: [], fixes: [] };
   }
 
   const bad = flagged(text);
@@ -145,5 +147,7 @@ export async function draftBullet(input: { requirement: string; kind: GapKind; e
 
   codes = check(text);
   skills = named([...skills, ...res.value.skills]);
-  return { text, tags, codes, skills, words: codes.length ? flagged(text) : [] };
+  // One-click plain replacements for the AI-tell words left (a fixed list; the model already failed).
+  const fixes = codes.length ? draftTellFixes(text, source, aiTellsIn).fixes : [];
+  return { text, tags, codes, skills, words: codes.length ? flagged(text) : [], fixes };
 }

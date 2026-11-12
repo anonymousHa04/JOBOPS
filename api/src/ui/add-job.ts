@@ -10,7 +10,19 @@ import { addJob, QueueDownError } from "../queue/client.ts";
 import { event, shortId, warnEvent } from "../log.ts";
 import { publish } from "../events/bus.ts";
 
-export class AddRefused extends Error {}
+// code: "deleted_before" when the user deleted this posting earlier (the UI then offers
+// "Add it anyway"); "add_refused" for everything else. deleted_at: when it was deleted.
+export class AddRefused extends Error {
+  readonly code: "add_refused" | "deleted_before";
+  readonly deleted_at?: string;
+  constructor(message: string, code: "add_refused" | "deleted_before" = "add_refused", deleted_at?: string) {
+    super(message);
+    this.code = code;
+    this.deleted_at = deleted_at;
+  }
+}
+
+export const deletedDay = (iso: string) => iso.slice(0, 10);
 
 // Job sites whose terms forbid automated reading (and LinkedIn logins are at stake): never
 // fetched. The user pastes the company's own link ("Apply on company website") instead.
@@ -43,9 +55,12 @@ export function checkLink(raw: string): URL {
 export type Added = {
   job_id: string; company: string; title: string; created: boolean;
   batch_id: number | null; stage: string | null; queue_note: string | null;
+  // Add it anyway: skip words that delete saved stay in preferences.yaml (they apply to other jobs).
+  // Empty unless the deleted row had skip words.
+  skip_words_kept: string[];
 };
 
-export async function addByLink(db: Db, raw: string): Promise<Added> {
+export async function addByLink(db: Db, raw: string, opts: { undelete?: boolean } = {}): Promise<Added> {
   const url = checkLink(raw).toString();
   let known = new Map<string, string>();
   try {
@@ -60,13 +75,21 @@ export async function addByLink(db: Db, raw: string): Promise<Added> {
     throw new AddRefused(err instanceof Error ? err.message : String(err));
   }
   const repo = createJobRepository(db);
-  if (repo.isDeleted(input)) throw new AddRefused("You deleted this job earlier, so it is not added again.");
+  const deleted = repo.deletedRows(input);
+  if (deleted.length && !opts.undelete) {
+    const at = deleted[0].deleted_at;
+    throw new AddRefused(`You deleted this job on ${deletedDay(at)}, so it is not added again.`, "deleted_before", at);
+  }
+  // Add it anyway: forget the delete (same link or same content), then add as usual.
+  if (deleted.length) repo.removeDeleted(input);
   const { job, created } = repo.upsert(input);
   setKept(db, job.id, true);
   publish({ kind: "job", job_id: job.id, state: created ? "added" : "changed" });
-  event(`job ${created ? "added" : "added again"} by link (job ${shortId(job.id)}): ${job.company} · ${job.title}`);
+  if (deleted.length) event(`job added anyway (deleted ${deletedDay(deleted[0].deleted_at)}): ${job.company} · ${job.title}`);
+  else event(`job ${created ? "added" : "added again"} by link (job ${shortId(job.id)}): ${job.company} · ${job.title}`);
 
-  const out: Added = { job_id: job.id, company: job.company, title: job.title, created, batch_id: null, stage: null, queue_note: null };
+  const out: Added = { job_id: job.id, company: job.company, title: job.title, created, batch_id: null, stage: null, queue_note: null,
+    skip_words_kept: [...new Set(deleted.flatMap((d) => d.keywords))] };
   try {
     const q = await addJob(job.id);
     out.batch_id = q.batch_id;

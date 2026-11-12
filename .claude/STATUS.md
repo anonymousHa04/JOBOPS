@@ -154,12 +154,46 @@ Docker runs only for Qdrant while coders work (user turns it off otherwise); Job
   pages_fonts, pdftotext, pdfjs, openresume); `ats check` ok. It is a draft that passes the
   checks, not "ready": not checked are iCIMS's real parse (user's upload) and the fields filled
   by hand.
-- **Next (user):** upload draft 2104dc41 to iCIMS (fill Education and LinkedIn by hand) and share
-  what autofill shows; upload the fake resume once to iCIMS and Workday (fill
-  data/ats/icims-TEMPLATE.json); rewrite the Cloud Infrastructure skill evidence in your own words
-  (part of it is model-written guesses). Then: commit STATUS, `/graphify . --update`, merge
-  `atlassian-resume-fix` into `dev` when asked.
-- Known follow-up: skill evidence matching (names()) does not handle plurals/synonyms.
+- 2026-11-09 to 11-10, after K6 (commits a18c21f, c9d9a95, 9bd17f0; merged up to dev):
+  - iCIMS upload of 2104dc41: all 5 employers, titles, dates and clients right; "Adadda
+    Marketing," leaked into the AtDrive description (fix by hand on the form; cause unproven).
+  - UI: Check tab renamed "Check resume", manual check buttons removed; "Start check with <chat>"
+    when a job has no check, Restart check also starts the new chat. Applied/interview/offer/
+    rejected/withdrawn jobs leave the Pipeline board (real time, change feed). "Update board"
+    (top bar): tailored jobs whose job band is below 75 move to Not tailored, their records
+    backed up to data/backups/update-board-<time>/ and deleted (Databricks the first). "Add it
+    anyway" for a job deleted earlier (deleted_before; CLI job add --undelete; tests written
+    blind from the spec by a separate agent). "Added skills" panel (list, Remove, Edit evidence).
+    Tailor box: Dismiss next to Approve, and exit-gate skills listed ("Not backed by your bank");
+    it no longer says "PDF failed" once a later render made the PDF.
+  - Scoring: a years range ("5-8", "5–8", "5 to 8") asks for its lower number (Sarvam read 8+).
+  - Gaps: one-click "Plain wording" replacements for AI-tell words (tell-fixes.ts, fixed list);
+    "Add as a skill" offers bullets that show it (code + model) with tick boxes, and warns before
+    saving a skill the resume check would block (skill-evidence.ts: the note names the skill or a
+    ticked bank bullet backs it; the exit gate uses the same rule; the verifier checks meaning).
+  - OpenResume runner (.scout, git-ignored): each page ends on a line break (pdf.js left the last
+    line of a page open, so a section title at the top of page 2 was glued to page 1 and lost).
+    Rebuilt dist/parse.mjs. The user allows Projects to start page 2.
+  - Profile (user-approved; backups in data/backups/*-2026-11-10/): Prometheus removed; bullets
+    schneider-electric-component-tree and schneider-electric-design-versioning added (DSA);
+    schneider-electric-17 reworded (Kafka only) with tags asynchronous programming, kafka;
+    evidence rewritten for algorithms, data structures, asynchronous programming; websocket flags
+    resolved (one accepted for now, user's choice).
+  - Sarvam AI (SDE 3, Samvaad, job 6901c359; added again after a delete): job 81.8. Draft
+    6901c359-...-0e0e9c93 passes all 8 checks; resume score 75.5. Not checked: iCIMS/Workday's
+    real parse (Projects at the top of page 2), fields filled by hand.
+  - Playwright walk-through (read-only, scratchpad scripts): all steps pass after two test fixes.
+  - 321 tests pass.
+- **Next (user):** upload the Sarvam draft 0e0e9c93 and share what autofill shows; Edit evidence
+  or Remove for mysql and scalability (bank audit flags them); tick the linked bullets once for
+  algorithms, data structures and asynchronous programming in Edit evidence; the Atlassian draft
+  2104dc41 no longer passes today's checks (conde-nast-7 term_added, MCP claim): re-tailor before
+  reusing it. Upload the fake resume to iCIMS and Workday once (data/ats/icims-TEMPLATE.json).
+- Known follow-ups: Okta "Core Frontier" sits in Tailored with a "not tailored" label (Oct 28
+  records, newer score decision); near_duplicate shows the wrong message in Gaps (should name the
+  matching bullet); "Rescore all" only covers jobs below 75 (name it so, or include tailored);
+  "multi-cloud" evidence has model guesses; skill names() does not handle plurals/synonyms;
+  the 14B keeps adding "focusing on scalability" to the websocket bullet.
 
 ## Where things are
 

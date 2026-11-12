@@ -15,9 +15,9 @@ import { loadRecords } from "../tailor/records.ts";
 import { planJob } from "../tailor/tailor.ts";
 import { board, jobDetail, scoreDetail } from "./data.ts";
 import { gapList } from "./gaps.ts";
-import { latestRecord } from "../extension/reports.ts";
-import { wordingApproved } from "../render/exit-gate.ts";
-import { lastVerifierIssues } from "../render/render.ts";
+import { latestRecord, openFactFlags } from "../extension/reports.ts";
+import { exitIssues, wordingApproved } from "../render/exit-gate.ts";
+import { lastVerifierIssues, pdfChecksPassed, pdfDir } from "../render/render.ts";
 import { reviewItems } from "../render/verify.ts";
 import type { VerifyKind } from "../render/verify-approvals.ts";
 
@@ -46,7 +46,26 @@ export type TailorStatus = {
   // The latest resume's items the verifier did not confirm (send to review, A3), from its last
   // render's checks file (no model call): the checked text and, for a skill, its evidence.
   verify_review: { resume_id: string; kind: VerifyKind; id: string; code: string; text: string; evidence?: string }[];
+  // The latest resume's added skills the exit gate does not let through (skill_unsupported):
+  // only skills from skills-extra.yaml, so the Tailor box can offer Dismiss (remove it, re-tailor).
+  skill_review: { resume_id: string; skill: string; evidence: string }[];
 };
+
+function skillLines(db: Db, jobId: string): TailorStatus["skill_review"] {
+  const rec = latestRecord(db, jobId);
+  const bank = rec ? loadBank() : null;
+  if (!rec || !bank) return [];
+  const extra = loadSkillsExtra();
+  const flags = openFactFlags(rec.jd_id, rec.content.bullets.map((b) => b.id));
+  const out: TailorStatus["skill_review"] = [];
+  for (const i of exitIssues(rec, bank, extra, flags)) {
+    if (i.code !== "skill_unsupported") continue;
+    const skill = rec.content.skills[Number(i.detail.replace("skill#", "")) - 1];
+    const x = skill ? extra.skills.find((s) => s.name === skill.trim().toLowerCase()) : undefined;
+    if (skill && x) out.push({ resume_id: rec.resume_id, skill, evidence: x.evidence ?? "" });
+  }
+  return out;
+}
 
 function pendingLines(db: Db, jobId: string): TailorStatus["pending_review"] {
   const rec = latestRecord(db, jobId);
@@ -93,6 +112,10 @@ function lastTailor(tasks: Task[]): LastTailor | null {
   const left = r.left_out?.length ? { left_out: r.left_out } : {};
   if (r.decision === "not_tailored") return { at, state: t.state, ok: false, message: `not tailored: ${r.reason ?? "below 75"}.` };
   if (r.decision === "blocked") return { at, state: t.state, ok: false, message: `stopped: ${r.reason ?? "open risk questions"}.` };
+  // The tailor's own render failed, but a later one (an Approve, a Dismiss, a re-render) may
+  // have made the PDF since: the checks file of the last render decides, not the old result.
+  const madeSince = !!r.resume_id && /^[\w-]+$/.test(r.resume_id) && pdfChecksPassed(r.resume_id) && existsSync(join(pdfDir(), `${r.resume_id}.pdf`));
+  if (r.pdf_ok === false && madeSince) return { at, state: t.state, ok: true, message: `resume ${r.resume_id} made (${r.decision}); its PDF was made later, every check passed.`, ...left };
   if (r.pdf_ok === false) return { at, state: t.state, ok: false, message: `resume ${r.resume_id ?? ""} made (${r.decision}), but the PDF failed: ${r.pdf_issue ?? "parse-back check"}.`, ...left };
   return { at, state: t.state, ok: true, message: `resume ${r.resume_id ?? ""} made (${r.decision})${r.created === false ? ", same bullets as before" : ""}.`, ...left };
 }
@@ -134,7 +157,8 @@ export function tailorStatus(db: Db, jobId: string): TailorStatus {
   const can = !busy && inBand && planOk;
   return {
     score, band, open_questions: open, tailored, busy, ready: can && !tailored, can_tailor: can, reasons, plan,
-    last: lastTailor(d.tasks), pending_review: pendingLines(db, jobId), verify_review: verifyLines(db, jobId)
+    last: lastTailor(d.tasks), pending_review: pendingLines(db, jobId), verify_review: verifyLines(db, jobId),
+    skill_review: skillLines(db, jobId)
   };
 }
 

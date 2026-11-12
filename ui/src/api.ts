@@ -106,7 +106,9 @@ export type Rescored = { rescore_batch: number; rescore_error?: string | null; r
 export type GapEntry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
   bullet_list: { id: string; short: string }[] };
 export type GapList = { gaps: Gap[]; not_asked: { kind: GapKind; requirement: string; reason: string }[]; years: string | null; entries: GapEntry[] };
-export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[]; words?: string[] };
+// fixes: one-click plain replacements for the AI-tell words left (each is the whole new text).
+export type TellFix = { word: string; label: string; text: string };
+export type Draft = { text: string; tags: string[]; codes: string[]; skills: string[]; words?: string[]; fixes?: TellFix[] };
 export type AnswerBody = {
   kind: GapKind; requirement: string; answer: GapAnswer;
   entry_id?: string; text?: string; tags?: string[]; story?: string; proof?: string; same_as?: string;
@@ -116,6 +118,8 @@ export type AnswerBody = {
   from_previous?: { from_requirement: string }; // answered from an earlier answer to that ask
   // other_name: same thing (another spelling, the default) or related work on these bank bullets.
   relation?: "same" | "related"; bullet_ids?: string[];
+  // as_skill: bullet_ids are the ticked bullets backing the skill; confirm_weak saves it anyway.
+  confirm_weak?: boolean;
 };
 
 export type Service = { name: string; role: string; up: boolean | null; detail: string; start: string };
@@ -156,6 +160,7 @@ export type CheckView = {
 export type AddedJob = {
   job_id: string; company: string; title: string; created: boolean;
   batch_id: number | null; stage: string | null; queue_note: string | null;
+  skip_words_kept?: string[];
 };
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -191,7 +196,8 @@ export const api = {
     call<{ resume_id: string; pdf_error: string | null; rescore_batch: number | null; rescore_error?: string }>("POST", `/ui/jobs/${id}/resumes/${encodeURIComponent(rid)}/choose`),
   pdfUrl: (resumeId: string) => `/api/ui/resumes/${encodeURIComponent(resumeId)}/pdf`,
   card: (id: string) => call<{ job: Card | null }>("GET", `/ui/board/${id}`).then((r) => r.job),
-  addJob: (url: string) => call<AddedJob>("POST", "/ui/jobs/add", { url }),
+  // undelete: "Add it anyway" for a job deleted earlier (error deleted_before without it).
+  addJob: (url: string, undelete = false) => call<AddedJob>("POST", "/ui/jobs/add", undelete ? { url, undelete: true } : { url }),
   health: () => call<{ services: Service[] }>("GET", "/ui/health").then((r) => r.services),
   job: (id: string) => call<JobDetail>("GET", `/ui/jobs/${id}`),
   score: (id: string) => call<ScoreDetail>("GET", `/ui/jobs/${id}/score`),
@@ -222,6 +228,7 @@ export const api = {
   gapHelpAll: (id: string) => call<{ queued: number; batch_id: number }>("POST", `/ui/jobs/${id}/gaps/help-all`),
   draft: (id: string, body: { kind: GapKind; requirement: string; entry_id: string; story: string; proof?: string }) =>
     call<Draft>("POST", `/ui/jobs/${id}/gaps/draft`, body),
+  tellFixes: (text: string, story: string) => call<{ words: string[]; fixes: TellFix[] }>("POST", "/ui/gaps/tell-fixes", { text, story }),
   answer: (id: string, body: AnswerBody) =>
     call<{ outcome: string; bullet_id: string | null; rescore_batch: number; rescore_error?: string | null }>("POST", `/ui/jobs/${id}/gaps/answer`, body),
   gapSettings: () => call<{ auto_carry: boolean }>("GET", "/ui/gaps/settings"),
@@ -240,6 +247,13 @@ export const api = {
     call<{ bullet_id: string; terms: string[]; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-wording`, { bullet_id }),
   approveVerify: (id: string, rid: string, kind: string, itemId: string) =>
     call<{ resume_id: string; kind: string; id: string; pdf_error: string | null }>("POST", `/ui/jobs/${id}/resumes/${rid}/approve-verify`, { kind, id: itemId }),
+  addedSkills: () => call<{ skills: AddedSkill[] }>("GET", "/ui/skills/added").then((r) => r.skills),
+  removeSkill: (name: string) => call<{ removed: string }>("POST", "/ui/skills/remove", { name }),
+  // Bank bullets that show a skill (tick boxes), and saving a skill's evidence (error weak_evidence
+  // when the resume check would block it; confirm_weak saves anyway).
+  skillCandidates: (name: string, ids: string[] = []) => call<{ bullets: { id: string; text: string }[] }>("GET", `/ui/skills/candidates?name=${encodeURIComponent(name)}${ids.length ? `&ids=${encodeURIComponent(ids.join(","))}` : ""}`).then((r) => r.bullets),
+  editSkillEvidence: (name: string, note: string, bullet_ids: string[], confirm_weak = false) =>
+    call<{ name: string; evidence: string; weak: boolean }>("POST", "/ui/skills/evidence", { name, note, bullet_ids, ...(confirm_weak ? { confirm_weak } : {}) }),
   // Update board: tailored jobs now below 75 move to Not tailored; their resumes are deleted (backed up first).
   updateBoardPreview: () => call<{ jobs: UpdateCandidate[] }>("GET", "/ui/board/update/preview").then((r) => r.jobs),
   updateBoard: () => call<UpdateResult>("POST", "/ui/board/update"),
@@ -257,7 +271,12 @@ export type TailorStatus = {
   pending_review: { resume_id: string; bullet_id: string; keyword: string; text: string }[];
   // Items the verifier did not confirm (claim, summary, skill), waiting for "Approve".
   verify_review: { resume_id: string; kind: "claim" | "summary" | "skill"; id: string; code: string; text: string; evidence?: string }[];
+  // Added skills the exit gate does not let through, waiting for "Dismiss" (remove, re-tailor).
+  skill_review?: { resume_id: string; skill: string; evidence: string }[];
 };
+
+// Your added skills (skills-extra.yaml): Added skills panel and Dismiss in the Tailor box.
+export type AddedSkill = { name: string; status: "have" | "dont_have"; evidence: string; kind: "same" | "related" | null; bullets: string[]; added_at: string };
 
 // Shared labels and helpers.
 export const STATE_LABEL: Record<Pipeline, string> = {

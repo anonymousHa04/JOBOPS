@@ -9,8 +9,11 @@ import { health } from "./health.ts";
 import { gapHelpTasks, QueueDownError, rescore, rescoreJobs, tailorNow } from "../queue/client.ts";
 import { markRescoredAll, rescoreAllStatus, rescoreCandidates, tailorStatus } from "./tailor-ready.ts";
 import { draftBullet } from "./gap-model.ts";
+import { draftTellFixes } from "../tailor/tell-fixes.ts";
+import { aiTellsIn } from "../tailor/writing.ts";
 import { gapKey } from "./gap-related.ts";
-import { answerGap, cachedHelp, gapList } from "./gaps.ts";
+import { answerGap, cachedHelp, gapList, WeakEvidence } from "./gaps.ts";
+import { bulletsShowing, skillEvidenceIssue, withBullets } from "../profile/skill-evidence.ts";
 import { autoCarry, carryAnswers, declineCarried, linkSame, matchSimilar, reuseAnswer, setAutoCarry } from "./gap-memory.ts";
 import { analysisPrompt } from "./prompt.ts";
 import { addByLink, AddRefused } from "./add-job.ts";
@@ -19,7 +22,7 @@ import { checkRunning, chooseResume, decideCheck } from "../extension/step.ts";
 import { restartLoop } from "../extension/rounds.ts";
 import { openFactFlags, SOURCES } from "../extension/reports.ts";
 import { bankGate, pdfChecksPassed, pdfDir } from "../render/render.ts";
-import { loadBank, loadSkillsExtra } from "../profile/bank.ts";
+import { addSkill, loadBank, loadSkillsExtra, removeSkill } from "../profile/bank.ts";
 import { exitIssues } from "../render/exit-gate.ts";
 import { keywordApprove, render as renderResume, verifyApprove } from "../tools.ts";
 import { createReadStream } from "node:fs";
@@ -43,6 +46,7 @@ const AnswerBody = z.object({
   with_skill: z.boolean().optional(),
   draft_codes: z.array(z.string().max(60)).max(20).optional(),
   relation: z.enum(["same", "related"]).optional(), bullet_ids: z.array(z.string().max(120)).max(30).optional(),
+  confirm_weak: z.boolean().optional(),
   // The answer reuses an earlier answer to another ask: remember the two asks as the same.
   from_previous: z.object({ from_requirement: z.string().min(1).max(500) }).strict().optional()
 }).strict();
@@ -149,6 +153,13 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
     return queueHelp(reply, request.params.id, todo);
   });
 
+  // After a one-click fix in the draft box: the AI-tell words still left and their fixes (no model).
+  app.post<{ Body: unknown }>("/ui/gaps/tell-fixes", async (request, reply) => {
+    const body = z.object({ text: z.string().max(1000), story: z.string().max(20000).default("") }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    return draftTellFixes(body.data.text, body.data.story, aiTellsIn);
+  });
+
   app.post<{ Params: { id: string }; Body: unknown }>("/ui/jobs/:id/gaps/draft", async (request, reply) => {
     if (!jobExists(db, request.params.id)) return reply.status(404).send({ error: "not_found" });
     const body = DraftBody.safeParse(request.body ?? {});
@@ -171,6 +182,7 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
       r = answerGap(db, id, answer);
       if (from_previous) linkSame(db, answer.requirement, from_previous.from_requirement);
     } catch (err) {
+      if (err instanceof WeakEvidence) return reply.status(400).send({ error: "weak_evidence", message: message(err) });
       return reply.status(400).send({ error: "answer_failed", message: message(err) });
     }
     // rescore_batch: the batch id; 0 when a score or tailor task is already open; -1 when the
@@ -295,12 +307,14 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
 
   // Add a job by its link (top bar): fetch, store, keep, queue parse and score (no tailor).
   app.post<{ Body: unknown }>("/ui/jobs/add", async (request, reply) => {
-    const body = z.object({ url: z.string().trim().min(1).max(2000) }).strict().safeParse(request.body ?? {});
+    const body = z.object({ url: z.string().trim().min(1).max(2000), undelete: z.boolean().optional() }).strict().safeParse(request.body ?? {});
     if (!body.success) return reply.status(400).send({ error: "invalid body", message: "Paste a job link." });
     try {
-      return await addByLink(db, body.data.url);
+      return await addByLink(db, body.data.url, { undelete: body.data.undelete });
     } catch (err) {
-      if (err instanceof AddRefused) return reply.status(400).send({ error: "add_refused", message: message(err) });
+      if (err instanceof AddRefused) {
+        return reply.status(400).send({ error: err.code, message: message(err), ...(err.deleted_at ? { deleted_at: err.deleted_at } : {}) });
+      }
       return reply.status(500).send({ error: "add_failed", message: message(err) });
     }
   });
@@ -552,6 +566,58 @@ export function uiRoutes(app: FastifyInstance, db: Db): void {
 
   // Rescore all: enabled when the bank, the added skills or the spellings changed since the
   // last Rescore all; re-scores only jobs below the tailoring bands that are not tailored.
+  // Your added skills (skills-extra.yaml, from Gaps answers): the list, and removing one
+  // (Dismiss in the Tailor box, Remove in the Added skills panel). Bank skills are never touched
+  // here. Scores do not change by themselves: Rescore all lights up (the profile changed).
+  app.get("/ui/skills/added", async () => ({
+    skills: loadSkillsExtra().skills.map(({ name, status, evidence, kind, bullets, added_at }) =>
+      ({ name, status, evidence: evidence ?? "", kind: kind ?? null, bullets: bullets ?? [], added_at }))
+  }));
+  // Bank bullets whose own text or tags show a skill: offered with tick boxes in "Add as a skill"
+  // and "Edit evidence" (found by code, so offered even when the model's suggestions miss them).
+  // ids: the model's suggested bullets ("You may already have it"), added after the code's own.
+  app.get<{ Querystring: { name?: string; ids?: string } }>("/ui/skills/candidates", async (request, reply) => {
+    const name = String(request.query.name ?? "").trim();
+    if (!name || name.length > 200) return reply.status(400).send({ error: "invalid name" });
+    const bank = loadBank();
+    if (!bank) return { bullets: [] };
+    const found = bulletsShowing(bank, name);
+    const all = [...bank.roles, ...bank.projects].flatMap((e) => e.bullets);
+    const asked = String(request.query.ids ?? "").split(",").map((x) => x.trim()).filter((x) => /^[a-z0-9-]+$/.test(x)).slice(0, 20);
+    const extra = asked.filter((id) => !found.some((f) => f.id === id)).map((id) => all.find((b) => b.id === id))
+      .filter((b): b is (typeof all)[number] => !!b).map((b) => ({ id: b.id, text: b.text }));
+    return { bullets: [...found, ...extra] };
+  });
+  // Edit an added skill's evidence: your note plus the ticked bullets, checked by the same rule
+  // as the resume check (skill-evidence.ts); a weak one is saved only with confirm_weak.
+  app.post<{ Body: unknown }>("/ui/skills/evidence", async (request, reply) => {
+    const body = z.object({ name: z.string().trim().min(1).max(200), note: z.string().trim().min(1).max(3000),
+      bullet_ids: z.array(z.string().regex(/^[a-z0-9-]+$/).max(120)).max(20).default([]), confirm_weak: z.boolean().optional() })
+      .strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    const bank = loadBank();
+    if (!bank) return reply.status(409).send({ error: "no_bank" });
+    const key = body.data.name.toLowerCase();
+    const old = loadSkillsExtra().skills.find((s) => s.name === key && s.status === "have");
+    if (!old) return reply.status(404).send({ error: "not_found", message: "Not one of your added skills." });
+    const known = new Set([...bank.roles, ...bank.projects].flatMap((e) => e.bullets.map((b) => b.id)));
+    const unknown = body.data.bullet_ids.filter((id) => !known.has(id));
+    if (unknown.length) return reply.status(400).send({ error: "unknown_bullets", message: `Not in your bank: ${unknown.join(", ")}` });
+    const evidence = withBullets(`answer ${new Date().toISOString().slice(0, 10)}: ${body.data.note}`, body.data.bullet_ids);
+    const issue = skillEvidenceIssue(bank, key, evidence);
+    if (issue && !body.data.confirm_weak) return reply.status(400).send({ error: "weak_evidence", message: issue });
+    addSkill(key, "have", evidence, { kind: old.kind, bullets: old.bullets });
+    event(`added skill evidence edited: ${key}${issue ? " (saved weak, user confirmed)" : ""}`);
+    return { name: key, evidence, weak: !!issue };
+  });
+  app.post<{ Body: unknown }>("/ui/skills/remove", async (request, reply) => {
+    const body = z.object({ name: z.string().trim().min(1).max(200) }).strict().safeParse(request.body ?? {});
+    if (!body.success) return reply.status(400).send({ error: "invalid body" });
+    if (!removeSkill(body.data.name)) return reply.status(404).send({ error: "not_found", message: "Not one of your added skills." });
+    event(`added skill removed: ${body.data.name.trim().toLowerCase()}`);
+    return { removed: body.data.name.trim().toLowerCase() };
+  });
+
   app.get("/ui/rescore-all", async () => rescoreAllStatus(db));
 
   app.post("/ui/rescore-all", async (_request, reply) => {

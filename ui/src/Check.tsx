@@ -65,8 +65,19 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
   const restart = (source: string) => {
     setBusy(true);
     setNote(null);
+    // Restart also starts the new check at once (the manual Check buttons are gone): a new chat,
+    // round 1. Without the extension it only resets, and says how to load it.
+    const name = source === "claude" ? "Claude" : "ChatGPT";
     api.restartCheck(id, source)
-      .then(() => { setNote(`${source === "claude" ? "Claude" : "ChatGPT"} check restarted: the old rounds are kept as a file; the next check opens a new chat.`); return load(); })
+      .then(() => {
+        if (ext.ready) {
+          ext.start(id, source as "claude" | "chatgpt", true);
+          setNote(`${name} check restarted: a new chat opens in Chrome (the old rounds are kept as a file).`);
+        } else {
+          setNote(`${name} check reset, but it cannot start: the JobOps extension is not loaded on this page (chrome://extensions → Load unpacked → extension/, then reload).`);
+        }
+        return load();
+      })
       .catch((e: Error) => setNote("Could not restart: " + e.message)).finally(() => setBusy(false));
   };
   // After a choice, the next check starts a new chat (the old one reviewed other versions).
@@ -134,6 +145,14 @@ export function CheckView({ id, rev }: { id: string; rev: number }) {
 
       <div className="check-run">
         {running && <span className="muted small">Checking…</span>}
+        {/* No check of this job yet for the chosen chat (or it was restarted): start one by hand.
+            A check that exists has its own Restart check below. */}
+        {!running && auto && !v.loops.some((l) => l.source === auto.source) && (
+          <button className="btn accent" disabled={!ext.ready || busy} onClick={() => ext.start(id, auto.source, true)}
+            title={ext.ready ? "Opens a new chat in Chrome and checks this job's resume" : "The JobOps Chrome extension is not loaded on this page"}>
+            Start check with {auto.source === "claude" ? "Claude" : "ChatGPT"}
+          </button>
+        )}
         {!ext.ready && <span className="muted small"> Load the JobOps extension (chrome://extensions → Load unpacked → extension/), then reload this page.</span>}
         {mine && (
           <span className={mine.step === "failed" ? "small bad" : "muted small"}>

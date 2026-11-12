@@ -26,7 +26,7 @@ const USAGE = `usage: node api/src/cli.ts <command>
   risk skip <risk-id>
   models                  (which model each task uses, and whether its server is up)
   models stats [--since <ISO time>]   (the model call log: outcomes, timing, tokens per task)
-  job add <url> [--company <name>] [--force] [--no-render]
+  job add <url> [--company <name>] [--force] [--no-render] [--undelete]
                          (fetch one job by its link, then parse, judge, tailor, and render)
   jobs [--q <text>] [--limit N] [--unparsed]
   batch start [--limit N]   (N 1-100, default 100: fetch new jobs, then parse, score, tailor each)
@@ -146,7 +146,7 @@ async function main(argv: string[]): Promise<unknown> {
     case "job":
       if (sub === "add") {
         return t.jobAdd(t.db(), need(rest[0], "job link"),
-          { company: flag(rest, "company"), force: rest.includes("--force"), render: !rest.includes("--no-render") });
+          { company: flag(rest, "company"), force: rest.includes("--force"), render: !rest.includes("--no-render"), undelete: rest.includes("--undelete") });
       }
       break;
     case "jobs":

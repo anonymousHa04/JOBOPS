@@ -8,6 +8,7 @@ import type { Tab } from "./JobDrawer";
 import { Batches } from "./Batches";
 import { SkipDelete } from "./SkipDelete";
 import { UpdateBoard } from "./UpdateBoard";
+import { AddedSkills } from "./AddedSkills";
 import { BulkDelete } from "./BulkDelete";
 import { AddJob } from "./AddJob";
 import { AutoCheck } from "./AutoCheck";
@@ -126,6 +127,7 @@ export function App() {
           <button className="btn ghost" onClick={load}>Refresh</button>
           <RescoreAll refresh={jobs} onDone={changed} />
           <UpdateBoard onDone={changed} />
+          <AddedSkills onDone={changed} />
           <SkipDelete refresh={jobs} onDone={changed} />
           {view === "pipeline" && <BulkDelete selected={[...selected]} onClear={() => setSelected(new Set())} onDone={changed} />}
         </div>

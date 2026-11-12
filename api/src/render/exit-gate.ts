@@ -1,8 +1,8 @@
 import type { ResumeRecord, Bank, SkillsExtra } from "../profile/schema.ts";
 import type { Issue } from "./parseback.ts";
 import { norm } from "../scoring/terms.ts";
-import { names } from "../profile/gate.ts";
 import { relatedKeywords, textHash } from "../profile/bank.ts";
+import { skillEvidenceIssue } from "../profile/skill-evidence.ts";
 
 // A pending related keyword (record.pending_review) the user approved for this exact text: the
 // bank bullet's approved_terms has the term with the hash of the record's reworded line.
@@ -24,8 +24,10 @@ export function exitIssues(record: ResumeRecord, bank: Bank, extra: SkillsExtra,
     const supported = Object.values(bank.skills).flat().some(skill => norm(skill) === skillNorm) ||
                       extra.skills.some(x => {
                         const ev = x.evidence ?? "";
+                        // An answer must back the skill: its note names it, or a bullet it links
+                        // shows it (skill-evidence.ts, the rule Gaps and Added skills save by).
                         return x.status === "have" && norm(x.name) === skillNorm &&
-                          (!ev.startsWith("answer") || names(ev, x.name.replace(/^experience with /i, "")));
+                          (!ev.startsWith("answer") || skillEvidenceIssue(bank, x.name, ev) === null);
                       });
     if (!supported) {
       issues.push({ code: "skill_unsupported", detail: "skill#" + (i + 1), extractor: "exit_gate" });

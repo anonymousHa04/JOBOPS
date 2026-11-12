@@ -270,7 +270,7 @@ td.bad { color: var(--bad); font-weight: 700; }
 .delete-panel h4 { margin: 0; }
 .delete-panel .btn { margin: 2px 4px 2px 0; }
 .delete-panel.skip-delete { flex-basis: 100%; }
-.skip-list { max-height: 260px; overflow-y: auto; margin: 0; padding-left: 18px; }
+.skip-list { max-height: 480px; overflow-y: auto; margin: 0; padding-left: 18px; }
 /* Board selection for "Delete N selected" */
 .card-check { margin: 0 6px 0 0; vertical-align: middle; cursor: pointer; }
 .card.selected { outline: 1px solid var(--bad); }

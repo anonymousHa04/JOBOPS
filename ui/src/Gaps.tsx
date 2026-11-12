@@ -2,9 +2,9 @@
 // where the user may already have it (local model), and their answers. Only the user's own facts
 // become bullets; the guard flags any draft that adds to them.
 import { useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, ApiError } from "./api";
 import { onChange } from "./events";
-import type { AnswerBody, Gap, GapAnswer, GapList, GapHelp, Draft, Previous, EarlierInput } from "./api";
+import type { AnswerBody, Gap, GapAnswer, GapList, GapHelp, Draft, Previous, EarlierInput, TellFix } from "./api";
 import { RescoreBar } from "./Rescore";
 import { TailorBox } from "./Tailor";
 
@@ -278,6 +278,14 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
   const [text, setText] = useState<string>("");
   // A flagged draft cannot be saved as drafted: an edit re-enables Save and the server checks it again.
   const saveBlocked = !!draft && draft.codes.length > 0 && text === draft.text;
+  // One-click fixes for AI-tell words (a fixed list, not the model): shown under the red box,
+  // asked again after each one so several words can be fixed in turn. Save re-checks the text.
+  const [fixes, setFixes] = useState<TellFix[]>([]);
+  useEffect(() => { setFixes(draft?.fixes ?? []); }, [draft]);
+  const applyFix = (f: TellFix) => {
+    setText(f.text);
+    api.tellFixes(f.text, story).then((r) => setFixes(r.fixes)).catch(() => setFixes([]));
+  };
   // A draft is written for one job: a new target job means a new draft.
   useEffect(() => {
     setDraft(null);
@@ -288,6 +296,30 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
     setBusy(what);
     setErr(null);
     p.then(then).catch((e: Error) => setErr(e.message)).finally(() => setBusy(null));
+  };
+
+  // Add as a skill, backed by ticked bullets: the model's "You may already have it" ones plus the
+  // bank bullets whose text or tags show it (found by code). Nothing is linked unless ticked.
+  // If the resume check would block it (error weak_evidence), ask before saving anyway.
+  const [proofBullets, setProofBullets] = useState<{ id: string; text: string }[]>([]);
+  const [ticked, setTicked] = useState<string[]>([]);
+  const suggested = (help?.related ?? []).map((r) => r.bullet_id).join(",");
+  useEffect(() => {
+    if (gap.kind === "keyword") return;
+    api.skillCandidates(gap.requirement, suggested ? suggested.split(",") : []).then(setProofBullets).catch(() => setProofBullets([]));
+  }, [gap.kind, gap.requirement, suggested]);
+  const addAsSkill = (confirm_weak: boolean) => {
+    const body: AnswerBody = { kind: gap.kind, requirement: gap.requirement, answer: "have", as_skill: true, entry_ids: checked, story,
+      proof: proof || undefined, bullet_ids: ticked, ...(confirm_weak ? { confirm_weak } : {}) };
+    setBusy("answer");
+    setErr(null);
+    api.answer(id, body).then(onAnswered).catch((e: Error) => {
+      const data = e instanceof ApiError ? (e.data as { error?: string; message?: string }) : null;
+      if (data?.error === "weak_evidence" && !confirm_weak) {
+        if (window.confirm(`${data.message}\n\nSave the skill anyway? It will be blocked on your resume until it is backed.`)) { addAsSkill(true); return; }
+        setErr(data.message ?? e.message);
+      } else setErr(e.message);
+    }).finally(() => setBusy(null));
   };
 
   // Start over: drop the draft and its text, keep the user's story and proof, explain again.
@@ -461,9 +493,20 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
           <textarea rows={4} value={story} onChange={(e) => setStory(e.target.value)} placeholder="Where did you use it, what did you do, and what changed? Your own words; only facts you can defend in an interview." />
           <input type="text" value={proof} onChange={(e) => setProof(e.target.value)} placeholder="Proof (optional): a link, a PR, a doc, a number you measured" />
           <button className="btn tiny" onClick={handleDraft} disabled={!filled(story) || !entry || busy === "draft"}>{busy === "draft" ? "Drafting…" : "Draft a bullet"}</button>
+          {proofBullets.length > 0 && (
+            <div className="roles">
+              <div className="muted small">Bullets that show it (tick the ones that are this work; they back the skill on your resume):</div>
+              {proofBullets.map((b) => (
+                <label key={b.id} className="role-check" title={b.text}>
+                  <input type="checkbox" checked={ticked.includes(b.id)} onChange={() => setTicked((t) => (t.includes(b.id) ? t.filter((x) => x !== b.id) : [...t, b.id]))} />
+                  {" "}<code>{b.id}</code> <span className="muted small">{b.text.length > 110 ? b.text.slice(0, 110) + "…" : b.text}</span>
+                </label>
+              ))}
+            </div>
+          )}
           <button className="btn tiny" disabled={!filled(story) || !checked.length || busy === "answer"}
-            onClick={() => run("answer", api.answer(id, { kind: gap.kind, requirement: gap.requirement, answer: "have", as_skill: true, entry_ids: checked, story, proof: proof || undefined }), onAnswered)}>
-            Add as a skill ({checked.length} role{checked.length === 1 ? "" : "s"})
+            onClick={() => addAsSkill(false)}>
+            Add as a skill ({checked.length} role{checked.length === 1 ? "" : "s"}{ticked.length ? `, ${ticked.length} bullet${ticked.length === 1 ? "" : "s"}` : ""})
           </button>
           {jobs.length > 0 && (
             <div className="muted small">
@@ -483,6 +526,11 @@ function GapRow({ id, gap, entries, onAnswered, onUndone, onQueued }: { id: stri
               <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} />
               <div>Words: {text.split(/\s+/).filter(word => word.length > 0).length} of 25</div>
               {draft.codes.length > 0 && <div className="banner error">The draft adds what your answer does not say ({draft.codes.join(", ")}).{draft.words && draft.words.length > 0 ? <> Remove or reword: <b>{draft.words.join(", ")}</b>.</> : " Edit it so it only states your facts."}</div>}
+              {fixes.length > 0 && (
+                <div className="small">Plain wording: {fixes.map((f) => (
+                  <button key={f.label} className="btn tiny" title={f.text} onClick={() => applyFix(f)}>{f.label}</button>
+                ))}</div>
+              )}
               {saveBlocked && <div className="muted small">Save is off until you edit the text; the server checks the edited text again when you save.</div>}
               {draft.skills.length > 0 && (
                 <div className="roles">

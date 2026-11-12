@@ -4,6 +4,7 @@ import type { Db } from "../db.ts";
 import { addSynonym, askable } from "../lists.ts";
 import { addBullet, addSkill, loadBank, loadSkillsExtra, recordLearnable } from "../profile/bank.ts";
 import { answerEvidence, storyNames } from "../profile/gate.ts";
+import { skillEvidenceIssue, withBullets } from "../profile/skill-evidence.ts";
 import { loadRequirements } from "../requirements/parse.ts";
 import { loadVerdicts } from "../scoring/judge.ts";
 import { bankTermFor, scoreRequirements, span, yearsAsked } from "../scoring/score.ts";
@@ -34,7 +35,13 @@ export type AnswerInput = {
   // other_name: "same" (another spelling: a synonym, the default) or "related" (related work on
   // the picked bank bullets; no synonym).
   relation?: "same" | "related"; bullet_ids?: string[];
+  // as_skill: bullet_ids are the ticked bullets that back the skill; confirm_weak saves it even
+  // though the resume check would block it (the user saw the warning).
+  confirm_weak?: boolean;
 };
+
+// "Add as a skill" whose evidence would not pass the resume check: the UI warns and asks.
+export class WeakEvidence extends Error {}
 // bullet_list: the entry's bank bullets (id and short text), to pick for "Related work".
 export type Entry = { id: string; title: string; company: string | null; dates: string; project: boolean; bullets: number; end: number | null;
   bullet_list: { id: string; short: string }[] };
@@ -134,14 +141,21 @@ export function answerGap(db: Db, jobId: string, input: AnswerInput): { outcome:
       if (input.as_skill) {
         const ids = (input.entry_ids ?? []).filter(filled);
         if (!filled(input.story) || !ids.length) throw new Error("story and at least one role are required");
-        if (!storyNames(input.story, input.requirement)) throw new Error("blocked: skill_unsupported");
         const bank = loadBank();
         const roles = bank ? [...bank.roles, ...bank.projects] : [];
         const names = ids.map((id) => {
           const e = roles.find((r) => r.id === id);
           return e ? (e.company ? `${e.title} at ${e.company}` : e.title) : id;
         });
-        const skillNote = `answer ${today}: ${input.story} (used at: ${names.join("; ")})` + (filled(input.proof) ? ` Proof: ${input.proof}` : "");
+        // Ticked bullets back the skill (only ones in the bank; code never links one itself).
+        const known = new Set(roles.flatMap((r) => r.bullets.map((b) => b.id)));
+        const ticked = (input.bullet_ids ?? []).filter((b) => known.has(b));
+        const skillNote = withBullets(`answer ${today}: ${input.story} (used at: ${names.join("; ")})`, ticked)
+          + (filled(input.proof) ? ` Proof: ${input.proof}` : "");
+        // The rule the resume check uses: not backed means it would be blocked at render. Saved
+        // only when the user confirms anyway (the warning names what to do).
+        const issue = bank ? skillEvidenceIssue(bank, input.requirement, skillNote) : null;
+        if (issue && !input.confirm_weak) throw new WeakEvidence(issue);
         addSkill(input.requirement, "have", skillNote);
         outcome = `skill added (used at ${ids.length} role${ids.length === 1 ? "" : "s"})`;
         break;

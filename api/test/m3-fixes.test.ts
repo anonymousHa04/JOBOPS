@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bank, ResumeRecord, SkillsExtra } from "../src/profile/schema.ts";
 import type { Requirements } from "../src/requirements/schema.ts";
 import { addRole, checkBank, excludeTitleWords, loadBank, markBreak, saveBank, setCompany, vocabulary } from "../src/profile/bank.ts";
-import { degreeAsked, degreeHave, scoreRequirements, totalYears } from "../src/scoring/score.ts";
+import { degreeAsked, degreeHave, scoreRequirements, totalYears, yearsAsked } from "../src/scoring/score.ts";
 import { lintRecord, tenure } from "../src/tailor/lint.ts";
 import { aiTellsIn, cleanText, hiddenChars } from "../src/tailor/writing.ts";
 import { checkRewrite, guardedReword } from "../src/tailor/guard.ts";
@@ -137,6 +137,29 @@ test("OpenResume reads every entry back: titles, companies, dates, bullets, educ
   ]);
   assert.deepEqual(parsed.educations.map((e) => [e.school, e.degree, e.date]), [["Some University", "B.Tech in Mechanical Engineering", "2015 - 2019"]]);
   assert.deepEqual(parsed.skills.descriptions, ["TypeScript, Kubernetes"]);
+});
+
+// --- Years asked: a range asks for its lower number (2026-11-09, Sarvam "5-8 years" read as 8) ---
+
+test("years: a range ('5-8', '5–8', '5 to 8') asks for its lower number", () => {
+  assert.equal(yearsAsked("5-8 years of backend development experience"), 5);
+  assert.equal(yearsAsked("5–8 years of backend experience"), 5);
+  assert.equal(yearsAsked("5 to 8 years of experience"), 5);
+});
+
+test("years: '8+ years', '3 years' and no years are unchanged", () => {
+  assert.equal(yearsAsked("8+ years of experience"), 8);
+  assert.equal(yearsAsked("3 years with Go"), 3);
+  assert.equal(yearsAsked("Experience with Kafka"), 0);
+});
+
+test("years: a '5-8 years' must-have passes the hard limit with about 6 years; '8+ years' does not", () => {
+  const have = totalYears(bank);
+  assert.ok(have >= 5 && have < 8, `fixture bank has ${have} years`);
+  const range = scoreRequirements(req({ must_have: ["5-8 years of backend development experience"] }), bank, extra).hard;
+  assert.deepEqual([range.years_asked, range.pass], [5, true]);
+  const plus = scoreRequirements(req({ must_have: ["8+ years of backend development experience"] }), bank, extra).hard;
+  assert.deepEqual([plus.years_asked, plus.pass], [8, false]);
 });
 
 // --- Degrees ---

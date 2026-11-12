@@ -69,7 +69,10 @@ export type ScoreResult = {
 };
 
 // Years asked by a requirement like "6+ years of Go" (0 if none).
+// A range ("5-8 years", "5–8", "5 to 8 years") asks for its lower number: the posting's minimum.
 export function yearsAsked(r: string): number {
+  const range = r.match(/(\d+)\s*(?:-|–|—|to)\s*\d+\s*\+?\s*(?:years|yrs)/i);
+  if (range) return Number(range[1]);
   return Number(r.match(/(\d+)\s*\+?\s*(?:years|yrs)/i)?.[1] ?? 0);
 }
 

@@ -17,6 +17,24 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
 
   if (!st) return note ? <div className="muted small">{note}</div> : null;
 
+  // Dismiss: you do not have this skill. It leaves your added skills (skills-extra.yaml) and the
+  // job is re-tailored from scratch, so the resume is made without it.
+  const dismissButton = (skill: string) => (
+    <button className="btn tiny" disabled={busy}
+      title="You do not have this skill: remove it from your added skills and re-tailor from scratch without it."
+      onClick={() => {
+        if (!window.confirm(`Remove "${skill}" from your added skills and re-tailor this job without it?`)) return;
+        setBusy(true);
+        api.removeSkill(skill)
+          .then(() => api.tailorNow(id, true))
+          .then((r) => { setNote(`Removed "${skill}"; re-tailoring from scratch (batch ${r.tailor_batch}). Other jobs: Rescore all.`); onChanged(); })
+          .catch((e: Error) => setNote(`Could not dismiss "${skill}": ` + e.message))
+          .finally(() => setBusy(false));
+      }}>
+      Dismiss
+    </button>
+  );
+
   const start = (fresh = false) => {
     setBusy(true);
     api.tailorNow(id, fresh)
@@ -91,6 +109,15 @@ export function TailorBox({ id, refresh, onChanged }: { id: string; refresh: num
             }}>
             Approve
           </button>
+          {v.kind === "skill" && dismissButton(v.id)}
+        </div>
+      ))}
+      {/* The exit gate: an added skill your bank does not back (its evidence does not name it). */}
+      {(st.skill_review ?? []).map((s) => (
+        <div key={s.resume_id + s.skill} className="small tailor-last bad">
+          Not backed by your bank (skill): {s.skill}
+          {s.evidence && <div className="muted">Evidence: {s.evidence}</div>}{" "}
+          {dismissButton(s.skill)}
         </div>
       ))}
     </div>

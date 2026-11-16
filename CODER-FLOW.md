@@ -292,6 +292,50 @@ starts as an observation and becomes "verified" once a coder run that was given 
 `python3 .claude/bin/feedback.py stats` reports the first-try pass rate and how often fix
 rounds work.
 
+## Tools
+
+### What JobOps itself runs on
+
+| Area | Tool | Used for |
+|---|---|---|
+| API | Node.js 24, TypeScript, Fastify, zod | The JobOps API (`api/`): jobs, scoring, tailoring, Gaps, routes |
+| Database | SQLite (better-sqlite3 in the API, modernc.org/sqlite in Go) | Jobs, resumes and the queue's tasks |
+| Queue and search | Go | Queue server (`queue/`), job board search (`jd-search/`), the `bin/jobops` CLI (`ctl/`), the gateway (`gateway/`) |
+| UI | React 19, Vite 8, own CSS | The web app (`ui/`): Pipeline, Batches, Applications, Gaps |
+| Browser extension | Chrome extension (`extension/`) | Carries a job's tailored prompt to Claude or ChatGPT |
+| Local AI models | llama.cpp (`llama-server`) | One server per role, all on 127.0.0.1 |
+| | qwen2.5:7b (`general7`, normally on the laptop) | Parsing job posts, requirement judge |
+| | qwen2.5:14b (`general14`) | Rewording bullets, tailoring, gap help |
+| | mxbai-embed-large (`embed`) | Embeddings: Gaps search by meaning, coder lesson search |
+| Vector search | Qdrant (Docker Compose) | Stores the embeddings |
+| Job post reading | playwright-core + Google Chrome, Mozilla Readability, linkedom | Careers-page crawler and reading a job from its link |
+| PDF and ATS checks | pdftotext, pdf.js, OpenResume parser (`.scout/openresume-runner`, AGPL, not in git) | Checking a rendered resume reads back correctly |
+| Running it | Docker Desktop with Kubernetes (kubeadm) | Pods: api, gateway, queue, worker-laptop, worker-mac; UI at localhost:8080 |
+| MCP servers | `jobops-tools`, `jd-search` | Let Claude call JobOps actions (score, tailor, search jobs) |
+| CI | GitHub Actions (`.github/workflows/ci.yml`) | Type check and tests on push |
+
+### What we use while developing
+
+| Tool | Used for |
+|---|---|
+| Claude Code (manager) | Plans, specs, reviews every diff, records lessons |
+| Claude subagents (senior devs) | Fix escalated tasks, write tests when asked |
+| qwen2.5-coder:14b on llama.cpp (`coder`, :8081), with qwen2.5-coder:0.5b as the draft model | The local coder ("new employee") |
+| aider | Local coder runner for new files |
+| Patch runner (`run-patch.sh`, `patch_coder.py`) | Local coder runner for edits to existing files |
+| mini-swe-agent | Optional coder runner, only when asked, in a throwaway worktree |
+| `.claude/bin/` scripts | `run-plan.sh`, `autofix.sh`, `ready.sh`, `pipeline.py`, `check.sh`, `feedback.py`, `llm.sh` (steps 2 to 10 above) |
+| `llm` shortcut (`~/.local/bin/llm`) | Start and stop the model servers from any folder; `llm help` |
+| Heartbeat (Go) and `watch-coders.sh` | Flag stuck or dead coder windows |
+| tmux (`jobops` session) | One window per coder task, to watch live |
+| Docker + Qdrant | Lesson search for the coders |
+| `tsc`, `node --test`, `go vet`, `go test -race`, gofmt | The checks |
+| Playwright | Checking UI changes in a real browser |
+| graphify (`graphify-out/`) | Knowledge graph of the codebase, updated once per milestone |
+| GitHub MCP server | Read-only GitHub searches (scouting tools) |
+| `uv` | Installs aider and mini-swe-agent as tools |
+| git, `gh` | Branches (`dev`, milestone and fix branches; never `main`), commits only when asked |
+
 ## Files and folders
 
 | Path | What it is |

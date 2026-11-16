@@ -236,6 +236,9 @@ td.bad { color: var(--bad); font-weight: 700; }
 .row { display: flex; align-items: center; gap: 12px; }
 .row.spread { justify-content: space-between; }
 .row.gap { gap: 24px; margin: 12px 0; }
+.row.wrap { flex-wrap: wrap; gap: 6px 8px; }
+.batch-start { min-width: 0; max-width: 100%; box-sizing: border-box; }
+.skip-words .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .batch-grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
 .batch-row { display: flex; width: 100%; gap: 10px; align-items: center; justify-content: space-between; background: none; border: 0; border-radius: var(--radius); padding: 8px; color: var(--text); cursor: pointer; font: inherit; }
 .batch-row:hover { background: var(--bg-3); }

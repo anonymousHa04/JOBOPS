@@ -106,7 +106,7 @@ export function Batches({ onOpen, onChanged }: { onOpen: (id: string) => void; o
           <button className="btn" disabled={busy} onClick={sweepNow} title="Queue a score task for every parsed job that no batch has scored">Score parsed jobs now</button>
         </div>
         {words.length > 0 && (
-          <div className="row gap">
+          <div className="row gap wrap skip-words">
             <span>Skip words</span>
             {words.map((w) => {
               const isOff = off.has(w);

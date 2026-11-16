@@ -24,7 +24,7 @@ was found by a dry run; the company view plan fixes that (per-company table, slu
 > Structured record of what is done and left: `.claude/knowledge/status.yaml`.
 > Every Milestone 3 decision: the m3-notes skill, `references/decisions.md`.
 
-## Batch company view (branch `fix/dev-start`, plan `.claude/specs/plan-batch-companies.md`, 2026-11-12, uncommitted)
+## Batch company view (branch `fix/dev-start`, plan `.claude/specs/plan-batch-companies.md`, 2026-11-12; merged into dev 2026-11-16)
 
 Why: a batch saved only counts, so companies that were never searched (7 in batch 183) did not show
 up anywhere in the UI. Tasks: `.claude/specs/plan-batch-companies-tasks.md` (bc-01..bc-16, one file
@@ -59,7 +59,20 @@ each). Workflow (user): local coders first, Claude subagents on escalation, mana
 - Next: deploy (`bin/jobops db-backup && bin/jobops up`; check the gateway timeout for 3-minute
   retries), retry the 7 companies from the UI, restore general14 and scale worker-mac back to 1;
   commit when the user asks (autofix left the code files staged; nothing is committed).
-- Running state: coder server up, general14 stopped, worker-mac scaled to 0 (since 2026-11-12).
+- Running state (2026-11-16): coder stopped, general14 up, worker-mac at 1, pods deployed.
+- 2026-11-16 deployed (`bin/jobops up`); batch 185 filled the Companies table (31 fetched, 6 unreachable:
+  Chargebee, Dream11, Zepto need slugs; Hasura, Juspay, Rippling timed out on Lever).
+- Skip-word chips wrap inside the Start-a-batch panel (`.row.wrap`, ui/src/styles.css; subagent).
+- Workday links ending in /apply (LinkedIn share links) now call the right API path and store the
+  link without /apply, so both forms dedupe (api/src/jobs/from-url.ts); tests
+  api/test/workday-apply-link.test.ts (6, approved by the user). 330 tests pass. Workday rate-limits
+  repeated adds (429): add a Workday job once.
+- Demo video (argo 0.42.1 + Kokoro TTS + ffmpeg, all local, in git-ignored .scout/repos/argo):
+  demos/jobops.{demo.ts,scenes.json,config.mjs}, demos/burn-subs.mjs (subtitles rendered as PNGs and
+  overlaid; this ffmpeg has no libass). Output videos/jobops-subtitled.mp4. Each final take adds one new
+  job (Target, Databricks, Rubrik, three Zeta roles were added and kept, user's choice).
+- `llm` shortcut: ~/.local/bin/llm wraps .claude/bin/llm.sh (llm help); see CODER-FLOW.md.
+- Open: pipeline.py verify refuses node:test as a built-in (tooling bug, not fixed).
 
 ## Bank gate (branch `atlassian-resume-fix` from milestone-8, 2026-11-07, merged into dev 2026-11-12)
 

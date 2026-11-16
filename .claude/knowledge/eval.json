@@ -1,0 +1,231 @@
+[
+ {
+  "id": "m3-05-bank",
+  "task": "# Task m3-05-bank\nExperience bank: build once from resume text, load, save, check, add skills.\n\nExport:\n- bankPath(), skillsExtraPath(), resumeTextPath(): paths under the profile dir\n  (bank.yaml, skills-extra.yaml, original/resume.txt).\n- loadBank(): Bank | null; saveBank(b: Bank); loadSkillsExtra(): SkillsExtra\n  (empty list if missing); saveSkillsExtra(s).\n- async buildBank(): reads resume.txt, prompt = fill(one-time-parser template,\n  { \"paste text\": text }) + \"\\n\" + JSON_NOTE, calls generate with model\n  process.env.JOBOPS_PARSE_MODEL ?? \"qwen2.5:14b\", schema BankSchema.omit({ approved, meta }),\n  timeoutMs 900000. Refuses (throws) if bank.yaml exists and approved is true.\n  On success saves with approved: false and meta. Returns { ok, issues }.\n- checkBank(b: Bank, resumeText: string): string[] issues, each \"<bullet-id>: <problem>\":\n  every number in a bullet (regex /\\d+(?:[.,]\\d+)?%?/g) must appear in resumeText;\n  bullet ids unique and prefixed by their entry id; short has at most 15 words;\n  tags count 5..8. Issues never include bullet text.\n- addSkill(name, status, evidence): lowercases name, replaces an existing entry\n  of the same name, saves.\n- vocabulary(b: Bank, extra: SkillsExtra): Set<string> of lowercase terms from\n  all skills lists, all bullet tags, and extra skills with status \"have\".\n\n",
+  "files": [
+   "api/src/profile/bank.ts"
+  ],
+  "new": [
+   "api/src/profile/bank.ts"
+  ],
+  "why": "Coder invented b.entries / b.skills[i].name and missed .ts imports",
+  "expect_paths": [
+   "api/src/profile/schema.ts",
+   "api/src/model/llm.ts",
+   "api/src/model/prompts.ts"
+  ],
+  "expect_symbols": [
+   "BankSchema",
+   "SkillsExtraSchema",
+   "BulletSchema",
+   "generate",
+   "fill",
+   "loadPrompt",
+   "JSON_NOTE"
+  ],
+  "expect_fixes": [
+   "Relative imports must end in .ts"
+  ],
+  "holdout": false
+ },
+ {
+  "id": "m3-08-jd-parse",
+  "task": "# Task m3-08-jd-parse\nexport async function parseJob(db: Db, jobId: string): Promise<{ job_id; keywords: number;\n  must_have: number; dropped_keywords: number; cached: boolean }>\n- Load the job row (title, description) from jobs; throw \"job not found\".\n- Prompt: fill(parse-job-descripton, { \"paste JD\": title + \"\\n\\n\" + description,\n  \"list your variants\": bank summary variants joined by \", \" (or \"general\") }).\n- If job_requirements has a row for (job_id, prompt version), return it with cached true.\n- generate with model process.env.JOBOPS_JD_MODEL ?? \"qwen2.5:7b\", RequirementsSchema.\n- Keywords not found in the JD text (case-insensitive substring) are removed and\n  listed in dropped_keywords. Same check for must_have and nice_to_have is NOT done.\n- Insert into job_requirements; return the summary. Export also\n  loadRequirements(db, jobId): StoredRequirements | null (latest row).\n\n",
+  "files": [
+   "api/src/requirements/parse.ts"
+  ],
+  "new": [
+   "api/src/requirements/parse.ts"
+  ],
+  "why": "Coder guessed db row and JSON types",
+  "expect_paths": [
+   "api/src/requirements/schema.ts",
+   "api/src/db.ts",
+   "api/src/model/llm.ts",
+   "api/src/profile/bank.ts"
+  ],
+  "expect_symbols": [
+   "RequirementsSchema",
+   "StoredRequirementsSchema",
+   "Db",
+   "generate",
+   "loadBank"
+  ],
+  "expect_fixes": [
+   "DB rows, res.json() and JSON.parse are unknown"
+  ],
+  "holdout": false
+ },
+ {
+  "id": "m3-03-model-provider",
+  "task": "# Task m3-03-model-provider\nA minimal model provider for local Ollama.\n\nExport:\n  type GenerateResult<T> = { ok: true; value: T; model: string; durationMs: number }\n                         | { ok: false; error: \"timeout\" | \"unavailable\" | \"invalid_output\"; detail: string }\n  async function generate<T>(opts: { model: string; prompt: string; schema: z.ZodType<T>;\n    timeoutMs?: number (default 300000); baseUrl?: string (default\n    process.env.OLLAMA_URL ?? \"http://localhost:11434\") }): Promise<GenerateResult<T>>\n\nBehaviour:\n- POST {baseUrl}/api/chat with { model, stream: false, messages: [{ role: \"user\",\n  content: prompt }], format: z.toJSONSchema(schema), options: { temperature: 0 } }.\n- Use fetch with AbortSignal.timeout(timeoutMs). Abort \u2192 \"timeout\". Connection\n  error or non-2xx \u2192 \"unavailable\" (detail = status or message).\n- JSON.parse the message.content, then schema.safeParse. On failure retry once\n  with the same request; if still invalid \u2192 \"invalid_output\" (detail = first\n  3 issue paths, never the content).\n- Never throw for these cases; return the error result.\n\n",
+  "files": [
+   "api/src/model/ollama.ts"
+  ],
+  "new": [
+   "api/src/model/ollama.ts"
+  ],
+  "why": "Coder imported abort-controller, used schema.toJSONSchema()",
+  "expect_paths": [],
+  "expect_symbols": [],
+  "expect_fixes": [
+   "z.toJSONSchema(schema)",
+   "not installed"
+  ],
+  "holdout": false
+ },
+ {
+  "id": "m3-07-db-tables",
+  "task": "# Task m3-07-requirements-table\nIn openDb, add to the CREATE statements:\n  CREATE TABLE IF NOT EXISTS job_requirements (\n    job_id TEXT NOT NULL REFERENCES jobs(id),\n    prompt_version TEXT NOT NULL,\n    data TEXT NOT NULL,\n    created_at TEXT NOT NULL,\n    PRIMARY KEY (job_id, prompt_version));\n  CREATE TABLE IF NOT EXISTS resume_records (\n    resume_id TEXT PRIMARY KEY,\n    jd_id TEXT NOT NULL,\n    source_resume_id TEXT,\n    decision TEXT NOT NULL,\n    jd_suitability_score REAL NOT NULL,\n    content_equivalence_score REAL NOT NULL,\n    created_at TEXT NOT NULL);\nChange nothing else.\n\n",
+  "files": [
+   "api/src/db.ts"
+  ],
+  "why": "Edit of an existing file with many consumers",
+  "expect_paths": [
+   "api/src/db.ts",
+   "api/src/jobs/repository.ts",
+   "api/test/jobs.test.ts"
+  ],
+  "expect_symbols": [],
+  "expect_fixes": [
+   "SQL syntax error near CREATE"
+  ],
+  "holdout": false
+ },
+ {
+  "id": "m3-10-score",
+  "task": "# Task m3-10-score\nDeterministic scoring of the bank (or a resume record) against requirements.\n\nexport type Label = \"supported\" | \"partial\" | \"not_demonstrated\" | \"unknown\"\nexport function scoreRequirements(req: Requirements, bank: Bank, extra: SkillsExtra,\n  only?: string[] /* bullet ids to consider; default all */): ScoreResult\nScoreResult = { score: number (0..100, one decimal); gap: boolean;\n  items: array of { requirement: string; kind: \"must\" | \"nice\" | \"keyword\"; label: Label;\n    bullet_ids: string[] }; ask_user: string[] }\nRules, with vocab = vocabulary(bank, extra) and bullets = considered bullets:\n- For each requirement r: rt = terms(r, vocab).\n  supported: some bullet has a tag in rt, or norm(r) appears in a bullet text, or\n    rt is non-empty and every term in rt is an extra skill with status have.\n  partial: rt is non-empty and at least one term is in a bank skills list or in\n    some bullet tag, but not supported.\n  not_demonstrated: rt is empty and norm(r) looks like a skill (at most 3 words,\n    no verb from: build, own, lead, drive, work, collaborate, design).\n  unknown: otherwise.\n  bullet_ids = ids of bullets whose tags intersect rt or whose text contains norm(r).\n- score = 60 * mustCov + 20 * niceCov + 20 * kwCov, where cov = (supported +\n  0.5 * partial) / count, and an empty list counts as 1.\n- gap = any must item labeled not_demonstrated.\n- ask_user = keywords and must/nice items labeled not_demonstrated whose\n  norm() is not in extra with status dont_have; unique, sorted.\nexport async function scoreJob(db: Db, jobId: string): uses loadRequirements,\n  loadBank, loadSkillsExtra; returns { job_id, score, gap, supported, partial,\n  missing, ask_user } (counts, not items).\n\n",
+  "files": [
+   "api/src/scoring/score.ts"
+  ],
+  "new": [
+   "api/src/scoring/score.ts"
+  ],
+  "why": "Needs bank, requirements, and terms modules it never saw",
+  "expect_paths": [
+   "api/src/profile/bank.ts",
+   "api/src/requirements/parse.ts",
+   "api/src/scoring/terms.ts"
+  ],
+  "expect_symbols": [
+   "vocabulary",
+   "loadRequirements",
+   "terms",
+   "norm",
+   "Requirements"
+  ],
+  "expect_fixes": [],
+  "holdout": false
+ },
+ {
+  "id": "m3-16-risk (holdout)",
+  "holdout": true,
+  "task": "# Task m3-16-risk\nRejection-risk check: why a resume that scores well might still be rejected.\nDeterministic, no model call. Each risk becomes a question for the user.\n\nexport type Risk = { id: string; kind: \"must_have\" | \"years\" | \"senior_signal\" |\n  \"impact\" | \"keywords\" | \"title_level\"; detail: string; question: string }\nexport function riskCheck(req: Requirements, bank: Bank, extra: SkillsExtra,\n  selected: string[] /* bullet ids */): Risk[]\nRules (selected bullets = bank bullets whose id is in selected):\n- must_have: each must item labeled not_demonstrated by scoreRequirements \u2192\n  id \"must:<norm(item)>\", question \"The JD needs <item>. Have you used it? Where?\"\n- years: largest N found by /(\\d+)\\s*\\+?\\s*(?:years|yrs)/i in must_have items;\n  total years = sum over roles of (end - start) parsed from dates like\n  \"Jan 2021 - Present\", \"2019 - 2022\", \"03/2020 \u2013 06/2023\" (Present = now;\n  unparseable dates are skipped). If total < N \u2192 id \"years\", question\n  \"The JD asks for <N>+ years; your listed roles add up to <total>. Any earlier\n  experience that counts?\"\n- senior_signal: for each theme in req.themes matching one of leadership,\n  mentoring, ownership, architecture, scale, cross-team (norm, substring), if no\n  selected bullet has that word in its tags \u2192 id \"theme:<word>\", question\n  \"The JD values <word>. Give one example where you showed it.\"\n- impact: if fewer than half the selected bullets have impact \"high\", one risk\n  per selected bullet with impact low \u2192 id \"impact:<bullet-id>\", question\n  \"Bullet <bullet-id> has no measurable result. What changed (latency, cost, users, revenue)?\"\n- keywords: kwCov from scoreRequirements over selected below 0.6 \u2192 id\n  \"keywords\", question listing the missing keywords: \"Have or don't have: <a, b, c>?\"\n- title_level: req.seniority or req.role contains staff, sde 3, sde iii, lead,\n  or principal, and the first role title contains none of senior, staff,\n  lead, principal, sde 3, sde iii \u2192 id \"title-level\", question \"This role is\n  above your latest title. Did you work at that level (owned a system, led a\n  team)? Give one example.\"\n- Drop risks whose id is in extra.dismissed (see m3-17). Never put bullet\n  text in detail or question; ids and JD words only.\n\n",
+  "files": [
+   "api/src/scoring/risk.ts"
+  ],
+  "new": [
+   "api/src/scoring/risk.ts"
+  ],
+  "why": "Uses scoring, terms, schema types",
+  "expect_paths": [
+   "api/src/scoring/score.ts",
+   "api/src/scoring/terms.ts",
+   "api/src/profile/schema.ts",
+   "api/src/requirements/schema.ts"
+  ],
+  "expect_symbols": [
+   "scoreRequirements",
+   "norm",
+   "Requirements"
+  ],
+  "expect_fixes": []
+ },
+ {
+  "id": "m3-04-prompts (holdout)",
+  "holdout": true,
+  "task": "# Task m3-04-prompts\nLoad the user's prompt templates from disk and fill placeholders.\n\n- Directory: process.env.JOBOPS_PROMPTS_DIR ?? \"requierements\".\n- export function loadPrompt(name: \"one-time-parser\" | \"parse-job-descripton\" |\n  \"select-and-tailor\"): { template: string; version: string }\n  version = first 8 hex chars of sha256 of the file content (node:crypto).\n- export function fill(template: string, values: Record<string, string>): string\n  replaces each \"[key]\" literally (e.g. \"[paste text]\", \"[paste JD]\",\n  \"[list your variants]\", \"[paste Prompt 2 JSON]\", \"[paste shortlist]\", \"[N]\",\n  \"[M]\", \"[25]\"). Throw if a given key is not found in the template.\n- export const JSON_NOTE = \"Return the result as JSON with exactly this structure.\" \n  (appended by callers to the YAML prompt, because output is forced to JSON).\n\n",
+  "files": [
+   "api/src/model/prompts.ts"
+  ],
+  "new": [
+   "api/src/model/prompts.ts"
+  ],
+  "why": "Coder read requirements/*.txt and threw on brackets",
+  "expect_paths": [],
+  "expect_symbols": [],
+  "expect_fixes": [
+   "replace only the given [keys]"
+  ]
+ },
+ {
+  "id": "m3-01-schema (holdout)",
+  "holdout": true,
+  "task": "# Task m3-01-profile-schema\nCreate Zod schemas and inferred types for the candidate data.\n\nBankSchema (experience bank):\n  basics: { name, email, phone, location: string; links: string[] }\n  summaries: array of { id, variant, text: string }\n  roles: array of Entry; projects: array of Entry, where Entry =\n    { id, title, company, location, dates: string; bullets: Bullet[] }\n    (for projects, company and location may be empty strings)\n  Bullet = { id: string matching /^[a-z0-9-]+-\\d+$/, text: string, short: string,\n    tags: string[] (1 to 12 items, lowercase), impact: \"high\" | \"medium\" | \"low\" }\n  education: array of { id, degree, school, dates: string; details: string[] }\n  skills: { languages, frameworks, tools, domains: string[] }\n  approved: boolean, default false\n  meta: optional { model: string, prompt_version: string, created_at: string }\n\nSkillsExtraSchema: { skills: array of { name: string (lowercase),\n  status: \"have\" | \"dont_have\", evidence: string (may be empty for dont_have),\n  added_at: string } }\n\nPreferencesSchema: matches profile/preferences.yaml:\n  compensation { currency, unit: string; min, target: number; keep_if_unlisted: boolean }\n  roles: array of { title: string; aliases: string[] default []; suggested: boolean optional }\n  seniority { include, exclude: string[] }\n  location { cities: string[]; remote, hybrid, onsite: boolean }\n  visa_sponsorship_needed: boolean\n  companies { include: array of { name, slug: string; ats: \"auto\" | \"greenhouse\" | \"lever\" | \"ashby\" }; exclude: string[] }\n  tailoring { bullets_per_role, bullets_total, max_words: positive ints }\n\nResumeRecordSchema (one per JD, stored as YAML):\n  resume_id, jd_id: string; source_resume_id: string | null; created_at: string\n  jd_suitability_score, content_equivalence_score: number 0..100\n  decision: \"reuse\" | \"adapt\" | \"assemble\"; flag_gaps: boolean; gaps: string[]; review: boolean\n  changes: array of { bullet_id: string; from: string | null; to: string | null; reason: string }\n  evidence_refs: array of { requirement: string; bullet_ids: string[] }\n  content: { summary_variant: string; summary_text: string;\n    sections: array of { entry_id: string; bullets: array of { id, text: string } } }\n  meta: optional { model: string, prompt_version: string }\n\nExport each schema and its type (Bank, Bullet, Entry, SkillsExtra, Preferences, ResumeRecord).\n\n",
+  "files": [
+   "api/src/profile/schema.ts"
+  ],
+  "new": [
+   "api/src/profile/schema.ts"
+  ],
+  "why": "Coder did not export schemas; Zod v4 usage",
+  "expect_paths": [],
+  "expect_symbols": [],
+  "expect_fixes": [
+   "Zod v4"
+  ]
+ },
+ {
+  "id": "nm-param-order",
+  "task": "# Task nm-param-order\nIn api/src/tailor/reword.ts, rewordContent gains one optional parameter notes?: { bullet_id: string; note: string }[] for reviewer advice. Callers that pass no notes behave as today.",
+  "files": [
+   "api/src/tailor/reword.ts"
+  ],
+  "expect_fixes": [
+   "New optional parameters go after existing ones"
+  ],
+  "expect_no_fixes": [
+   "Import types from the module that exports them"
+  ]
+ },
+ {
+  "id": "nm-zod-field (near-miss)",
+  "task": "# Task nm-zod-field\nIn api/src/profile/schema.ts, add an optional location field (z.string().optional()) to the EntrySchema object and export the updated Entry type. Object literals in tests must use the new field name exactly.",
+  "files": [
+   "api/src/profile/schema.ts"
+  ],
+  "expect_fixes": [],
+  "expect_no_fixes": [
+   "New optional parameters go after existing ones",
+   "Import types from the module that exports them"
+  ]
+ },
+ {
+  "id": "nm-import-owner",
+  "task": "# Task nm-import-owner\nNew file api/src/extension/loop.ts. It imports the Db type and the ResumeRecord type, and calls latestRecord and gaps from ./reports.ts.",
+  "files": [
+   "api/src/extension/loop.ts"
+  ],
+  "new": [
+   "api/src/extension/loop.ts"
+  ],
+  "expect_fixes": [
+   "Import types from the module that exports them"
+  ],
+  "expect_no_fixes": [
+   "New optional parameters go after existing ones"
+  ]
+ },
+ {
+  "id": "nm-route (near-miss)",
+  "task": "# Task nm-route\nIn api/src/extension/routes.ts, add a GET /x/health route that replies { ok: true }. Use the existing fail() helper for errors.",
+  "files": [
+   "api/src/extension/routes.ts"
+  ],
+  "expect_fixes": [],
+  "expect_no_fixes": [
+   "New optional parameters go after existing ones",
+   "Import types from the module that exports them"
+  ]
+ }
+]

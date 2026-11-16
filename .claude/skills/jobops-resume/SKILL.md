@@ -27,6 +27,7 @@ never "clean them up".
        curl -s localhost:11434/api/version; ollama ps
        tmux list-windows -t jobops 2>/dev/null; pgrep -fl "Python.*(aider --model|mini -c)"
        ls .agent-logs 2>/dev/null | tail -5
+       go run -C .claude/bin/heartbeat . -once -notify=false
 
 3. Check the graph without rebuilding it:
 

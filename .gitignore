@@ -14,3 +14,19 @@ data/
 !.env.example
 __pycache__/
 *.pyc
+
+# Candidate data: resumes, bank, preferences (never commit)
+/profile/
+.aider*
+
+# Benchmark output: raw samples, run rows, parses, logs (the scripts, RESULTS.md and summary.md are kept)
+bench/**/raw/
+bench/**/quality/
+bench/**/*.jsonl
+bench/**/*.json
+bench/**/*.csv
+bench/**/*.out
+ui/dist/
+
+# bin/jobops builds the ctl binary here
+ctl/.bin/

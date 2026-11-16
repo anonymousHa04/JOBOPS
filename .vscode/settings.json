@@ -1,0 +1,5 @@
+{
+  // Lets the "Claude live log" task (runOn: folderOpen) start by itself when
+  // this folder opens, so the terminal with Claude's commands is always there.
+  "task.allowAutomaticTasks": "on"
+}

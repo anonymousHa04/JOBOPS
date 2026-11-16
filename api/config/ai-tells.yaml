@@ -1,0 +1,27 @@
+# Wording that reads as AI-written. Recruiters and some screening tools reject resumes
+# that read generated. Adapted for resume bullets from blader/humanizer (MIT,
+# github.com/blader/humanizer), which is built on Wikipedia's "Signs of AI writing".
+#
+# A model rewrite that adds one of these is rejected and retried (guard code ai_tell_added);
+# lint flags any already in your own bullets so you can decide. Case-insensitive,
+# whole words; list each form you want caught. Your additions go in
+# profile/ai-tells.yaml (same format, git-ignored); its lists are added to these.
+
+# Words models use far more than people do (humanizer §12, §13, §16), plus resume clichés.
+words: [delve, delved, leverage, leveraged, leveraging, utilize, utilized, utilizing,
+  spearheaded, seamless, seamlessly, robust, cutting-edge, state-of-the-art, synergy,
+  synergies, pivotal, crucial, meticulous, meticulously, showcase, showcased, showcasing,
+  underscore, underscored, testament, tapestry, landscape, vibrant, enhance, enhanced,
+  foster, fostered, fostering, orchestrated, holistic, paradigm, transformative,
+  game-changer, game-changing, best-in-class, world-class, results-driven, innovative,
+  dynamic, intricate, interplay, garnered, bolstered, profound, groundbreaking, renowned,
+  indicating, suggesting, demonstrating, demonstrated]
+
+# Phrases (humanizer §13, §14, §16).
+phrases: [played a key role, plays a key role, in order to, a wide range of, a diverse array,
+  proven track record, commitment to, stands as a testament, setting the stage for,
+  associated with, in connection with, at the forefront of, drive innovation]
+
+# Shallow -ing riders after a comma: "..., ensuring reliability" (humanizer §15).
+riders: [ensuring, fostering, showcasing, highlighting, underscoring, reflecting,
+  contributing to, enabling, driving, empowering, resulting in]

@@ -1,0 +1,11 @@
+# Words a JD uses that are not skills you can have or not have ("scale", "cost"). They are
+# still scored like any requirement, but they are never asked as a skill question and are
+# left out of the "have or don't have" keyword question. Case-insensitive, whole term.
+# Your own additions go in profile/generic-terms.yaml (same format, git-ignored).
+terms: [scale, scalability, cost, costs, quality, performance, reliability, impact, ownership,
+  software engineering, engineering, technical initiatives, initiatives, best practices,
+  innovation, excellence, execution, delivery, technology, technologies, systems, solutions,
+  product, products, strategy, roadmap, stakeholders, customers, users, growth, efficiency,
+  complexity, ambiguity, autonomy, accountability, technical expertise, technical depth,
+  problem solving, critical thinking, modern software development, software development,
+  development, programming, coding, architecture, design]

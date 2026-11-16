@@ -1,0 +1,7 @@
+# Namespace: a named folder inside the cluster. Everything JobOps runs goes in "jobops", so
+# `kubectl get pods -n jobops` shows only our pods, and deleting the namespace removes it all
+# including the data volume and its database (see the warning in storage.yaml).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jobops

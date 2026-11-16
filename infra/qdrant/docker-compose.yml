@@ -1,0 +1,22 @@
+# Qdrant vector store for the Agent Knowledge Layer (Phase 2) and, later,
+# resume and JD embeddings. Local only: ports bind to 127.0.0.1, data lives in
+# data/qdrant (git-ignored), telemetry is off.
+#
+#   docker compose --env-file .env -f infra/qdrant/docker-compose.yml up -d
+#   (QDRANT_DATA_DIR in .env moves the data; relative to this file's folder)
+#   curl -s localhost:6333/readyz
+#   docker compose -f infra/qdrant/docker-compose.yml down     (data is kept)
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    container_name: jobops-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333" # HTTP / REST
+      - "127.0.0.1:6334:6334" # gRPC
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__LOG_LEVEL: "INFO"
+    volumes:
+      - ${QDRANT_DATA_DIR:-../../data/qdrant}:/qdrant/storage
+    mem_limit: 1g

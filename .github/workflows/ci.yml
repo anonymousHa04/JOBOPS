@@ -1,0 +1,82 @@
+# CI: on every push and pull request, check that JobOps builds and its tests pass.
+# Nothing is deployed or pushed anywhere: the image is built and thrown away. The tests use
+# fixtures only (fake bank, fake jobs); no profile/, data/ or .env exists here, and no model
+# is called.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency: # a newer push to the same branch cancels the older run
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: API and UI (typecheck, tests, UI build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Render tools (typst, poppler) so the render tests run instead of skipping
+        env:
+          TYPST_VERSION: 0.15.1
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q poppler-utils
+          curl -fsSL "https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz" | tar -xJ -C /tmp
+          sudo mv /tmp/typst-x86_64-unknown-linux-musl/typst /usr/local/bin/typst
+          typst --version && pdftotext -v 2>&1 | head -1
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run ui:typecheck
+      - run: npm run ui:build
+      - run: npm test
+
+  go:
+    name: Go ${{ matrix.module }} (vet, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [queue, jd-search, gateway, ctl]
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache: ${{ matrix.module != 'gateway' && matrix.module != 'ctl' }} # gateway and ctl have no dependencies (no go.sum)
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+
+  image:
+    name: Docker image and Kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Manifests render (kustomize)
+        run: kubectl kustomize infra/k8s > /dev/null
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: jobops:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

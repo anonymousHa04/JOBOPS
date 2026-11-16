@@ -19,14 +19,42 @@ cd "$(git rev-parse --show-toplevel)"
 mkdir -p .claude/specs
 
 # Split the plan into one spec file per task; list "id|files|gate" lines.
+# The plan's preamble (everything before the first "## task:") holds rules for
+# every task, so it is copied to the top of each spec: before 2026-10-26 it was
+# dropped, and coders never saw shared rules such as JOBOPS_PROFILE_DIR (m3-05-fb).
 tasks=$(awk '
   function flush() { if (id != "") print id "|" files "|" gate }
-  /^## task: / { flush(); id = $3; files = ""; gate = ""; out = ".claude/specs/" id ".md"; print "# Task " id > out; next }
+  /^## task: / { flush(); id = $3; files = ""; gate = ""; out = ".claude/specs/" id ".md"; print "# Task " id > out
+                 if (shared != "") print "\n## Shared rules (apply to every task)\n" shared "\n## This task" >> out; next }
+  id == "" { shared = shared $0 "\n"; next }
   /^files: / && id != "" && files == "" { files = substr($0, 8); next }
   /^gate: / && id != "" { gate = $2; next }
   id != "" { print >> out }
   END { flush() }
 ' "$plan")
+
+# Commit a passing task's files only (user's standing request for M3; COMMIT=0
+# turns it off). Subject = task id + first line of its spec.
+commit_task() {
+  t=$1; shift
+  git add -- "$@" 2>/dev/null
+  git diff --cached --quiet -- "$@" && return 0
+  m=$(echo "${CODER_MODEL:-openai/qwen2.5-coder-14b}" | sed 's#^openai/##')
+  # First line of the task's own text (after the shared rules, when present).
+  subj=$(awk 'f && /./ { print; exit } /^## This task/ { f = 1 }' ".claude/specs/$t.md" | cut -c1-60)
+  [ -n "$subj" ] || subj=$(sed -n '2,/./{/./p;}' ".claude/specs/$t.md" | head -1 | cut -c1-60)
+  git commit -q -m "$t: $subj
+
+Written by $m (local, via aider/mini-swe-agent); passed check.sh.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Co-Authored-By: $m <$(echo "$m" | tr ':.' '--')@llama-cpp.local>
+Co-Authored-By: llama.cpp <llama-cpp@llama-cpp.local>" -- "$@" && echo "COMMIT: $t $(git rev-parse --short HEAD)"
+}
+
+# Readiness once before the first task: an environment problem stops the plan before any dispatch.
+"$bin/ready.sh" > .agent-logs/ready.txt 2>&1 || { tail -1 .agent-logs/ready.txt; sed -n 's/^\[FAIL\] /  /p' .agent-logs/ready.txt
+  echo "PLAN NOT STARTED: environment not ready (INFRA_FAILURE). Fix it (.claude/bin/ready.sh --fix), then run again."; exit 3; }
 
 started=${start:+0}
 echo "$tasks" | while IFS='|' read -r id files gate; do
@@ -41,6 +69,7 @@ echo "$tasks" | while IFS='|' read -r id files gate; do
   # shellcheck disable=SC2086
   if out=$("$bin/autofix.sh" "$id" ".claude/specs/$id.md" $files); then
     echo "$out" | head -1
+    [ "${COMMIT:-1}" = 1 ] && commit_task "$id" $files
   else
     echo "$out"
     echo "PLAN STOPPED at $id. Resume with: run-plan.sh $plan $id"

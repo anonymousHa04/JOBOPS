@@ -1,0 +1,206 @@
+{
+ "zod-transform-before-min": [
+  "zod",
+  "transform(",
+  "ZodPipe"
+ ],
+ "zod-tojsonschema-function": [
+  "toJSONSchema",
+  "JSON schema",
+  "format:"
+ ],
+ "no-uninstalled-packages": [
+  "AbortController",
+  "abort",
+  "abort-controller",
+  "axios",
+  "fetch",
+  "http",
+  "node-fetch",
+  "timeout"
+ ],
+ "ts-import-extensions": [
+  "from \"./",
+  "from \"../",
+  ".ts extension",
+  "relative import"
+ ],
+ "unknown-db-rows-json": [
+  ".get(",
+  "db.prepare",
+  "res.json",
+  "rows",
+  "JSON.parse"
+ ],
+ "prompt-fill-only-given-keys": [
+  "fill(",
+  "placeholder",
+  "loadPrompt",
+  "requierements"
+ ],
+ "guessed-interfaces-missing-context": [
+  "does not exist on type"
+ ],
+ "sql-comment-in-spec": [
+  "CREATE TABLE",
+  "db.exec",
+  "openDb"
+ ],
+ "mini-no-context-setting": [
+  "mini",
+  "fix round",
+  "run-mini"
+ ],
+ "aider-repo-map-overflows-context": [
+  "aider",
+  "repo map",
+  "num_ctx",
+  "context window"
+ ],
+ "zod-omit-type-mutation": [
+  "BankSchema.omit"
+ ],
+ "plan-shared-rules-dropped": [
+  "run-plan",
+  "shared rules",
+  "JOBOPS_PROFILE_DIR",
+  "plan preamble"
+ ],
+ "untyped-empty-array-never": [
+  "push(",
+  "= []"
+ ],
+ "entry-union-bullets": [
+  "education entries",
+  "entry.bullets"
+ ],
+ "param-after-opts": [
+  "opts",
+  "baseUrl",
+  "optional parameter"
+ ],
+ "import-from-owner": [
+  "the Db type",
+  "Db type"
+ ],
+ "chat-session-id-on-create": [
+  "conversation",
+  "chat id",
+  "same chat",
+  "session",
+  "tabs.get",
+  "newUrl"
+ ],
+ "new-module-imports": [
+  "import type"
+ ],
+ "posix-sh-filters": [
+  "check.sh",
+  "set -u",
+  "POSIX sh",
+  "git status --porcelain"
+ ],
+ "lesson-terms-specific": [
+  "lesson-terms.json",
+  "lesson precision"
+ ],
+ "node-test-runner": [
+  "node:test",
+  "vitest",
+  "fixture style"
+ ],
+ "test-real-signatures": [
+  "fixtures.ts",
+  "fake bank",
+  "setup(",
+  "addRecord("
+ ],
+ "node-builtin-homes": [
+  "node:fs",
+  "node:os",
+  "node:path",
+  "tmpdir",
+  "mkdtempSync"
+ ],
+ "one-import-line-per-module": [
+  "import type",
+  "Report",
+  "Finding",
+  "one import line"
+ ],
+ "thread-spec-through-helper": [
+  "TaskSpec",
+  "authHeaders",
+  "remoteStart",
+  "switchCommands",
+  "signature change",
+  "parameter type"
+ ],
+ "status-aware-error-message": [
+  "modelUp",
+  "ModelDownError",
+  "ensureModel",
+  "status",
+  "401",
+  "403",
+  "API key"
+ ],
+ "builtin-fetch-rest-client": [
+  "qdrant",
+  "embeddings",
+  "fetch",
+  "AbortSignal.timeout",
+  "REST client",
+  "collection"
+ ],
+ "define-small-helpers-locally": [
+  "normTitle",
+  "payload",
+  "unknown",
+  "Qdrant point",
+  "jd_seen",
+  "helper"
+ ],
+ "go-package-shared-decls": [
+  "Go",
+  "package store",
+  "redeclared",
+  "queue_tasks",
+  "queue_batches",
+  "sql.Tx",
+  "rows"
+ ],
+ "go122-mux-patterns": [
+  "ServeMux",
+  "PathValue",
+  "HandleFunc",
+  "MaxBytesReader",
+  "Go HTTP",
+  "handler"
+ ],
+ "go-exec-capture": [
+  "exec.CommandContext",
+  "stderr",
+  "stdout",
+  "jd-search",
+  "Go exec",
+  "json.Unmarshal"
+ ],
+ "ext-status-null-safe": [
+  "background.js",
+  "setStatus",
+  "loop",
+  "fix",
+  "round",
+  "extension status"
+ ],
+ "test-imports-and-fakes": [
+  "test",
+  "fixtures",
+  "AddressInfo",
+  "testify",
+  "fake server",
+  "node:test",
+  "go test"
+ ]
+}

@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "JobOps",
+  "version": "0.1.0",
+  "description": "Ask Claude or ChatGPT to check a tailored resume (no contact details) and run the report loop through your local JobOps; started from the popup or the JobOps job drawer",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:3000/*",
+    "https://claude.ai/*",
+    "https://chatgpt.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JobOps"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": [
+        "chat.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://127.0.0.1:8080/*",
+        "http://localhost:8080/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "js": [
+        "jobops.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

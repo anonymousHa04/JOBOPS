@@ -1,0 +1,224 @@
+# JobOps work status: the single structured record of what is done and what is
+# left. Indexed by the knowledge layer (retrieve.py) item by item, so it can be
+# searched: retrieve.py semantic "what is left for the engine".
+# Update it whenever an item changes state. States: done | in_progress | todo | blocked.
+# Longer narrative lives in M3-NOTES.md and LOCAL-AGENTS.md; this file wins on state.
+updated: 2026-11-04
+branch: milestone-8 (Milestone 8 done 2026-11-06; merge into dev by the user, then milestone-6)
+
+environment:
+  - id: env-llama-cpp
+    what: Local models run on llama.cpp (Homebrew llama.cpp 0.7.0, build 11669), not Ollama
+    how: .claude/bin/llm.sh start|stop|status [coder|coder7|embed|all]
+    servers:
+      coder: 127.0.0.1:8081, qwen2.5-coder-14b, 16k context, q8 KV cache, flash attention
+      coder7: 127.0.0.1:8083, qwen2.5-coder-7b, 16k context (never together with coder)
+      embed: 127.0.0.1:8082, mxbai-embed-large, CLS pooling, 512-token input
+    models: GGUF files from Ollama's store, linked into ~/models/jobops/ (no second download)
+    note: A request over the window is rejected (HTTP 400) and flagged as RUN-CODER CONTEXT OVERFLOW; never silently truncated.
+  - id: env-index-refresh
+    what: The Qdrant index is written only after an accepted task (autofix.sh on pass), not before runs (user, 2026-10-26), and only from the main checkout; worktrees search it read-only
+    note: "One point per chunk (per heading, declaration, or YAML item), so a file appears many times with different line ranges; that is intended. Stale points from old versions are pruned on the next write (123 removed 2026-10-26; now 423 points = 423 chunks)."
+  - id: env-qdrant
+    what: Qdrant v1.19.2 in Docker (infra/qdrant/docker-compose.yml), 127.0.0.1:6333, data in data/qdrant, telemetry off
+  - id: retire-ollama
+    state: done
+    done: "2026-10-26: five GGUF files copied out of Ollama's store into ~/models/jobops (byte-verified); qwen2.5-coder:7b and the coder7 role dropped; llm.sh gains product roles general7 (qwen2.5:7b, :8084) and general14 (qwen2.5:14b, :8085), heavy roles mutually exclusive; api/src/model/ollama.ts replaced by api/src/model/llm.ts (llama.cpp, json_schema); Ollama quit and its login agent disabled (com.user.ollama-env.plist.disabled); docs, coder.md, AGENTS.md, README, run-plan co-authors updated"
+    evidence: "JD parse via general7 5.6 s (schema-valid, found the 5+ years must-have); general14 schema-valid in 2.1 s; clear 'unavailable' errors with the start command; check.sh pass (22 tests); self-test 29/29; retrieval eval 44/44"
+    deleted: "2026-10-26 (user confirmed): /Applications/Ollama.app, ~/.ollama (26 GB), its login agent, app support and caches; 44 GB free after. Only left: /usr/local/bin/ollama, a dangling root-owned symlink (harmless; remove with sudo rm /usr/local/bin/ollama)"
+    note: "keep branch retire-ollama (user, 2026-10-26)"
+  - id: env-ollama
+    what: Ollama is removed (app, models, login agent); all local models run on llama.cpp from ~/models/jobops.
+  - id: env-memory
+    what: 16 GB Mac. Docker Desktop VM capped at 2 GB (MemoryMiB 2048 in ~/Library/Group Containers/group.com.docker/settings-store.json; backup .bak-2026-10-26)
+    state: done
+    evidence: "before: Docker VM 8.3 GB, swapping 10,228 pages per 10 s idle; after: VM 2.06 GB, 0 swapouts, 77% memory free; Qdrant back with 415 points"
+
+agent_system:
+  # agentManagementAndFeedbackSystem.md, implementation order: validation, retrieval, integration, feedback.
+  - id: phase-0-validation
+    state: done
+    evidence: .claude/bin/phase0-selftest.sh, 12/12 scenarios (2026-10-26, re-run after the llama.cpp switch)
+  - id: phase-1-exact-structural-retrieval
+    state: done
+    evidence: retrieve.py eval, 44/44 on 8 real M3 tasks (5 tuning, 3 held out)
+  - id: phase-2-semantic-search
+    state: done
+    evidence: Qdrant + mxbai-embed-large via llama.cpp; 382 chunks indexed; fallback to error status when down
+  - id: phase-2-aider-integration
+    state: done
+    evidence: smoke-aider passed on llama.cpp (4.4k tokens sent, context ok, 55 s)
+  - id: phase-2-mini-integration
+    state: done
+    done: mini runs on llama.cpp (api_base, step limit 40), absolute spec paths, exit status always recorded
+    left: nothing; mini gets the context package since 2026-10-26 (smoke-mini passed with it, 1 sample)
+    evidence: smoke-mini failed on a real model mistake (put sub() inside add()), caught by the worktree check, nothing merged
+  - id: phase-2-acceptance-m3-05
+    state: done
+    what: re-run m3-05 (bank) with the knowledge layer, now that the window is 16k and the repo map is off
+    result: "m3-05-kb2: failed with 5 type errors (was 15, then 7). All requests inside the window; real schemas and .ts imports used; remaining errors are typing slips (Schema.omit mutation, education has no bullets). Evidence: .agent-logs/runs/m3-05-kb2/"
+    next: decide on one aider fix round and agent self-reports (phase-3)
+    baseline: original 15 type errors; first knowledge run 7 errors but the context overflowed (8.7k-16k sent into 8k)
+  - id: phase-3-feedback-loop
+    state: in_progress
+    built: ".claude/bin/feedback.py + autofix.sh: per-attempt record (agent_claim, failure category from doc 6.4, failure signature, fixes supplied), fresh repair round with new evidence (FIX_RUNNER aider, MAX_FIXES 1), stop on repeated signature / environment / validation / context / timeout / retry limit, escalation record (.agent-logs/<task>.escalation.json + main .agent-logs/escalations.jsonl), fix promotion with evidence, outcomes.jsonl for Phase 4"
+    evidence: "selftest 25/25 (12 phase-0 + 13 feedback-loop checks) on 2026-10-26"
+    acceptance: "m3-05-fb PASSED on the first attempt (aider's lint loop fixed its own errors; 4 requests, 6.5k-13k tokens; claim STATUS done). Behavior check on a fake profile: all 11 exports, YAML round trip, checkBank flags exactly the planted issues, addSkill and vocabulary correct. One gap: hard-coded ./profile, because run-plan.sh dropped the plan's shared rules (fixed, verified by a split test). Evidence: .agent-logs/runs/m3-05-fb/"
+    left: "not yet exercised for real: a repair round that passes and promotes a fix (self-test covers it with a fake agent)"
+    first: "capture agent self-reports as agent_claim (mini trajectory via -o and stop reason; aider STATUS/BLOCKERS block), failure category per doc 6.4"
+    what: outcome record per task, failure categories (doc 6.4), retries with new evidence, failure signatures, real escalation handoff, verified-fix promotion
+    exists: per-task result.json, fixes.jsonl with evidence statuses
+  - id: phase-4-measurement
+    state: done
+    closed: "2026-10-26; round 2 replaced by direct verification of the fixes (self-test 29/29), see phase4.yaml results"
+    plan: ".claude/knowledge/phase4.yaml (metrics, baseline, criteria written before the runs); harness .claude/bin/phase4-bench.sh; scoring .claude/bin/metrics.py"
+    round_1: "10 runs 2026-10-26 (report .agent-logs/phase4/report.json): first-attempt 0.3 (criterion 0.4: NO), final 0.7 (yes), escalations 0.3 (yes), repair 4/7, repeated-failure stop 2/2, regression 0.06 (NO, artifact), overflow 0, median context 3410, median runtime 7.9 min, self-test 25/25. Baseline M3: first-attempt 2/7 check-pass (0/7 correct), escalations 4/7."
+    findings: "1) diff edit format: aider wrote new files to a doubled path (api/src/model/api/src/model/ollama.ts, m3-03 x2) and repair SEARCH blocks failed to match (NO EDIT APPLIED, m3-05 x2). 2) a rejected attempt's out-of-boundary file stayed in the tree for the repair round (the 'regression' is that stale file). 3) mini left api/src/db.ts.tmp, so a good edit was rejected (m3-07 r2). 4) metrics counted 'did not resolve' notes as promotions (fixed). 5) model still imports node-fetch / abort-controller (m3-03 r2) despite the verified fix in context."
+    next: "done: whole format default, revert out-of-boundary files, drop mini temp files, wrong-path -> environment, fixes lock, two fixes recorded; verified by self-test 29/29"
+    what: first-attempt acceptance, repair attempts, escalations, context size, runtime; compare with the M3 baseline (0/7 first-try)
+  - id: llama-speculative-decoding
+    state: done
+    what: "coder server default LLM_SPEC=draft (qwen2.5-coder:0.5b, 397 MB, from Ollama's store); also ngram | both | none"
+    evidence: "spec-bench 2026-10-26 (.agent-logs/runs/spec-bench.json), identical output in every mode: edit 11.2 -> 39.0 tok/s (3.5x), new code 11.3 -> 25.9 tok/s (2.3x); ngram 3.0x on edits but 0.8x on new code; no swapping with the draft model loaded"
+  - id: aider-history-and-diff-format
+    state: done
+    what: "--max-chat-history-tokens 6000 (was 2048: 3 summary calls per run) and edit format diff (was whole: full file re-generated each lint round)"
+    evidence: "m3-05-ab: output per lint round 190-600 tokens (was ~1,450), 0 summary calls (was 3); result failed with a new error (never[]), escalated by the loop; runs vary, so Phase 4 needs several runs per setting"
+  - id: escalation-to-knowledge
+    state: done
+    what: "feedback.py resolve <escalation.json> --id ... writes or links a fix record and marks the escalation resolved; hints.sh also returns matching fixes from fixes.jsonl, so a recorded fix reaches the context package, repair specs, and aider's own lint loop"
+    evidence: "m3-05-ab escalation resolved with untyped-empty-array-never; hints.sh returns its resolution for the real error"
+
+milestone_3:
+  # Product work, branch m3-engine. Engine spec: the m3-notes skill
+  # (.agents/skills/m3-notes, mirrored in .claude/skills/m3-notes), adopted 2026-10-27;
+  # where it differs from M3-NOTES.md, the skill wins.
+  - id: m3-engine-spec
+    state: done
+    what: "m3-notes skill installed for Claude Code and shared agents; local coders get its matching sections through the context package's playbook section"
+    changes_needed: "scoring to 55 must / 15 themes / 10 nice / 20 keywords with recency and must-have caps, labels supported_metric and skill_list_only; inverted index plus LLM judge for qualified requirements and index misses; evidence field on user bullets (number check against the answer); decision: reuse at equivalence >= 95 for any tailorable band, risk gate before rewording, tailor --all --dry-run; guard codes number_added, term_added, scope_raised, scope_phrase_added, too_long, fixed_field_changed; records in profile/records with content, bank, and engine hashes"
+    work_split: "manager: ideal, equivalence, decide, guard, scoring and their tests; local coders: tailor CLI, MCP tool, YAML writer, prompt-3 wiring, lint"
+    decisions_digest: "m3-notes references/decisions.md (2026-10-27): every agreed decision in one file; always included in full in context packages for product code (api/, jd-search/); context budgets raised to 4500 (aider) and 4000 (mini) to keep room for code context"
+    review_aware: "tailoring loads profile/reviews/* locally, maps findings to engine actions or user questions, stores finding ids + status in the record (never the text), reports open ones"
+  - id: m3-engine
+    state: done
+    blocked_on: user go-ahead; content equivalence formula
+    what: selection, content equivalence, rewrite check, resume records, tailoring (requierements/jobops_resume_selection_generation_engine.md)
+  - id: m3-engine-step-1a-scoring
+    state: done
+    what: "scoring per m3-notes engine-algorithm 2-3: inverted index over bullet text and tags; labels supported_metric/supported/partial/skill_list_only/learnable/not_demonstrated/unknown with credits x recency; 55 must / 15 themes / 10 nice / 20 literal keywords (must-have keywords x2), empty parts redistributed; must-have caps 84.9 / 74.9; years gate; index misses are unknown (never auto not_demonstrated); qualified requirements partial until judged; verdicts slot for the judge; risk check uses credit < 0.5"
+    evidence: "fake-bank smoke 2026-10-27: every credit, cap, redistribution, and keyword weight matched by hand; check.sh pass, self-test 29/29, eval 44/44 (eval budget aligned to 4500)"
+  - id: m3-engine-step-1b-judge
+    state: done
+    what: "api/src/scoring/judge.ts: local qwen2.5:7b (general7) judges needsJudge() requirements; candidates = index hits, else word-stem overlap, else most recent high-impact bullets (the model always decides); invented ids dropped; verdicts cached in SQLite judge_cache by requirement + prompt/candidate-logic version + bank hash; a judge 'no' keeps a listed skill at skill_list_only; score judges first (cache), --no-judge / judge=false uses cache only; risk uses cached verdicts; server down -> index labels + reported error"
+    evidence: "fake JD 2026-10-27: judged 4 (production Kubernetes partial, Rust not_demonstrated by the model, Kafka/Go skill_list_only), re-score fully cached, --no-judge works, server down reported with the start command; check.sh pass, self-test 29/29, eval 44/44"
+    calibrate: "generic tag matches (e.g. theme 'system design' supported via tag 'design') may be generous; tune on real JDs"
+  - id: m3-engine-step-2-core
+    state: done
+    what: "api/src/tailor/ideal.ts (ideal content: must-have coverage first, then themes, impact, recency, id; budgets; every role >= 1 bullet; <= 2 metric-led per role; starting record's wording reused; reword marks for JD keywords missing literally, alias-only flagged; skills JD-first in JD spelling, nothing added; summary variant as written), equivalence.ts (spec 5 formula), decide.ts (pickStart on cached verdicts; years gate / poor bands -> not_tailored; reuse at >= 95; flags for unsupported must-haves and risks; risk gate blocks adapt, never reuse)"
+    tests: "api/test/m3-engine.test.ts, 7 tests from engine-algorithm 8 plus invariants, fake resume only; total 29 tests pass"
+    decided: "spec 5 formula as written (union + 2, with a skills unit), not its worked examples (union + 1); confirmed by the user 2026-10-28"
+  - id: m3-engine-step-3-records
+    state: done
+    what: "api/src/tailor/records.ts: one YAML per JD in profile/records/ (id = jd id + content hash; original resume is record 'original'), written with wx so never overwritten; SQLite resume_records is an index rebuilt from YAML by loadRecords; content hash (sorted keys, reword marks excluded), bank hash, engine version (config values + judge prompt + logic version); hand-edited records reported and left out, stale bank/engine reported. ResumeRecordSchema replaced (decision original/reuse/adapt/not_tailored, flags, review_findings ids+statuses, hashes); old empty resume_records table dropped on open"
+    tests: "3 record tests in api/test/m3-engine.test.ts"
+  - id: m3-engine-step-4-guard
+    state: done
+    what: "api/src/tailor/guard.ts: checkRewrite (number_added, term_added except the bullet's reword keywords, scope_raised on the verb ladder, scope_phrase_added, too_long, number_led), checkFixedFields (title/company/dates byte-match the bank), guardedReword (one attempt, one retry with codes, then bank text; codes only)"
+    tests: "3 guard tests in api/test/m3-engine.test.ts; total 35 tests pass"
+  - id: m3-engine-step-5-reword
+    state: done
+    what: "api/src/tailor/reword.ts: prompt 3 (requierements/select-and-tailor.md) filled with a shortlist of one marked bullet, plus the spec's extra rules (allowed JD terms, keep numbers, never lead with a number, same verb level) and on retry the failure codes; qwen2.5:7b (general7); every answer checked by guardedReword against the bank text; changes recorded; model server down -> bullets unchanged, error reported"
+    tests: "3 reword tests against a scripted fake model server; total 38 tests pass; not yet run against the real 7B model"
+  - id: settings-env-file
+    state: done
+    what: ".env.example (committed) lists every setting with its default; .env (git-ignored) is a copy to edit. Loaded by api/src/env.ts (server, CLI, MCP server; shell variables win; tests never load it), .mcp.json jd-search launcher, llm.sh, retrieve.py; infra/qdrant compose reads QDRANT_DATA_DIR (docker compose --env-file .env). Rewording default switched to qwen2.5:14b (code, skill docs, llm.sh roles)"
+  - id: m3-engine-step-6-tailor
+    state: done
+    what: "api/src/tailor/tailor.ts: planJob (start record incl. the original resume before it is written, ideal, risks, decision, unjudged count), tailorJob (blocked adapt writes nothing; original record written first; reuse writes the start's content as this JD's record; adapt rewords; not_tailored records the reason; evidence_refs), dryRunAll (decision table sorted by score + open risk questions with job ids; cached verdicts only, no files). tools.ts tailor/tailorAll (bank must be approved, judge first); CLI: tailor <job_id> [--dry-run] [--force], tailor --all --dry-run. loadPreferences added (budgets)"
+    tests: "4 tailor tests (dry run, blocked, adapt then reuse, not_tailored); total 42 tests pass"
+    open: "review_findings stays [] until m3-review-findings (below); same-company warning and lint are later steps; MCP tool is the last step"
+  - id: m3-engine-step-7-template
+    state: done
+    what: "api/templates/resume.typ (adapted from stuxf/basic-typst-resume-template, Unlicense): one column, no icons/tables/header/footer, fixed standard section titles, data from data.json as plain strings, links as full URLs that never wrap, ligatures off. api/src/render/render.ts: record + bank fixed fields -> typst in a temp folder -> PDF kept in profile/pdf/<resume_id>.pdf only if parse-back passes. api/src/render/parseback.ts: two extractors (pdftotext/poppler and pdf.js) must both read back every bullet whole and in order, titles/employers/locations/dates, education, contact incl. full URLs and +91 phone, section order, skills; no icon glyphs; fonts embedded; page limit. CLI: render <resume_id>. Deps: typst 0.15.1 (brew), pdfjs-dist 6.4.299 (npm, Apache-2.0)"
+    tests: "render + parse-back on the fake resume (skipped if typst/pdftotext missing) and a check that broken bullets, wrapped links, missing fields, icon glyphs are caught; total 44 tests"
+    open: "OpenResume field-level parser (AGPL-3.0, run locally only, never copied into the repo): runner prepared in .scout/openresume-runner, but running downloaded code needs the user's permission; manual check on Greenhouse/Lever/Workday upload forms with the fake resume once per template change. RenderCV 2.8 installed (uv tool) as a cross-check renderer only"
+  - id: m3-engine-step-8-lint
+    state: done
+    what: "api/src/tailor/lint.ts: lintRecord (gaps-and-rejection-risks 3: top_third_weak, inverted_evidence, no_scope_or_outcome, planned_work, skill_not_evidenced, soft_skill_listed, too_long (pages, <= 8 years), possible_typo (one letter from a known term; plurals and hyphen variants ignored), same_opening_verb (> 40%), metric_led_over_2, link_not_url, check_linkedin (manual)); each finding says who can fix it (engine/user/manual); reports only. tenure: short_tenure (< 12 months), gap (> 6 months; a year-only end counts as December), mixed_date_formats, date_unparsed. sameCompany: start from that company's record while its band is tailorable (one version across roles), warn at the 4th application and when versions differ. Wired into tailor (lint on the written record), tailor --all --dry-run (same_company codes per row), CLI lint <resume_id>. span() exported from score.ts"
+    tests: "lint checks fire and never change the record; tenure (short, gap, mixed formats, year-only end); same company (start + reuse across roles, warning at the 4th application, other companies unaffected); 47 tests total"
+    note: "fixed-field check is the renderer's job (bank values used as written) plus guard.checkFixedFields; spelling is a typo heuristic, not a dictionary"
+  - id: m3-engine-step-9-mcp
+    state: done
+    what: "api/src/mcp/server.ts: tools tailor (job_id, force, dry_run), tailor_all_dry_run, render (resume_id), lint (resume_id); results are codes, ids, scores, questions, never resume text. The engine build order (engine-algorithm 10) is complete with this step."
+    tests: "api/test/mcp-tools.test.ts starts the stdio server like Claude Code does, checks the tools are listed and answer errors cleanly; 48 tests total"
+  - id: m3-bank-built
+    state: done
+    what: "Real bank built on local qwen2.5:14b (6 roles, 2 projects, 22 bullets; number check clean) after two fixes (streamed answers; capped lists). bank retag (new): local 14B suggests tags for bullets with < 5; a tag is kept only if the bullet's text names it (tags are evidence in scoring); text never changes. 15 bullets retagged; 4 still under 5 tags (their text names few skills): patch-infotech-4, atdrive-group-2, adadda-marketing-1, jobops-1"
+    next: "user reviews profile/bank.yaml (Claude never reads it), adds tags by hand if wanted, then: node api/src/cli.ts bank approve"
+  - id: editable-lists
+    state: done
+    what: "Synonyms and skill groups moved from code to YAML: api/config/synonyms.yaml and api/config/skill-groups.yaml (defaults, committed); profile/synonyms.yaml and profile/skill-groups.yaml (user's, git-ignored) win. api/src/lists.ts loads both, validates (a broken file is an error naming it), re-reads on change (MCP server sees edits). Tests point JOBOPS_PROFILE_DIR at a temp folder so user overrides never change results"
+  - id: m3-review-findings
+    state: deferred
+    when: "later, after the template step (user 2026-10-27: leave it, keep a note)"
+    why: "profile/reviews is free text and private (Claude never reads it), so the engine cannot map findings to actions yet; engine-algorithm 4 step 9 is not implemented"
+    what: "review extract: local qwen2.5:14b turns profile/reviews/* once into profile/reviews/findings.yaml (id, kind from a fixed list: skills/ordering/summary/spelling/length/needs_facts, engine action); the user reviews and approves it like the bank; tailor loads approved findings, applies engine-fixable ones in code, stores review_findings [{id, status: addressed|open|needs_facts}] (ids only) and reports open ones; needs_facts findings become bullet-writing.md questions. Not chosen: a model call on every tailor (varies per run, unreviewed)"
+  - id: m3-bank-schema-per-skill
+    state: done
+    what: "BulletSchema: ids <entry-id>-<n> or <entry-id>-<topic>; optional evidence (the user's answer) for source: user; checkBank flags user bullets without evidence and checks their numbers against the evidence. bullet add --topic --evidence. Skills: regroup (known frameworks out of languages and back) and dedupe on every save; bank dedupe command"
+    bank: "user answered the question bank in chat (one-time exception, 2026-10-27): 6 user bullets added (4 schneider-electric, 2 jobops) with evidence; scale/load bullet waits on the user confirming the numbers are teams (40 design, 50 load test, 50 = ~250 engineers in one session)"
+  - id: m3-content-equivalence-formula
+    state: done
+    decided: "m3-notes engine-algorithm 5: same id+text 1.0, alias->JD term 0.9, reworded 0.5, one side 0; summary 1 unit; skills 1 unit x Jaccard; 100 x matched / (bullet union + 2)"
+    what: "define during the engine design session (proposal in chat: id+text = 1, reworded = 0.5, over the union, plus summary variant)"
+  - id: m3-tests
+    state: done
+    what: "m3-notes engine-algorithm 8: 5 engine tests + 2 invariants on a fake resume; plus earlier cases for the built parts"
+  - id: m3-bank-build
+    state: done
+    what: node api/src/cli.ts bank build on the real resume (local model), user review and approve profile/bank.yaml
+  - id: product-provider-llama-cpp
+    state: done
+    what: move api/src/model/ollama.ts (JD parse, bank build, rewording) to the llama.cpp OpenAI-compatible API with json_schema; verified to work (6*7 test returned schema-valid JSON); then Ollama can be retired
+  - id: rewording-model
+    state: decided
+    what: local qwen2.5:14b with the humanizer rules (prompt + ai_tell_added guard); user decision 2026-10-28, closes the flag
+
+milestone_3_done: "2026-10-28: all README M3 items built and tested (81 TS tests + Go); first real adapt record (Okta Core Frontier) passes the three-reader parse-back; merged into dev"
+milestone_4_done: "2026-10-28: model registry (api/config/models.yaml), preflight on every model command, call log + models stats, retry names failing fields; 87 TS tests; merged into dev"
+after_milestone_4: "2026-10-31: Chrome extension report + report loop (5 rounds, local review, fix rounds) merged into dev with milestone-4; 109 TS tests; dev pushed; coder KV stays q8_0"
+milestone_5_built: "2026-11-03 on milestone-5: phase 0 check.sh vets/tests queue/ (on dev); A general7 on the laptop with an API key, reword timeout 120 s (committed b254f72); H JD prompt v2 (laptop keyword overlap with Claude 0.37 -> 0.46) and a key-refused message; I Qdrant repost reuse (152 ms, no model call, live-checked) and canonical keyword names; B Go queue (queue/); C workers; D batch commands and /batches routes; E report loop raises the score (best version kept, fit_score recorded); F tests: 126 TS + 8 Go store cases; live batch on a DB copy: fetch 47 matched, 3 parsed and scored on the laptop. Committed (b254f72, 6df8fbc) and merged into dev 2026-11-03."
+milestone_5_done: "2026-11-03: first real batches (6 jobs, no failures); search filters (seniority.include, title languages, INR pay, stored jobs re-checked before every batch via jd-search check / job_filter); batch-up.sh; README, extension README, STATUS, graph updated; dev pushed"
+milestone_5_notes:
+  - "21 of 25 coder tasks escalated; the manager wrote most of B-F (lessons recorded in fixes.jsonl)"
+  - "aider scrapes http:// URLs in specs (hit the laptop without a key): write host/port/path; aider runs with --no-detect-urls"
+  - "coder gates tooling (7719644): ready check, complexity route, context bundle, edit gate, patch runner, failure classes, 1 fix round for EDIT_FAILURE; TS edits improved, Go new files still escalate"
+  - "autofix.sh reverts any file changed outside the task during a run, new untracked files included"
+  - "after a restart: start Docker (Qdrant) before coder runs, or run-coder.sh stops with 'coder window gone'"
+  - "extension does not report round 5 (grader requires round < 5); only the chat's round-5 score is lost"
+milestone_7_done: "2026-11-04 (built before M6, user): ui/ React dark dashboard (pipeline board, job drawer with score arithmetic and evidence, applications board with notes and prep tasks, batches tab, health bar), /ui API routes, tables applications and application_tasks, queue sweep scores parsed jobs no batch scored every 2m (JOBOPS_SWEEP_EVERY); manager wrote the code on the user's request; merged into dev"
+milestone_7_open:
+  - id: m7-tests
+    state: todo
+    what: "tests for /ui routes (board states, score route, tracking, health) and queue Sweep; test plan shown 2026-11-04, waits for user approval"
+milestone_6:
+  - id: m6-plan
+    state: todo
+    what: "contacts (LinkedIn Connections.csv + profile/contacts.yaml) and outreach drafts; plan .claude/specs/plan-milestone-6.md, phase A specs plan-m6-a.md approved, not run; after Milestone 8"
+milestone_8_done: "2026-11-04 (manager wrote it on the user's request; branch milestone-8, uncommitted): one image jobops:dev (Dockerfile, allow-list .dockerignore, Chromium/typst/poppler); infra/k8s kustomize on Docker Desktop kubeadm (Deployments api, queue, worker-laptop, worker-mac, gateway; ClusterIP Services; PVC jobops-data; profile hostPath; Secret from .env; ConfigMap jobops-cluster); gateway/ Go (ui/dist + /api proxy); bin/jobops up/down/status/logs/cli/ui/db-import/db-backup; 8080 and 3000 port-forwards on 127.0.0.1; queue worker heartbeat; CI .github/workflows/ci.yml; RUNBOOK-M8.md; checked: pods replaced after delete, UI through gateway, cli in cluster, 130-job DB imported"
+milestone_8_closed: "2026-11-06 (user): plus on milestone-8: Go bin/jobops (ctl/), Gaps tab and answer memory (gap-memory.ts, gap_links, carry/match/reuse/undo, Add previous response and rescore), click-to-tailor at 75+ (open gaps no longer block), one score, delete with reasons -> preferences skip_keywords (jd-search filter.SkipKeyword), Keep this job (kept_jobs), bulk deletes (skip keywords; Skipped column selection), readable logs (api log.ts, queue events and worker up/quiet, gateway writes, ui client-log); incident: 2 tailored jobs bulk-deleted and restored from backup, resumes lost; wider search (seed list + Adzuna/Jooble) built and reverted by the user; next: user commits/merges, first CI run, test plans, Milestone 6"
+milestone_8_open:
+  - id: m8-ci-first-run
+    state: todo
+    what: "CI has never run: needs the user's commit and push, then a green run on GitHub"
+  - id: m8-gateway-test
+    state: todo
+    what: "gateway/main_test.go written without an approved test plan; ask the user to keep it"
+  - id: m8-forward-at-login
+    state: todo
+    what: "port-forwards (8080 UI, 3000 extension) need bin/jobops ui after a reboot; launchd agent only if the user wants it"
+  - id: m8-postgres
+    state: todo
+    what: "PostgreSQL in the cluster in place of SQLite (user: later)"
+decisions_needed: []

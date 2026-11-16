@@ -1,0 +1,7 @@
+#!/bin/sh
+# JobOps in local Kubernetes: the command is a Go program (ctl/). This wrapper builds it when its
+# code changed (Go's build cache makes that quick) and runs it. Usage: bin/jobops (no arguments).
+set -e
+R=$(cd "$(dirname "$0")/.." && pwd)
+go build -C "$R/ctl" -o "$R/ctl/.bin/jobops" .
+JOBOPS_REPO=$R exec "$R/ctl/.bin/jobops" "$@"

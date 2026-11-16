@@ -1,0 +1,12 @@
+# Which group a skill belongs to in the bank's skills section. On every bank save, a skill
+# listed here moves to its group (the model that builds the bank sometimes files React or
+# Node under languages). Names match case-insensitively, ignoring spaces and dots
+# ("Node.js" = "nodejs"). Groups: languages, frameworks, tools, domains.
+# Your own choices go in profile/skill-groups.yaml (same format, git-ignored) and win
+# over this file: list "node" under languages there and it stays a language.
+languages: [javascript, typescript, python, java, go, golang, rust, c, c++, cpp, "c#", csharp, ruby, php,
+  kotlin, swift, scala, sql, bash, shell, html, css, dart, r, perl, lua, elixir]
+frameworks: [react, reactjs, react native, node, nodejs, express, expressjs, nextjs, nestjs, angular, angularjs,
+  vue, vuejs, nuxt, svelte, django, flask, fastapi, spring, spring boot, rails, ruby on rails, laravel, .net,
+  .net core, asp.net, redux, jquery, tailwind, tailwindcss, bootstrap, graphql, jest, pytorch, tensorflow,
+  pandas, numpy, kafka streams, deno, bun, electron, flutter, three.js]

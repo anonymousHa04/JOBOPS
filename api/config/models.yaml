@@ -1,0 +1,73 @@
+# Which local model each task uses, and how long it may take. Every model call names its
+# task; nothing else in the code picks a model. Your changes go in profile/models.yaml
+# (same format, git-ignored): a task or model there replaces the one here. An env var
+# named in a task's "env" (set in .env) wins over both, so existing settings keep working.
+#
+# models: one entry per llama.cpp server (.claude/bin/llm.sh). url_env names the setting
+# that holds the server's URL; url is used when it is not set. role is the llm.sh role
+# that starts it. Only one heavy model fits in memory at a time (16 GB).
+#
+# tasks: model, timeout_s (no answer by then: a "timeout"), and max_tokens (stops a runaway
+# answer that repeats list items instead of waiting out the timeout).
+#
+# api_key_env: name of the env var holding the server's API key.
+# remote_start: what the user must do to start that server when it runs on another machine.
+# general7 normally runs on the laptop (LLM_GENERAL7_URL in .env) and must never be loaded on
+# the Mac next to general14.
+
+models:
+  qwen2.5:7b:
+    alias: qwen2.5-7b
+    role: general7
+    url_env: LLM_GENERAL7_URL
+    url: http://127.0.0.1:8084/v1
+    api_key_env: LLM_GENERAL7_KEY
+    remote_start: 'start C:\llama\start-server.cmd on the laptop, then check: curl http://10.10.10.1:8084/health'
+  qwen2.5:14b:
+    alias: qwen2.5-14b
+    role: general14
+    url_env: LLM_GENERAL14_URL
+    url: http://127.0.0.1:8085/v1
+
+tasks:
+  jd_parse:     # job description -> requirements
+    model: qwen2.5:7b
+    env: JOBOPS_JD_MODEL
+    timeout_s: 300
+  judge:        # one requirement against its candidate bullets
+    model: qwen2.5:7b
+    env: JOBOPS_JUDGE_MODEL
+    timeout_s: 60
+  verify:       # the exit gate's verifier: claims and skills against quoted evidence
+    model: qwen2.5:7b
+    env: JOBOPS_VERIFY_MODEL
+    timeout_s: 60
+  bank_build:   # resume text -> experience bank (one time)
+    model: qwen2.5:14b
+    env: JOBOPS_PARSE_MODEL
+    timeout_s: 900
+    max_tokens: 8000
+  retag:        # tags for one bullet
+    model: qwen2.5:14b
+    env: JOBOPS_PARSE_MODEL
+    timeout_s: 120
+    max_tokens: 200
+  reword:       # one bullet toward a JD's wording (humanizer rules, guarded)
+    model: qwen2.5:14b
+    env: JOBOPS_REWORD_MODEL
+    timeout_s: 120
+  report_normalize:   # a chat's job report (browser extension) tidied into the report shape
+    model: qwen2.5:7b
+    timeout_s: 180
+    max_tokens: 1500
+
+  gap_help:     # Gaps tab: what a missing requirement means, and a bullet drafted from the user's answer
+    model: qwen2.5:14b
+    env: JOBOPS_REWORD_MODEL
+    timeout_s: 180
+    max_tokens: 800
+  gap_match:    # Gaps tab: is a new gap the same ask as one answered on another job (JD wording only)
+    model: qwen2.5:7b
+    env: JOBOPS_JUDGE_MODEL
+    timeout_s: 60
+    max_tokens: 120

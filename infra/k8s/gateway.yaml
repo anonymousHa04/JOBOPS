@@ -1,0 +1,48 @@
+# The gateway (Go): the one door into JobOps from your Mac. It serves the web UI and passes
+# /api/* to the API Service. Open http://localhost:8080.
+#
+# Service type ClusterIP, like every JobOps Service: reachable only inside the cluster.
+# Not LoadBalancer: Docker Desktop publishes a LoadBalancer on all of the Mac's networks (the
+# laptop link and Wi-Fi too), and pods cannot tell those callers from the Mac (every request
+# arrives from Docker's internal router), so the UI, which has no login, would be open to them.
+# Instead bin/jobops runs `kubectl port-forward --address 127.0.0.1`: localhost:8080 on the Mac
+# only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      containers:
+        - name: gateway
+          image: jobops:dev
+          imagePullPolicy: Never
+          command: [gateway, -addr, "0.0.0.0:8080"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: jobops-cluster }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  selector: { app: gateway }
+  ports:
+    - { name: http, port: 8080, targetPort: http }

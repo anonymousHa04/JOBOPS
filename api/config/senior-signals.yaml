@@ -1,0 +1,14 @@
+# Senior signals a JD values, and the words in a bullet (text or tags) that show them.
+# A JD theme naming one is asked as a question ("Give one example where you showed it")
+# only when no bullet in the bank shows it. Case-insensitive, whole words; a hyphen and a
+# space match each other; "#" stands for any number ("# teams" matches "50 teams").
+# Your own changes go in profile/senior-signals.yaml (same format); a signal there
+# replaces this one.
+scale: [scale, scaled, scaling, scalable, concurrent, concurrency, load test, throughput,
+  requests per second, rps, qps, million, millions, "# users", "# sessions", "# teams",
+  "# services", "# requests", "# engineers"]
+cross-team: [cross-team, cross-functional, teams, partnered, collaborated, coordinated, stakeholders]
+ownership: [owned, ownership, owner, led, drove, end to end]
+leadership: [led, lead, leading, managed, mentored, headed]
+mentoring: [mentored, mentoring, coached, onboarded, trained]
+architecture: [architected, architecture, designed, design]

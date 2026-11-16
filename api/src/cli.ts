@@ -1,0 +1,204 @@
+// JobOps command line: node api/src/cli.ts <command>. Prints JSON.
+import "./env.ts";
+import * as t from "./tools.ts";
+import { batch, batches, retryBatch, startBatch } from "./queue/client.ts";
+import { runWorker } from "./queue/worker.ts";
+import { loadPrompt } from "./model/prompts.ts";
+
+const USAGE = `usage: node api/src/cli.ts <command>
+  bank build | check | retag | dedupe | approve | status | audit
+  bank mark-break <role-id> [--title "Career break (reason)"]
+  bank links <url> [<url> ...]   (profile links as full URLs, in display order)
+  bank education [--school "<name>"] [--degree "<degree>"] [--dates "<from - to>"] [--id <education-id>]
+  prefs role <title> [--aliases "a,b"]   (target job title for jd-search)
+  prefs exclude <word> [<word> ...]       (title words that drop a posting)
+  prefs pages <1-3>                       (page limit for tailored resumes)
+  prefs company <name> --slug <slug> --ats auto|greenhouse|lever|ashby|workday|smartrecruiters|careers
+  skill add <name> --evidence "<where used>"
+  skill no <name>
+  skill remove <name>
+  bullet add <entry-id> "<text>" --tags a,b,c [--impact high|medium|low] [--topic <slug>] [--evidence "<answer>"]
+  bullet remove <bullet-id>
+  bullet review <bullet-id> [<bullet-id>...]
+  flag resolve <bullet-id> --why "<reason>" [--confirm]   (dismiss a chat fact flag on a bullet, with your reason; --confirm: your account wins for this bullet, later flags on it too)
+  keyword approve <resume_id> <bullet_id>   (approve a reworded line's related keyword; holds while the text is the same)
+  learnable <skill> yes|no --job <job_id>
+  risk skip <risk-id>
+  models                  (which model each task uses, and whether its server is up)
+  models stats [--since <ISO time>]   (the model call log: outcomes, timing, tokens per task)
+  job add <url> [--company <name>] [--force] [--no-render] [--undelete]
+                         (fetch one job by its link, then parse, judge, tailor, and render)
+  jobs [--q <text>] [--limit N] [--unparsed]
+  batch start [--limit N]   (N 1-100, default 100: fetch new jobs, then parse, score, tailor each)
+  batch status [id]         (all recent batches, or one with its failures)
+  batch retry <id>          (queue that batch's failed tasks again)
+  worker laptop|mac [--concurrency N]
+                         (laptop: parse and score on general7; mac: tailor on general14)
+  jd parse <job_id>
+  jd parse-all [--limit N]
+  score <job_id> [--no-judge]
+  risk <job_id>
+  tailor <job_id> [--dry-run] [--force]
+  tailor --all --dry-run
+  render <resume_id>     (PDF, kept only if the parse-back test passes)
+  lint <resume_id>
+  ats check [<resume_id>]  (local readers: pdftotext, pdf.js, OpenResume; the fake resume without an id)
+  ats recheck [--all]      (read-only: the PDFs in profile/pdf made since 2026-11-06, or all, against their records)
+  ats compare <report.json>     (what a site's autofill showed for the fake resume vs expected; Workday or iCIMS)
+  ats references           (read-only: every saved report in data/ats/ vs today's fake resume; re-upload reminder)
+  verify approve <resume_id> <claim|summary|skill> <id>   (approve an item the verifier did not confirm; holds while its text is the same)
+  verify eval [<file>]     (the verifier on the calibration set, default data/verify-eval.yaml; exit 1 unless A4 holds)
+  synonyms audit           (read-only: each synonym pair classified same / related / different by the verifier)`;
+
+function flag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+
+function need(v: string | undefined, what: string): string {
+  if (!v) throw new Error(`missing ${what}\n${USAGE}`);
+  return v;
+}
+
+async function main(argv: string[]): Promise<unknown> {
+  const [cmd, sub, ...rest] = argv;
+  const args = [sub, ...rest].filter((a): a is string => a !== undefined);
+  switch (cmd) {
+    case "bank":
+      if (sub === "build") return t.bankBuild();
+      if (sub === "check") return t.bankCheck();
+      if (sub === "retag") return t.bankRetag();
+      if (sub === "dedupe") return t.bankDedupeSkills();
+      if (sub === "approve") return t.bankApprove();
+      if (sub === "status") return t.bankStatus();
+      if (sub === "audit") return t.bankAudit();
+      if (sub === "links") return t.bankLinks(rest);
+      if (sub === "education") return t.bankEducation({ school: flag(rest, "school"), degree: flag(rest, "degree"), dates: flag(rest, "dates") }, flag(rest, "id"));
+      if (sub === "mark-break") return t.bankMarkBreak(need(rest[0], "role id"), flag(rest, "title"));
+      break;
+    case "prefs":
+      if (sub === "role") return t.prefsRoleAdd(need(rest[0], "title"), (flag(rest, "aliases") ?? "").split(",").filter(Boolean));
+      if (sub === "company") {
+        const ats = need(flag(rest, "ats"), "--ats");
+        const known = ["auto", "greenhouse", "lever", "ashby", "workday", "smartrecruiters", "careers"] as const;
+        if (!(known as readonly string[]).includes(ats)) throw new Error(`--ats: ${known.join("|")}`);
+        return t.prefsCompany(need(rest[0], "company name"), need(flag(rest, "slug"), "--slug"), ats as (typeof known)[number]);
+      }
+      if (sub === "pages") {
+        const n = Number(need(rest[0], "page count"));
+        if (![1, 2, 3].includes(n)) throw new Error("pages: 1, 2, or 3");
+        return t.prefsPages(n);
+      }
+      if (sub === "exclude") return t.prefsExclude(rest.length ? rest : [need(undefined, "word")]);
+      break;
+    case "skill":
+      if (sub === "add") return t.skillAdd(need(rest[0], "skill name"), true, flag(rest, "evidence") ?? "");
+      if (sub === "no") return t.skillAdd(need(rest[0], "skill name"), false, "");
+      if (sub === "remove") return t.skillRemove(need(rest[0], "skill name"));
+      break;
+    case "bullet": {
+      if (sub === "remove") return t.bulletRemove(need(rest[0], "bullet id"));
+      if (sub === "review") return t.bulletReview(rest.length ? rest : [need(undefined, "bullet id")]);
+      if (sub === "add") {
+        const impact = flag(rest, "impact") ?? "medium";
+        if (impact !== "high" && impact !== "medium" && impact !== "low") throw new Error("impact: high|medium|low");
+        const tags = need(flag(rest, "tags"), "--tags").split(",");
+        return t.bulletAdd(need(rest[0], "entry id"), need(rest[1], "bullet text"), tags, impact,
+          { topic: flag(rest, "topic"), evidence: flag(rest, "evidence") });
+      }
+      break;
+    }
+    case "flag": {
+      if (sub === "resolve") {
+        // A reason is required, also with --confirm ("--why --confirm" is no reason).
+        const why = flag(rest, "why");
+        return t.flagResolve(need(rest[0], "bullet id"), need(why?.startsWith("--") ? undefined : why, "--why"), rest.includes("--confirm"));
+      }
+      break;
+    }
+    case "keyword": {
+      if (sub === "approve") return t.keywordApprove(t.db(), need(rest[0], "resume id"), need(rest[1], "bullet id"));
+      break;
+    }
+    case "learnable": {
+      const answer = need(rest[0], "yes|no");
+      if (answer !== "yes" && answer !== "no") throw new Error("answer yes or no");
+      return t.learnableSet(need(sub, "skill"), answer === "yes", need(flag(rest, "job"), "--job"));
+    }
+    case "risk":
+      if (sub === "skip") return t.riskSkip(need(rest[0], "risk id"));
+      return t.risk(t.db(), need(sub, "job id"));
+    case "models":
+      if (sub === "stats") return t.modelStats({ since: flag(rest, "since") });
+      if (!sub) return t.models();
+      break;
+    case "batch":
+      if (sub === "start") {
+        const limit = Number(flag(rest, "limit") ?? 100);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("--limit must be 1 to 100");
+        return startBatch(limit, loadPrompt("parse-job-descripton").version);
+      }
+      if (sub === "status") return rest[0] ? batch(Number(rest[0])) : batches();
+      if (sub === "retry") return retryBatch(Number(need(rest[0], "batch id")));
+      break;
+    case "worker":
+      return runWorker(need(sub, "worker group"), { concurrency: flag(rest, "concurrency") ? Number(flag(rest, "concurrency")) : undefined });
+    case "job":
+      if (sub === "add") {
+        return t.jobAdd(t.db(), need(rest[0], "job link"),
+          { company: flag(rest, "company"), force: rest.includes("--force"), render: !rest.includes("--no-render"), undelete: rest.includes("--undelete") });
+      }
+      break;
+    case "jobs":
+      return t.listJobs(t.db(), {
+        q: flag(args, "q"),
+        limit: Number(flag(args, "limit") ?? 50),
+        unparsed: args.includes("--unparsed")
+      });
+    case "jd":
+      if (sub === "parse") return t.jdParse(t.db(), need(rest[0], "job id"));
+      if (sub === "parse-all") return t.jdParseAll(t.db(), Number(flag(rest, "limit") ?? 20));
+      break;
+    case "score":
+      return t.score(t.db(), need(sub, "job id"), !args.includes("--no-judge"));
+    case "ats":
+      if (sub === "check") return t.ats(t.db(), { resumeId: rest[0] && !rest[0].startsWith("--") ? rest[0] : undefined });
+      if (sub === "recheck") return t.atsRecheck(t.db(), { all: rest.includes("--all") });
+      if (sub === "compare") return t.atsCompare(need(rest[0], "report file"));
+      if (sub === "references") return t.atsReferences();
+      break;
+    case "verify":
+      if (sub === "approve") return t.verifyApprove(t.db(), need(rest[0], "resume id"), need(rest[1], "kind"), need(rest.slice(2).join(" ") || undefined, "id"));
+      if (sub === "eval") {
+        const r = await t.verifyEval(t.db(), rest[0]);
+        process.exitCode = r.exit_code;
+        return r;
+      }
+      break;
+    case "synonyms":
+      if (sub === "audit") {
+        const r = await t.synonymsAudit(t.db());
+        if ("error" in r) process.exitCode = 1;
+        return r;
+      }
+      break;
+    case "lint":
+      return t.lint(t.db(), need(sub, "resume id"));
+    case "render":
+      return t.render(t.db(), need(sub, "resume id"));
+    case "tailor":
+      if (sub === "--all") {
+        if (!args.includes("--dry-run")) throw new Error("tailor --all only as a dry run; tailor one job at a time");
+        return t.tailorAll(t.db());
+      }
+      return t.tailor(t.db(), need(sub, "job id"), { force: args.includes("--force"), dryRun: args.includes("--dry-run") });
+  }
+  throw new Error(USAGE);
+}
+
+try {
+  console.log(JSON.stringify(await main(process.argv.slice(2)), null, 2));
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}

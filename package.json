@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node api/src/server.ts",
     "test": "node --test \"api/test/**/*.test.ts\"",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "ui": "vite --config ui/vite.config.ts",
+    "ui:build": "vite build --config ui/vite.config.ts",
+    "ui:typecheck": "tsc -p ui"
   },
   "engines": {
     "node": ">=24"
@@ -17,13 +20,26 @@
   "type": "module",
   "private": true,
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@mozilla/readability": "^0.6.0",
     "better-sqlite3": "^13.0.3",
+    "eventsource": "^5.1.4",
     "fastify": "^5.12.7",
+    "linkedom": "^0.18.14",
+    "pdfjs-dist": "^6.4.299",
+    "playwright-core": "^1.64.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.5",
-    "typescript": "^7.0.2"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
   }
 }

@@ -1,0 +1,63 @@
+# The queue server (Go): batches, task leasing, the 2-minute sweep that scores parsed jobs,
+# and the fetch step (it runs jd-search and the careers crawler, Chromium, in this pod).
+#
+# Deployment: "keep one copy of this pod running". If the process crashes or the pod is
+# deleted, Kubernetes starts a new one. strategy Recreate: on an update, stop the old pod
+# before starting the new one, so two queue servers never share the database.
+#
+# Probes: Kubernetes calls GET /health on port 8090.
+#   readiness: until it answers, the Service sends no traffic to the pod.
+#   liveness:  if it stops answering for ~1 minute, Kubernetes restarts the pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: queue }
+  template:
+    metadata:
+      labels: { app: queue }
+    spec:
+      containers:
+        - name: queue
+          image: jobops:dev
+          imagePullPolicy: Never      # the image is built locally (bin/jobops up), not pulled
+          command: [queue, -addr, "0.0.0.0:8090"]
+          ports:
+            - { name: http, containerPort: 8090 }
+          envFrom:
+            - secretRef: { name: jobops-env, optional: true }
+            - configMapRef: { name: jobops-cluster }
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: profile, mountPath: /app/profile }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 1Gi }     # Chromium (careers crawl) runs here
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: jobops-data }
+        - name: profile
+          hostPath: { path: __REPO__/profile, type: Directory }
+---
+# Service: a fixed name and address in front of the pod. Pods get new IPs on every restart;
+# the Service "queue" stays, so the others always call http://queue:8090. ClusterIP: reachable
+# only inside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue
+spec:
+  selector: { app: queue }
+  ports:
+    - { name: http, port: 8090, targetPort: http }

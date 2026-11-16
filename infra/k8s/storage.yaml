@@ -1,0 +1,20 @@
+# PersistentVolumeClaim: a request for disk that outlives pods. Pods come and go (a crash, an
+# update); this volume stays, so data/jobops.db and the model and feedback logs live here.
+# Docker Desktop's "hostpath" storage class keeps it inside the Docker VM. bin/jobops db-import
+# copies your existing data/jobops.db in once; bin/jobops db-backup copies it back out.
+#
+# ReadWriteOnce: one node may mount it. Docker Desktop has one node, so every JobOps pod shares
+# it, which SQLite needs (all writers in one machine, so its WAL locking works).
+#
+# WARNING: the "hostpath" class has reclaim policy Delete: deleting this claim (or the jobops
+# namespace) deletes the database with it. bin/jobops down only scales pods to zero; it never
+# deletes the claim or the namespace. Take a db-backup before any cluster reset.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jobops-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi

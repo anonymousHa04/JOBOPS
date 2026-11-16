@@ -7,6 +7,8 @@ The project has two goals:
 1. Build a useful system for managing a real job search.
 2. Demonstrate senior-level full-stack, backend, distributed-systems, and AI-agent engineering through a working product.
 
+**Demo video:** [Watch JobOps in action (about 4 minutes)](https://drive.google.com/file/d/1Fy_B1Yk_0Y-6M9q6f0adI46ZWnu_9yBW/view?usp=drive_link). It covers the problem, the parse → score → tailor pipeline, the live queue, and the two-machine local-model setup.
+
 > **Project status:** This README reconstructs the intended product and architecture from the original plan. It does not claim that every component has been implemented. The source code was lost, so the implementation status, exact repository structure, and final technology choices still need to be verified.
 
 ## Table of contents
@@ -87,9 +89,9 @@ flowchart TD
     AGENTS --> RESUMEAGENT[Resume Matching Agent]
     AGENTS --> OUTREACHAGENT[Outreach Drafting Agent]
 
-    JOBAGENT --> LLM[Local LLM via Ollama + Retrieval / RAG]
+    JOBAGENT --> LLM[Local LLM via llama.cpp + Retrieval / RAG]
     RESUMEAGENT --> LLM
-    RESUMEAGENT --> DECIDE[Laya decision model]
+    RESUMEAGENT --> DECIDE[Scoring and decision in code]
     OUTREACHAGENT --> LLM
 
     JOB --> JOBDB[(Jobs Store)]
@@ -102,6 +104,7 @@ flowchart TD
 
 - Business services (jobs, contacts, applications) and workers are written in Node.js + TypeScript.
 - Go is the control layer over them: the API gateway is the single entry point (routing, rate limits, auth), and the scheduler/queue decides what runs when, dispatches work to Node workers, and retries failures.
+- Go also runs the JD fetcher (`jd-search`): many concurrent requests to public job-board APIs, with per-host rate limits and retries. It hands postings to the Node job service through `POST /jobs`.
 - Local Kubernetes supervises every service (start, stop, health checks, restarts), so supervision is not written in Go.
 - Keep the user-facing API separate from long-running AI and ingestion work.
 - Separate job, contact, and application responsibilities where doing so provides a real benefit.
@@ -138,7 +141,7 @@ The original plan explored the following technologies. Exact assignments and ver
 | Frontend | React, TypeScript |
 | Business services and workers | Node.js, TypeScript, REST (Fastify, Zod, SQLite to start) |
 | Control layer | Go: API gateway and scheduler/queue in front of and over the Node services |
-| AI and agent workflows | Python, local LLMs via Ollama, Laya decision model, tool calling, structured outputs |
+| AI and agent workflows | Python, local LLMs via llama.cpp, tool calling, structured outputs |
 | Retrieval | Embeddings, indexing, semantic search, RAG |
 | Data | Relational storage, appropriate indexes, caching |
 | Asynchronous work | Queues, workers, scheduling, event-driven processing |
@@ -231,21 +234,22 @@ JobOps should use AI as a component of a reliable application, not as the source
 
 Generation and judgment are handled by different kinds of models. All of them run locally, so resumes and contacts stay on the machine.
 
+Each model call names its task; `api/config/models.yaml` says which model and server each task uses, with its timeout and answer limit (override in `profile/models.yaml`). Every command checks its model's server before starting and, if it is down, stops with the commands to switch (one large model fits in memory at a time). Each call adds one line to `data/model-calls.jsonl` (task, model, outcome, time, tokens; never prompt or answer text); `models stats` summarizes it.
+
 | Task | Model | Notes |
 |---|---|---|
-| Extract requirements from job posts into JSON | Local LLM (7–8B) via Ollama | Output validated against a schema before saving |
-| Judge evidence per requirement (supported / partial / missing / unknown) | [Laya](https://huggingface.co/convaiinnovations/laya) `typed-decisions` checkpoint | One requirement plus its retrieved evidence per question, to fit the 512–1,024 token context |
-| Decide fit (apply now / prepare first / skip) | Laya, with the fit score computed in code from per-requirement answers | `choice` questions are more reliable than Laya's `score` questions |
-| Verify tailored resume bullets are backed by real experience | Laya | Enforces "AI must not invent experience" |
-| Rewrite resume bullets and draft outreach | Local LLM via Ollama | Every change and message needs user approval |
+| Extract requirements from job posts into JSON | Local LLM (`qwen2.5:7b`) via llama.cpp | Output forced to a schema and validated before saving |
+| Judge evidence per requirement (supported / partial / not shown) | Local LLM (`qwen2.5:7b`) via llama.cpp | Only for what the inverted index cannot settle; one requirement and its candidate bullets per call, a few calls at once; verdicts cached per bank |
+| Decide fit (reuse / adapt / not tailored) | Code, from per-requirement scores | Years are a hard gate; bands and caps in `api/src/scoring/config.ts` |
+| Verify tailored resume bullets are backed by real experience | Code (rewrite guard) | Rejects any rewrite that adds a number, term, or scope, AI-sounding wording, or hidden characters |
+| Rewrite resume bullets | Local LLM (`qwen2.5:14b`) via llama.cpp | Prompt and guard carry humanizer rules (adapted from blader/humanizer, MIT); every change is logged in the resume record for review |
+| Draft outreach | Local LLM via llama.cpp | Every message needs user approval |
 
-Laya is served with `laya-serve`, which exposes a Jev-compatible endpoint, so the decision step can move to TypeSafe Jev later behind the same interface.
-
-**Calibration:** Laya is overconfident out of the box. Until a labeled set exists, low-confidence answers are treated as *unknown* and shown for review. The labeled set is built from real job posts split into requirements, with each requirement labeled against the candidate's own resume (about 100–200 examples). It does not require resumes that led to interviews. Application outcomes tracked in Milestone 7 can improve it later.
+Laya was considered for judging and dropped (2026-10-28): zero-shot it judged 7 of 17 trial cases right against 12 of 17 for `qwen2.5:7b`, and calibrating it would need a hand-labeled set.
 
 ### Development workflow
 
-Claude Code plans each milestone, writes task specs, and reviews and tests the code. A local coding model in Ollama writes well-defined pieces from those specs.
+Claude Code plans each milestone, writes task specs, and reviews and tests the code. A local coding model on llama.cpp writes well-defined pieces from those specs.
 
 This applies from Milestone 1 onward. It is separate from the models JobOps itself uses: the product needs no model until Milestone 3 (matching) and Milestone 4 (local LLM integration), but the coding model helps build every milestone.
 
@@ -283,27 +287,38 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Track source and ingestion timestamps.
 - Test duplicate and update behavior.
 
-### Milestone 3 — Candidate profile and matching
+### Milestone 3 — Candidate profile, matching, and resume selection (done, 2026-10-28)
 
-- Load an approved resume/profile representation.
+- Parse the resume once into a user-approved YAML experience bank; record skills the resume omits as user-confirmed extras. Career breaks are part of the timeline but add no years or tenure.
+- Minimal local model provider (llama.cpp, schema-forced and validated output, timeouts, streamed answers), pulled forward from Milestone 4.
 - Extract job requirements into a validated structure.
-- Implement an initial deterministic matching baseline.
-- Return strengths, gaps, and evidence rather than only a single score.
+- Search job boards by the user's preferences with a concurrent Go fetcher: Greenhouse, Lever, Ashby, Workday, SmartRecruiters, and company careers sites through a browser crawler that honors robots.txt. `job add <url>` takes one job by its link through the whole flow.
+- Score the bank against each JD: strengths, gaps, evidence, and questions about skills the bank lacks. An inverted index settles what it can; a local LLM judge decides the rest. Degrees are checked against education; soft skills count as themes and never cap the score.
+- Resume selection engine: reuse an existing resume, adapt one, or mark the JD not tailored (years, or a poor fit); one traceable YAML resume record per JD. Rewrites pass a guard: no added numbers, terms, or scope, no AI-sounding wording, no hidden characters.
+- PDF from an ATS-tested template (company line first, dates beside the title), kept only when three local readers (pdftotext, pdf.js, OpenResume) read every field back. Layout verified on Workday with a fake resume. Resume lint flags gaps, tenure, and wording issues for the user.
+- Expose the tools as MCP servers (Node and Go).
 
 ### Milestone 4 — Local LLM integration
 
-- Define a model-provider interface.
-- Connect a local inference runtime.
-- Validate structured responses.
-- Handle timeouts, malformed output, and model unavailability.
+- Generalize the model-provider interface from Milestone 3: one registry (`api/config/models.yaml`) for every task's model, server, timeout, and answer limit.
+- Move remaining extraction and judgment steps onto it: JD parsing, the judge, the bank build, retagging, and rewording all call by task.
+- Validate structured responses: schema-forced output, Zod validation, one retry that names the failing fields.
+- Handle timeouts, malformed output, and model unavailability: a preflight check before every model command, batches that stop at the first server failure, and a call log of outcomes and timing.
 
-### Milestone 5 — Background agent workflow
+### Milestone 5 — Background agent workflow (done, 2026-11-03)
 
-- Build the Go scheduler/queue; Node workers pull and run its tasks.
-- Queue evaluation tasks.
-- Track task state and failures.
-- Make task submission and retries safe.
-- Persist the result and expose it through the API.
+- Build the Go scheduler/queue; Node workers pull and run its tasks: `queue/` (Go, SQLite tables `queue_batches` and `queue_tasks` in `data/jobops.db`), one queue per stage (fetch, parse, score, tailor). `worker laptop` runs parse and score, `worker mac` runs tailor.
+- Queue evaluation tasks: `batch start [--limit N]` (1–100, default 100) searches the job boards, then takes up to N jobs, newest first, skipping finished ones. Each job moves to its next stage as soon as its task ends; tailor only for reuse or adapt.
+- Track task state and failures: `batch status [id]` shows per-stage counts and each failure's code.
+- Make task submission and retries safe: one task per job, stage and prompt version; timeouts and unreachable servers retry after 30 s and 60 s (3 attempts); invalid output fails at once; an expired lease returns the task to the queue; `batch retry <id>`.
+- Persist the result and expose it through the API: results stay in the existing tables; `/batches` routes mirror the commands.
+- Split models: JD parse and the judge run on a second machine (general7 on an RTX 3050 laptop, API key, `LLM_GENERAL7_URL` and `LLM_GENERAL7_KEY` in `.env`); the Mac keeps general14 for rewording. Parse and score share the laptop's 3 slots; tailor runs 3 at a time on the Mac.
+- JD prompt v2 (must-have rules, short items, one example) and Qdrant before parsing: a repost of a JD parsed before reuses that parse, and a keyword is renamed to its canonical name only when that name is in the JD (similar and contained, so siblings like PostgreSQL and MySQL never merge).
+- The extension's report loop must raise the score: each round is re-scored by the engine, the loop stops at the first round without a gain (at most 5), the best version stays current, and the chat's `fit_score` is recorded beside the engine score.
+- Search filters from `profile/preferences.yaml`: a title needs a role title or alias, a `seniority.include` word or level (III, 3) unless the role has `any_level`, and no `seniority.exclude` word. A title that names a language the user does not work in (`title_filter`) is skipped. A stated INR salary below `compensation.min` is skipped, and posts without one are kept when `keep_if_unlisted` is set. LeetCode Discuss is left out: its terms forbid scraping, so jobs found there go in by hand with `job add <url>`.
+- Stored jobs are checked again before every batch (`jd-search check`), so a job saved by an older search is skipped once the preferences exclude it; `batch status <id>` shows the skips by reason.
+- First real batches: 6 jobs fetched, parsed and scored on the laptop, no failures.
+- How to run it: [RUNBOOK-M5.md](RUNBOOK-M5.md) (`.claude/bin/batch-up.sh` brings everything up).
 
 ### Milestone 6 — Contact search and outreach
 
@@ -312,21 +327,28 @@ The original plan emphasized small, testable deliverables. The sequence below re
 - Draft outreach messages.
 - Add an explicit approval step before sending or copying a message to an external service.
 
-### Milestone 7 — UI and application tracking
+### Milestone 7 — UI and application tracking (built before Milestone 6, 2026-11-04)
 
-- Build the job dashboard and job detail view.
-- Show evidence-backed fit assessments.
-- Track decisions, preparation tasks, and application outcomes.
-- Make failed or incomplete workflows visible.
+- Build the job dashboard and job detail view: `ui/` (React, TypeScript, Vite, own dark CSS), `npm run ui` on 127.0.0.1:5173, no login (local only). Pipeline board with a column per state (New, Parsing, Parsed, Scoring, Ready to tailor, Tailoring, Tailored, Not tailored, Failed, Skipped) and a detail drawer per job.
+- Show evidence-backed fit assessments: the Score tab recomputes the score from the bank and the cached judge verdicts (never a model call) and shows the arithmetic: each part's base points, share, coverage and points, the must-have cap, the band, and every requirement's label, credit, source and supporting bullets; plus the reasons a job was not tailored.
+- Track decisions, preparation tasks, and application outcomes: an Applications board (Interested, Applied, Interview, Offer, Rejected, Withdrawn; drag between columns), notes and preparation tasks per job (tables `applications`, `application_tasks`).
+- Make failed or incomplete workflows visible: failure code and detail per stage, skip reason, the job's queue history, a Batches tab (start, live progress, retry, failures), and a health bar for every service with the command that starts it.
+- Parsed jobs are scored without a manual batch: the queue server sweeps parsed jobs that no batch has scored (`jd parse`, `job add`, older parses) every `JOBOPS_SWEEP_EVERY` (default 2m, `0` turns it off), up to 50 at a time; the score decides tailoring as in any batch. Searching for new jobs stays manual (`batch start` or the Batches tab).
+- API routes under `/ui` (board, job detail, score, application, tasks, health) and `POST /batches/sweep`.
 
-### Milestone 8 — Containerization and deployment
+### Milestone 8 — Containerization and deployment (2026-11-04)
 
-- Containerize the working components.
-- Add repeatable local development instructions.
-- Add CI and automated tests.
-- Put the Go gateway in front of the Node services.
-- Run everything on local Kubernetes, which handles supervision and restarts.
-- Introduce cloud infrastructure only when the local deployment is stable.
+- Containerize the working components: one image `jobops:dev` (`Dockerfile`, multi-stage) runs every service: the Node API, workers and CLI, the Go queue server with jd-search, and the gateway with the built UI. It includes typst, poppler and Chromium (the careers crawler; Google Chrome has no Linux arm64 build). `.dockerignore` is an allow-list, so `profile/`, `data/`, `.env` and `.scout/` never go into the image.
+- Add repeatable local development instructions: [RUNBOOK-M8.md](RUNBOOK-M8.md), with a short Kubernetes primer. The local way without Kubernetes stays in [RUNBOOK-M5.md](RUNBOOK-M5.md).
+- Add CI and automated tests: `.github/workflows/ci.yml` runs on every push and PR. It covers the API and UI typecheck, the UI build, the TypeScript tests (with typst and poppler), gofmt, vet and tests for the three Go modules, the kustomize render, and a Docker build (no push, no deploy).
+- Put the Go gateway in front of the Node services: `gateway/` (standard library only) serves `ui/dist` and passes `/api/*` to the API.
+- Run everything on local Kubernetes, which handles supervision and restarts:
+  - **Cluster:** Docker Desktop's built-in cluster (kubeadm), with manifests in `infra/k8s/` (kustomize). It has the `jobops` namespace and one Deployment each for api, queue, worker-laptop, worker-mac and gateway, with probes and Recreate updates.
+  - **Data:** the database is on the PersistentVolumeClaim `jobops-data`. `profile/` is mounted from the Mac, and `.env` becomes a Secret.
+  - **Restarts:** when a pod is deleted or crashes, a new one starts.
+- `bin/jobops` handles daily use: `up`, `down`, `status`, `logs`, `cli`, `ui`, `db-import` and `db-backup`. The UI is at localhost:8080, and the extension's API is still at localhost:3000. Both are opened as port-forwards on 127.0.0.1 only. A LoadBalancer on Docker Desktop would listen on every network of the Mac, and the UI has no login.
+- The models stay outside the cluster: pods reach general14, embed and Qdrant on the Mac through `host.docker.internal`, and general7 on the laptop. In the cluster, the health bar sees workers through a heartbeat in the queue server (`/workers`).
+- Introduce cloud infrastructure only when the local deployment is stable. PostgreSQL in place of SQLite comes later (user choice).
 
 Each milestone should end with a demonstrable, tested increment. Avoid building a large collection of empty services before the main workflow is useful.
 
@@ -338,6 +360,7 @@ JobOps may handle resumes, contact information, and private job-search activity.
 - Import only information the user is authorized to use.
 - Do not commit resumes, contact exports, tokens, credentials, or `.env` files.
 - Include safe example configuration such as `.env.example`, without real secrets.
+- Settings: `.env.example` lists every setting with its default; copy it to `.env` (git-ignored) and change what you need.
 - Require explicit user approval for external outreach.
 - Avoid logging full resume content, private messages, or unnecessary personal data.
 - Respect the terms and access restrictions of job boards and external platforms.

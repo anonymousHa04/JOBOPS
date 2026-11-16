@@ -79,6 +79,19 @@ func Open(path string) (*Store, error) {
 			created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE (job_id, stage, prompt_version)
 		);
+		-- Per-company result of a batch's search.
+		CREATE TABLE IF NOT EXISTS batch_companies (
+			batch_id INTEGER NOT NULL, name TEXT NOT NULL, board TEXT NOT NULL DEFAULT '',
+			slug TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, postings INTEGER NOT NULL DEFAULT 0,
+			matched INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL DEFAULT 0, duplicates INTEGER NOT NULL DEFAULT 0,
+			titles TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '', retried_at TEXT,
+			PRIMARY KEY (batch_id, name)
+		);
+		-- Preference verdicts of one batch that turned skip words off, never used by other batches.
+		CREATE TABLE IF NOT EXISTS batch_filter (
+			batch_id INTEGER NOT NULL, job_id TEXT NOT NULL, ok INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (batch_id, job_id)
+		);
 		CREATE INDEX IF NOT EXISTS queue_tasks_ready ON queue_tasks (stage, state, retry_at);
 		-- The last preference check of each stored job (jd-search check, run by every fetch step).
 		CREATE TABLE IF NOT EXISTS job_filter (
@@ -89,6 +102,11 @@ func Open(path string) (*Store, error) {
 		CREATE TABLE IF NOT EXISTS kept_jobs (job_id TEXT PRIMARY KEY, kept_at TEXT NOT NULL);
 	`); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
+	}
+
+	if _, err := db.Exec(`ALTER TABLE queue_batches ADD COLUMN unskip TEXT NOT NULL DEFAULT '[]'`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return nil, fmt.Errorf("failed to add unskip: %w", err)
 	}
 
 	db.SetMaxOpenConns(1)

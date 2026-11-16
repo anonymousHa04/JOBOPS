@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,13 @@ import (
 )
 
 var stages = map[string]bool{"fetch": true, "parse": true, "score": true, "tailor": true, "gap_help": true}
+
+// atsNames: the ats values a company retry may name (empty means keep the preference's board).
+var atsNames = map[string]bool{"auto": true, "greenhouse": true, "lever": true, "ashby": true, "workday": true, "smartrecruiters": true, "careers": true}
+
+// RetryFunc searches one company of a batch again (name, with an optional new slug and ats) and
+// returns its new row. main.go supplies it; nil means the API answers 501.
+type RetryFunc func(ctx context.Context, batchID int64, name, slug, ats string) (store.Company, error)
 
 // seen: when each worker group (laptop, mac) last asked for work or pinged. In memory only:
 // the health bar uses it where pgrep cannot see the workers (each runs in its own pod).
@@ -75,7 +83,11 @@ func (k *seen) all() map[string]string {
 	return out
 }
 
-func Handler(s *store.Store) http.Handler {
+// Handler is HandlerWith without company retry (POST /batches/{id}/companies/retry answers 501).
+func Handler(s *store.Store) http.Handler { return HandlerWith(s, nil) }
+
+// HandlerWith builds the queue's routes; retry backs POST /batches/{id}/companies/retry.
+func HandlerWith(s *store.Store, retry RetryFunc) http.Handler {
 	mux := http.NewServeMux()
 	workers := &seen{last: map[string]time.Time{}, quiet: map[string]bool{}}
 	go workers.watchQuiet(30 * time.Second)
@@ -110,8 +122,9 @@ func Handler(s *store.Store) http.Handler {
 
 	mux.HandleFunc("POST /batches", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
-			Limit        int    `json:"limit"`
-			ParseVersion string `json:"parse_version"`
+			Limit        int      `json:"limit"`
+			ParseVersion string   `json:"parse_version"`
+			Unskip       []string `json:"unskip"`
 		}
 		if !read(w, r, &in) {
 			return
@@ -120,7 +133,7 @@ func Handler(s *store.Store) http.Handler {
 			fail(w, http.StatusBadRequest, "parse_version is required")
 			return
 		}
-		id, err := s.StartBatch(in.Limit, in.ParseVersion)
+		id, err := s.StartBatchWith(in.Limit, in.ParseVersion, in.Unskip)
 		if errors.Is(err, store.ErrBadLimit) {
 			fail(w, http.StatusBadRequest, err.Error())
 			return
@@ -130,6 +143,9 @@ func Handler(s *store.Store) http.Handler {
 			return
 		}
 		log.Printf("batch %d started (limit %d, parse %s)", id, in.Limit, in.ParseVersion)
+		if len(in.Unskip) > 0 {
+			log.Printf("batch %d unskip: %s", id, strings.Join(in.Unskip, ", "))
+		}
 		send(w, http.StatusCreated, map[string]int64{"batch_id": id})
 	})
 
@@ -171,6 +187,43 @@ func Handler(s *store.Store) http.Handler {
 		}
 		log.Printf("batch %d retry: %d tasks requeued", id, n)
 		send(w, http.StatusOK, map[string]int{"requeued": n})
+	})
+
+	// Search one company of a batch again, with a new slug or ats (Batches tab).
+	mux.HandleFunc("POST /batches/{id}/companies/retry", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		var in struct {
+			Name string `json:"name"`
+			Slug string `json:"slug"`
+			ATS  string `json:"ats"`
+		}
+		if !read(w, r, &in) {
+			return
+		}
+		name, slug, ats := strings.TrimSpace(in.Name), strings.TrimSpace(in.Slug), strings.TrimSpace(in.ATS)
+		if name == "" {
+			fail(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if ats != "" && !atsNames[ats] {
+			fail(w, http.StatusBadRequest, "unknown ats: "+ats)
+			return
+		}
+		if retry == nil {
+			fail(w, http.StatusNotImplemented, "retry is not available")
+			return
+		}
+		c, err := retry(r.Context(), id, name, slug, ats)
+		if err != nil {
+			log.Printf("batch %d company %q retry failed: %s", id, name, clip(err.Error(), 200))
+			fail(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		log.Printf("batch %d company %q retry (slug %q, ats %q): %s", id, name, slug, ats, c.Status)
+		send(w, http.StatusOK, c)
 	})
 
 	// Score leftovers now (parsed jobs no batch has scored); the server also does this on a timer.

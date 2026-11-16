@@ -71,12 +71,19 @@ const BOARDS: Board[] = [
   {
     name: "workday",
     re: /([\w-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([\w-]+)(\/job\/[^?#]+)/,
-    fetch: async ([, tenant, wd, site, path], url) => {
+    fetch: async (m, url) => {
+      const [whole, tenant, wd, site, path] = m;
+      // LinkedIn share links end in /apply (or /apply/...) after the job's /job/... path; the job is the part before it.
+      const segs = path.split("/");
+      const k = segs.indexOf("apply", 2);
+      const job = k > 2 ? segs.slice(0, k).join("/") : path;
+      const start = m.index! + whole.length - path.length;
+      const link = job === path ? url : url.slice(0, start) + job + url.slice(start + path.length);
       const j = await getJson<{ jobPostingInfo: { title: string; jobDescription: string; location?: string; startDate?: string } }>(
-        `https://${tenant}.${wd}.myworkdayjobs.com/wday/cxs/${tenant}/${site}${path}`);
+        `https://${tenant}.${wd}.myworkdayjobs.com/wday/cxs/${tenant}/${site}${job}`);
       const i = j.jobPostingInfo;
       return { title: i.title, company: titleCase(tenant), description: plain(i.jobDescription), location: i.location,
-        posted_at: iso(i.startDate), source_url: url, source_name: "workday" };
+        posted_at: iso(i.startDate), source_url: link, source_name: "workday" };
     }
   },
   {

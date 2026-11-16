@@ -26,6 +26,19 @@ type Options struct {
 	DryRun     bool          // match only; do not POST
 }
 
+type CompanyResult struct {
+	Name       string   `json:"name"`
+	Board      string   `json:"board"`
+	Slug       string   `json:"slug"`
+	Status     string   `json:"status"`
+	Error      string   `json:"error"`
+	Postings   int      `json:"postings"`
+	Matched    int      `json:"matched"`
+	Created    int      `json:"created"`
+	Duplicates int      `json:"duplicates"`
+	Titles     []string `json:"titles"`
+}
+
 type Report struct {
 	Companies   int               `json:"companies"`
 	Reached     int               `json:"reached"`
@@ -38,9 +51,10 @@ type Report struct {
 	Rejected    map[string]int    `json:"rejected"`
 	Samples     []string          `json:"samples"`
 	// Kept, but the posting names no location; listed so the user can check them.
-	LocationUnknown []string `json:"location_unknown"`
-	PayUnlisted     int      `json:"pay_unlisted"`
-	Errors          []string `json:"errors"`
+	LocationUnknown []string        `json:"location_unknown"`
+	PayUnlisted     int             `json:"pay_unlisted"`
+	Errors          []string        `json:"errors"`
+	CompaniesDetail []CompanyResult `json:"companies_detail"`
 }
 
 const maxListed = 20
@@ -65,8 +79,17 @@ func (o *Options) defaults() {
 
 func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 	opts.defaults()
-	rep := Report{Detected: map[string]string{}, Rejected: map[string]int{}, Unreachable: []string{}, Samples: []string{}, Errors: []string{}, LocationUnknown: []string{}}
+	rep := Report{
+		Detected:        map[string]string{},
+		Rejected:        map[string]int{},
+		Unreachable:     []string{},
+		Samples:         []string{},
+		Errors:          []string{},
+		LocationUnknown: []string{},
+		CompaniesDetail: []CompanyResult{},
+	}
 	var mu sync.Mutex
+	companyResults := make(map[string]*CompanyResult)
 
 	boards := &http.Client{Timeout: opts.Timeout, Transport: &limited{
 		base: http.DefaultTransport, every: time.Duration(float64(time.Second) / opts.PerHostRPS),
@@ -89,6 +112,11 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 				mu.Lock()
 				if err != nil || ats == "" {
 					rep.Unreachable = append(rep.Unreachable, c.Name)
+					msg := "no board found"
+					if err != nil {
+						msg = err.Error()
+					}
+					companyResults[c.Name] = &CompanyResult{Name: c.Name, Slug: c.Slug, Status: "unreachable", Error: msg, Titles: []string{}}
 					if err != nil && len(rep.Errors) < maxListed {
 						rep.Errors = append(rep.Errors, c.Name+": "+err.Error())
 					}
@@ -98,6 +126,8 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 				rep.Reached++
 				rep.Detected[c.Name] = ats
 				rep.Postings += len(posts)
+				row := &CompanyResult{Name: c.Name, Board: ats, Slug: c.Slug, Status: "fetched", Postings: len(posts), Titles: []string{}}
+				companyResults[c.Name] = row
 				mu.Unlock()
 
 				for _, p := range posts {
@@ -112,6 +142,10 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 						continue
 					}
 					rep.Matched++
+					row.Matched++
+					if len(row.Titles) < maxListed {
+						row.Titles = append(row.Titles, p.Title)
+					}
 					if _, found := filter.PayLPA(p.Description); !found {
 						rep.PayUnlisted++
 					}
@@ -134,8 +168,10 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 						}
 					case created:
 						rep.Created++
+						row.Created++
 					default:
 						rep.Duplicates++
+						row.Duplicates++
 					}
 					mu.Unlock()
 				}
@@ -144,6 +180,13 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 	}
 	for _, c := range prefs.Companies.Include {
 		if excluded[strings.ToLower(c.Name)] || c.Slug == "" {
+			status := "no_slug"
+			if excluded[strings.ToLower(c.Name)] {
+				status = "excluded"
+			}
+			mu.Lock()
+			companyResults[c.Name] = &CompanyResult{Name: c.Name, Slug: c.Slug, Status: status, Titles: []string{}}
+			mu.Unlock()
 			continue
 		}
 		rep.Companies++
@@ -154,6 +197,15 @@ func Search(ctx context.Context, prefs filter.Prefs, opts Options) Report {
 	}
 	close(queue)
 	wg.Wait()
+
+	// Build rep.CompaniesDetail from companyResults
+	for _, cr := range companyResults {
+		rep.CompaniesDetail = append(rep.CompaniesDetail, *cr)
+	}
+	sort.Slice(rep.CompaniesDetail, func(i, j int) bool {
+		return rep.CompaniesDetail[i].Name < rep.CompaniesDetail[j].Name
+	})
+
 	sort.Strings(rep.Unreachable)
 	return rep
 }

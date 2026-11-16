@@ -9,14 +9,14 @@ export class QueueDownError extends Error {
   }
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(method: string, path: string, body?: unknown, timeoutMs = 10000): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${queueUrl()}${path}`, {
       method,
       headers: { "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(timeoutMs)
     });
   } catch {
     throw new QueueDownError();
@@ -35,8 +35,23 @@ export async function queueUp(): Promise<boolean> {
   }
 }
 
-export const startBatch = (limit: number, parseVersion: string) =>
-  call<{ batch_id: number }>("POST", "/batches", { limit, parse_version: parseVersion });
+// One company's row of a batch's search, from the queue.
+export type QueueCompany = {
+  name: string;
+  board: string;
+  slug: string;
+  status: "fetched" | "unreachable" | "no_slug" | "excluded";
+  error: string;
+  postings: number;
+  matched: number;
+  created: number;
+  duplicates: number;
+  titles: string[];
+  retried_at?: string;
+};
+
+export const startBatch = (limit: number, parseVersion: string, unskip: string[] = []) =>
+  call<{ batch_id: number }>("POST", "/batches", { limit, parse_version: parseVersion, ...(unskip.length ? { unskip } : {}) });
 export const batches = () => call<unknown[]>("GET", "/batches");
 export const batch = (id: number) => call<unknown>("GET", `/batches/${id}`);
 export const sweep = (max = 50) => call<{ batch_id: number; queued: number }>("POST", "/sweep", { max });
@@ -62,3 +77,7 @@ export const fail = (taskId: number, code: string, detail: string) =>
 
 // The user deleted a job: drop its queue tasks and preference-check row.
 export const forgetJob = (jobId: string) => call<{ removed: number }>("POST", "/forget", { job_id: jobId });
+
+// Retry one company of a batch: a retry runs a real search, so it waits up to 3 minutes.
+export const retryCompany = (batchId: number, body: { name: string; slug?: string; ats?: string }) =>
+  call<QueueCompany>("POST", `/batches/${batchId}/companies/retry`, body, 180000);

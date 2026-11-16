@@ -21,6 +21,8 @@ type BatchStatus struct {
 	Failed    []Task                `json:"failed,omitempty"`
 	Tailored  int                   `json:"tailored"`
 	Skipped   map[string]int        `json:"skipped,omitempty"`
+	Companies []Company             `json:"companies,omitempty"`
+	Unskip    []string              `json:"unskip,omitempty"`
 }
 
 // Batch: per-stage counts, the failed tasks (without results), and tailored resumes.
@@ -44,6 +46,19 @@ func (s *Store) Batch(id int64) (*BatchStatus, error) {
 		t.Result = nil
 		bs.Failed = append(bs.Failed, *t)
 	}
+
+	companies, err := s.companiesOf(id)
+	if err != nil {
+		return nil, fmt.Errorf("batch: %w", err)
+	}
+	bs.Companies = companies
+
+	unskip, err := s.unskipOf(id)
+	if err != nil {
+		return nil, fmt.Errorf("batch: %w", err)
+	}
+	bs.Unskip = unskip
+
 	return bs, rows.Err()
 }
 

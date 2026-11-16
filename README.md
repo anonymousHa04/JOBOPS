@@ -7,6 +7,8 @@ The project has two goals:
 1. Build a useful system for managing a real job search.
 2. Demonstrate senior-level full-stack, backend, distributed-systems, and AI-agent engineering through a working product.
 
+**Demo video:** [Watch JobOps in action (about 4 minutes)](https://drive.google.com/file/d/1Fy_B1Yk_0Y-6M9q6f0adI46ZWnu_9yBW/view?usp=drive_link). It covers the problem, the parse → score → tailor pipeline, the live queue, and the two-machine local-model setup.
+
 > **Project status:** This README reconstructs the intended product and architecture from the original plan. It does not claim that every component has been implemented. The source code was lost, so the implementation status, exact repository structure, and final technology choices still need to be verified.
 
 ## Table of contents
